@@ -40,55 +40,65 @@ import           Control.Applicative ((<**>))
 import           Control.Concurrent (getNumCapabilities)
 import           Control.Concurrent.Async
 import           Control.Concurrent.MVar
-import           Control.DeepSeq (force)
-import           Control.Exception
-import           Control.Monad (forM_, unless, void, when)
+import           Control.Monad (forM, forM_, void, when)
+import           Control.Monad.Loops (whileM_)
+import           Control.Monad.ST (ST, runST)
 import           Control.Monad.Trans.State.Strict (runState, state)
-import           Control.Tracer
 import qualified Data.ByteString.Short as BS
+import qualified Data.Colour.Names as Color
+import qualified Data.Colour.SRGB as Color
 import qualified Data.Foldable as Fold
-import qualified Data.IntSet as IS
+import qualified Data.IntSet as ISet
 import           Data.IORef
+import qualified Data.List as List
+import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
-import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import           Data.Monoid
 import qualified Data.Primitive as P
+import           Data.Ratio
+import qualified Data.Set as Set
+import           Data.STRef
+import           Data.Tuple (swap)
 import qualified Data.Vector as V
-import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
 import qualified GHC.Stats as GHC
+import qualified Graphics.Rendering.Chart.Backend.Diagrams as Plot
+import           Graphics.Rendering.Chart.Easy ((.=))
+import qualified Graphics.Rendering.Chart.Easy as Plot
+import           Math.Combinatorics.Exact.Factorial (factorial)
 import qualified MCG
 import qualified Options.Applicative as O
 import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
-import qualified System.FS.API as FS
-import qualified System.FS.BlockIO.API as FS
-import qualified System.FS.BlockIO.IO as FsIO
-import qualified System.FS.IO as FsIO
+import           System.Directory (createDirectoryIfMissing)
 import           System.IO
 import           System.Mem (performMajorGC)
 import qualified System.Random as Random
 import           Text.Printf (printf)
---import           Text.Show.Pretty
 
 import           Database.LSMTree.Extras (groupsOfN)
 import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
-import qualified Database.LSMTree.Normal as LSM
+import qualified Database.LSMTree.Simple as LSM
 
+-------------------------------------------------------------------------------
+-- Constant Values
+-------------------------------------------------------------------------------
+
+benchPerformanceOf :: FilePath
 benchPerformanceOf = "union"
-benchWorkProductNo = "wp10"
 
--------------------------------------------------------------------------------
--- Table configuration
--------------------------------------------------------------------------------
+benchWorkProductNo :: FilePath
+benchWorkProductNo = "wp16"
 
-benchTableConfig :: LSM.TableConfig
-benchTableConfig =
-    LSM.defaultTableConfig {LSM.confFencePointerIndex = LSM.CompactIndex}
+baselineTableID :: Int
+baselineTableID = 0
+
+baselineTableName :: LSM.SnapshotName
+baselineTableName = makeTableName baselineTableID
 
 -------------------------------------------------------------------------------
 -- Keys and values
@@ -96,7 +106,6 @@ benchTableConfig =
 
 type K = BS.ShortByteString
 type V = BS.ShortByteString
-type B = Void
 
 label :: LSM.SnapshotLabel
 label = LSM.SnapshotLabel "K V B"
@@ -138,35 +147,24 @@ theValue = BS.replicate 60 120 -- 'x'
 -------------------------------------------------------------------------------
 
 data GlobalOpts = GlobalOpts
-    { rootDir         :: !FilePath  -- ^ session directory.
-    , initialSize     :: !Int
-      -- | The cache policy for the LSM table. This configuration option is used
-      -- both during setup, and during a run (where it is used to override the
-      -- config option of the snapshot).
-    , diskCachePolicy :: !LSM.DiskCachePolicy
-      -- | Enable trace output
-    , trace           :: !Bool
+    { rootDir     :: !FilePath  -- ^ session directory.
+    , tableCount  :: !Int -- ^ Number of  tables in the benchmark
+    , initialSize :: !Int
+    , seed        :: !Word64
     }
-  deriving stock Show
-
-data SetupOpts = SetupOpts {
-    bloomFilterAlloc :: !LSM.BloomFilterAlloc
-  }
   deriving stock Show
 
 data RunOpts = RunOpts
     { batchCount :: !Int
     , batchSize  :: !Int
     , check      :: !Bool
-    , seed       :: !Word64
     , pipelined  :: !Bool
-    , lookuponly :: !Bool
     }
   deriving stock Show
 
 data Cmd
     -- | Setup benchmark: generate initial LSM tree etc.
-    = CmdSetup SetupOpts
+    = CmdSetup
 
     -- | Make a dry run, measure the overhead.
     | CmdDryRun RunOpts
@@ -175,33 +173,6 @@ data Cmd
     | CmdRun RunOpts
   deriving stock Show
 
-mkTableConfigSetup :: GlobalOpts -> SetupOpts -> LSM.TableConfig -> LSM.TableConfig
-mkTableConfigSetup GlobalOpts{diskCachePolicy} SetupOpts{bloomFilterAlloc} conf = conf {
-      LSM.confDiskCachePolicy = diskCachePolicy
-    , LSM.confBloomFilterAlloc = bloomFilterAlloc
-    }
-
-mkTableConfigRun :: GlobalOpts -> LSM.TableConfig -> LSM.TableConfig
-mkTableConfigRun GlobalOpts{diskCachePolicy} conf = conf {
-      LSM.confDiskCachePolicy = diskCachePolicy
-    }
-
-mkTableConfigOverride :: GlobalOpts -> LSM.TableConfigOverride
-mkTableConfigOverride GlobalOpts{diskCachePolicy} =
-    LSM.configOverrideDiskCachePolicy diskCachePolicy
-
-mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
-mkTracer gopts
-  | trace gopts =
-      -- Don't trace update/lookup messages, because they are too noisy
-      squelchUnless
-        (\case
-          LSM.TraceTable _ LSM.TraceUpdates{} -> False
-          LSM.TraceTable _ LSM.TraceLookups{} -> False
-          _                                   -> True )
-        (show `contramap` stdoutTracer)
-  | otherwise   = nullTracer
-
 -------------------------------------------------------------------------------
 -- command line interface
 -------------------------------------------------------------------------------
@@ -209,14 +180,14 @@ mkTracer gopts
 globalOptsP :: O.Parser GlobalOpts
 globalOptsP = pure GlobalOpts
     <*> O.option O.str (O.long "bench-dir" <> O.value (Fold.fold ["_", benchPerformanceOf, "_", benchWorkProductNo]) <> O.showDefault <> O.help "Benchmark directory to put files in")
-    <*> O.option O.auto (O.long "initial-size" <> O.value 100_000_000 <> O.showDefault <> O.help "Initial LSM tree size")
-    <*> O.option O.auto (O.long "disk-cache-policy" <> O.value LSM.DiskCacheAll <> O.showDefault <> O.help "Disk cache policy [DiskCacheAll | DiskCacheLevelsAtOrBelow Int | DiskCacheNone]")
-    <*> O.flag False True (O.long "trace" <> O.help "Enable trace messages (disabled by default)")
+    <*> O.option O.auto (O.long "table-count" <> O.value 10 <> O.showDefault <> O.help "Number of tables to benchmark")
+    <*> O.option O.auto (O.long "initial-size" <> O.value 1_000_000 <> O.showDefault <> O.help "Initial LSM tree size")
+    <*> O.option O.auto (O.long "seed" <> O.value 1337 <> O.showDefault <> O.help "Random seed")
 
 cmdP :: O.Parser Cmd
 cmdP = O.subparser $ mconcat
     [ O.command "setup" $ O.info
-        (CmdSetup <$> setupOptsP <**> O.helper)
+        (CmdSetup <$ O.helper)
         (O.progDesc "Setup benchmark")
     , O.command "dry-run" $ O.info
         (CmdDryRun <$> runOptsP <**> O.helper)
@@ -227,28 +198,18 @@ cmdP = O.subparser $ mconcat
         (O.progDesc "Proper run")
     ]
 
-setupOptsP :: O.Parser SetupOpts
-setupOptsP = pure SetupOpts
-    <*> O.option O.auto (O.long "bloom-filter-alloc" <> O.value LSM.defaultBloomFilterAlloc <> O.showDefault <> O.help "Bloom filter allocation method [AllocFixed n | AllocRequestFPR d]")
-
 runOptsP :: O.Parser RunOpts
 runOptsP = pure RunOpts
     <*> O.option O.auto (O.long "batch-count" <> O.value 200 <> O.showDefault <> O.help "Batch count")
     <*> O.option O.auto (O.long "batch-size" <> O.value 256 <> O.showDefault <> O.help "Batch size")
     <*> O.switch (O.long "check" <> O.help "Check generated key distribution")
-    <*> O.option O.auto (O.long "seed" <> O.value 1337 <> O.showDefault <> O.help "Random seed")
     <*> O.switch (O.long "pipelined" <> O.help "Use pipelined mode")
-    <*> O.switch (O.long "lookup-only" <> O.help "Use lookup only mode")
-
-deriving stock instance Read LSM.DiskCachePolicy
-deriving stock instance Read LSM.BloomFilterAlloc
-deriving stock instance Read LSM.NumEntries
 
 -------------------------------------------------------------------------------
 -- measurements
 -------------------------------------------------------------------------------
 
-timed :: IO a -> IO (a, Double, RTSStatsDiff Triple, ProcIODiff)
+timed :: IO a -> IO (a, Integer, RTSStatsDiff Triple, ProcIODiff)
 timed action = do
     !p1 <- getProcIO
     performMajorGC
@@ -259,15 +220,13 @@ timed action = do
     performMajorGC
     s2 <- GHC.getRTSStats
     !p2 <- getProcIO
-    let !t = fromIntegral (Clock.toNanoSecs (Clock.diffTimeSpec t2 t1)) * 1e-9
+    let !ms = Clock.toNanoSecs (Clock.diffTimeSpec t2 t1) `div` 1_000_000
         !s = s2 `diffRTSStats` s1
         !p = p2 `diffProcIO` p1
-    printf "Running time:  %.03f sec\n" t
-    printf "/proc/self/io after vs. before: %s\n" (show p)
-    printf "RTSStats after vs. before: %s\n" (show s)
-    return (x, t, s, p)
+    return (x, ms, s, p)
 
-timed_ :: IO () -> IO (Double, RTSStatsDiff Triple, ProcIODiff)
+-- | The 'Integer' is the number of /milliseconds/ elapsed.
+timed_ :: IO () -> IO (Integer, RTSStatsDiff Triple, ProcIODiff)
 timed_ action = do
     ((), t, sdiff, pdiff) <- timed action
     pure (t, sdiff, pdiff)
@@ -400,35 +359,87 @@ data Triple a = Triple {
 -- setup
 -------------------------------------------------------------------------------
 
-doSetup :: GlobalOpts -> SetupOpts -> IO ()
-doSetup gopts opts = do
-    void $ timed_ $ doSetup' gopts opts
+doSetup :: GlobalOpts -> IO ()
+doSetup gopts = do
+    void $ timed_ $ doSetup' gopts
 
-doSetup' :: GlobalOpts -> SetupOpts -> IO ()
-doSetup' gopts opts = do
-    let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint (rootDir gopts)
+doSetup' :: GlobalOpts -> IO ()
+doSetup' gopts = do
+    let rooting :: FilePath
+        rooting = rootDir gopts
 
-    let hasFS :: FS.HasFS IO FsIO.HandleIO
-        hasFS = FsIO.ioHasFS mountPoint
+    -- Ensure that our mount point exists on the real file system
+    createDirectoryIfMissing True rooting
 
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
+    -- Define some constants
+    let populationBatchSize = 256
+        -- The key size is twice the specified size because we will delete half
+        -- of the keys in the domain of each table uniformly at random.
+        keyMax = 2 * initialSize gopts
+        keyMin = 1
 
-    let name = LSM.toSnapshotName "bench"
+    -- Create an RNG for randomized deletions
+    refRNG <- newIORef $ MCG.make
+        (toEnum (2 * populationBatchSize))
+        (seed gopts)
 
-    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
-        tbl <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts benchTableConfig)
+    -- Populate the specified number of tables
+    LSM.withSession (rootDir gopts) $ \session -> do
+      -- Create a baseline table
+      table_0 <- LSM.newTable @K @V session
 
-        forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
-            -- TODO: this procedure simply inserts all the keys into initial lsm tree
-            -- We might want to do deletes, so there would be delete-insert pairs
-            -- Let's do that when we can actually test that benchmark works.
-            LSM.inserts tbl $ V.fromList [
-                  (makeKey (fromIntegral i), theValue, Nothing)
-                | i <- NE.toList batch
-                ]
+      forM_ (tableRange gopts) $ \tID -> do
+        -- Create a new table
+        table_n <- LSM.newTable @K @V session
+        -- Populate the table in batches
+        forM_ (groupsOfN populationBatchSize [ keyMin .. keyMax ]) $ \batch -> do
+            currRNG <- readIORef refRNG
+            let (nextRNG, prunedBatch) = randomlyPruneHalf currRNG $ NE.toList batch
+            writeIORef refRNG nextRNG
+            let keyInserts = V.fromList [
+                    (makeKey (fromIntegral k), theValue)
+                  | k <- prunedBatch
+                  ]
+            -- Insert the batch of the randomly selected keys
+            -- into both the baseline table (0) and the current table
+            LSM.inserts table_0 keyInserts
+            LSM.inserts table_n keyInserts
+        LSM.saveSnapshot (makeTableName tID) label table_n
 
-        LSM.createSnapshot label name tbl
+      -- Finally, save the baseline table
+      LSM.saveSnapshot baselineTableName label table_0
+
+makeTableName :: Show a => a -> LSM.SnapshotName
+makeTableName n = LSM.toSnapshotName $ "bench_" <> show n
+
+tableRange :: GlobalOpts -> NonEmpty Int
+tableRange gopts =
+    let n1 = succ baselineTableID
+        n2 = succ n1
+    in  n1 :| [ n2 .. tableCount gopts + baselineTableID ]
+
+randomlyPruneHalf :: forall a. MCG.MCG -> [a] -> (MCG.MCG, [a])
+randomlyPruneHalf !prevRNG xs =
+    let !n = length xs
+        modulus = toEnum n
+        required = n `div` 2
+        notRemoved (k,_) = k `ISet.notMember` removeIndices
+        removeSelected ys = fmap snd . filter notRemoved $ zip [0 ..] ys
+        gatherIndices :: forall s. ST s (MCG.MCG, ISet.IntSet)
+        gatherIndices = do
+            refRNG <- newSTRef prevRNG
+            refIndices <- newSTRef mempty
+            let notHalf = readSTRef refIndices >>= \is -> pure $ ISet.size is < required
+            whileM_ notHalf $ do
+                currRNG <- readSTRef refRNG
+                let (nextRNG, i) = fromEnum . (`mod` modulus) <$> swap (MCG.next currRNG)
+                modifySTRef' refIndices $ ISet.insert i
+                writeSTRef refRNG nextRNG
+            lastRNG <- readSTRef refRNG
+            indices <- readSTRef refIndices
+            pure (lastRNG, indices)
+        (doneRNG, removeIndices) = runST gatherIndices
+    in  (doneRNG, removeSelected xs)
 
 -------------------------------------------------------------------------------
 -- dry-run
@@ -443,57 +454,70 @@ doDryRun' gopts opts = do
     -- calculated some expected statistics for generated batches
     -- using nested do block to limit scope of intermediate bindings n, d, p, and q
     do
+       let d = toInteger $ 2 * initialSize gopts
        -- we generate n random numbers in range of [ 1 .. d ]
        -- what is the chance they are all distinct
-       let n = fromIntegral (batchCount opts * batchSize opts) :: Double
-       let d = fromIntegral (initialSize gopts) :: Double
-       -- this is birthday problem.
-       let p = 1 - exp (negate $  (n * (n - 1)) / (2 * d))
+       -- In this case each key in a table is could possibly share a key in another table.
+       -- This is the number of entries per table, times the number of *other* tables
+       -- Hence we have n = initialSize * (tableCount - 1)
+       let n = toInteger $ initialSize gopts * (tableCount gopts - 1)
+
+       -- High fidelity approximation of the Bithday Problem's probability:
+       --   https://en.wikipedia.org/wiki/Birthday_problem#Approximations
+       -- Compute notP = e^( -1*n*(n-1)/(2*d) )
+       -- Then yesP = 1 - notP
+       -- To compute the exponentiation of e efficiently and precisely, we use the taylor series expansion.
+       let x = negate (n * (n - 1)) % (2 * d)
+           taylorSeries = sum . take 100 $ (\i -> x ^ i / (factorial i % 1)) <$> [ 0 .. ]
+           prob = 1 - taylorSeries
+           percentage = prob * 100
 
        -- number of people with a shared birthday
        -- https://en.wikipedia.org/wiki/Birthday_problem#Number_of_people_with_a_shared_birthday
-       let q = n * (1 - ((d - 1) / d) ** (n - 1))
+       let q = (n % 1) * (1 - ((d - 1) % d)) ^ (n - 1)
 
-       printf "Probability of a duplicate:                          %5f\n" p
-       printf "Expected number of duplicates (extreme upper bound): %5f out of %f\n" q n
+       printf "Probability of a duplicate:                          %14s%%\n" $ renderRational 10 percentage
+       printf "Expected number of duplicates (extreme upper bound): %9s out of %d\n" (renderRational 5 q) n
 
-    let g0 = initGen (initialSize gopts) (batchSize opts) (batchCount opts) (seed opts)
+    let keyRange :: LSM.Range K
+        keyRange = LSM.FromToIncluding (makeKey minBound) (makeKey maxBound)
 
-    keysRef <- newIORef $
-        if check opts
-        then IS.fromList [ 0 .. (initialSize gopts) - 1 ]
-        else IS.empty
-    duplicateRef <- newIORef (0 :: Int)
+    duplicates <- LSM.withSession (rootDir gopts) $ \session -> do
+      tKeySets <- forM (tableRange gopts) $ \tID -> do
+        let name = makeTableName tID
+        table <- if check opts
+          then LSM.newTable session
+          else LSM.openTableFromSnapshot session name label
+        (vKeys :: V.Vector (K, V)) <- LSM.rangeLookup table keyRange
+        pure . Set.fromList $ fst <$> V.toList vKeys
 
-    void $ forFoldM_ g0 [ 0 .. batchCount opts - 1 ] $ \b g -> do
-        let lookups :: V.Vector Word64
-            inserts :: V.Vector Word64
-            (!g', lookups, inserts) = generateBatch' (initialSize gopts) (batchSize opts) g b
+      let gatherUniques tKetSet = foldr Set.difference tKetSet tKeySets
+          unions = Set.unions tKeySets
+          uniques = Fold.foldl' (\x -> Set.union (gatherUniques x)) mempty tKeySets
+      pure $ unions `Set.difference` uniques
 
-        when (check opts) $ do
-            keys <- readIORef keysRef
-            let new  = intSetFromVector lookups
-            let diff = IS.difference new keys
-            -- when (IS.notNull diff) $ printf "missing in batch %d %s\n" b (show diff)
-            modifyIORef' duplicateRef $ \n -> n + IS.size diff
-            writeIORef keysRef $! IS.union (IS.difference keys new)
-                                           (intSetFromVector inserts)
+    printf "True duplicates: %d\n" $ Set.size duplicates
 
-        let (batch1, batch2) = toOperations lookups inserts
-        _ <- evaluate $ force (batch1, batch2)
+-- |
+-- From StackOverflow: https://stackoverflow.com/a/30938328
+renderRational :: Int -> Rational -> String
+renderRational len rat = sign <> shows prefix ("." ++ suffix)
+    where
+      sign
+        | num < 0 = "-"
+        | otherwise = ""
 
-        return g'
+      (prefix, next) = abs num `quotRem` den
 
-    when (check opts) $ do
-        duplicates <- readIORef duplicateRef
-        printf "True duplicates: %d\n" duplicates
+      suffix = case next of
+        0 -> "0"
+        n -> take len $ go n
 
-    -- See batchOverlaps for explanation of this check.
-    when (check opts) $
-        let anyOverlap = (not . null)
-                           (batchOverlaps (initialSize gopts) (batchSize opts)
-                                          (batchCount opts) (seed opts))
-         in putStrLn $ "Any adjacent batches with overlap: " ++ show anyOverlap
+      num = numerator rat
+      den = denominator rat
+      go 0 = ""
+      go x = let (d', next') = (10 * x) `quotRem` den
+             in shows d' (go next')
 
 -------------------------------------------------------------------------------
 -- PRNG initialisation
@@ -513,12 +537,12 @@ generateBatch  ::
     -> Int       -- ^ batch size
     -> MCG.MCG   -- ^ generator
     -> Int       -- ^ batch number
-    -> (MCG.MCG, V.Vector K, V.Vector (K, LSM.Update V B))
+    -> (MCG.MCG, V.Vector K)
 generateBatch initialSize batchSize g b =
-    (g', lookups', inserts')
+    (g', lookups')
   where
-    (lookups', inserts')    = toOperations lookups inserts
-    (!g', lookups, inserts) = generateBatch' initialSize batchSize g b
+    (lookups')    = toOperations lookups
+    (!g', lookups) = generateBatch' initialSize batchSize g b
 
 {- | Implement generation of unbounded sequence of insert\/delete operations
 
@@ -537,8 +561,8 @@ generateBatch' ::
     -> Int       -- ^ batch size
     -> MCG.MCG   -- ^ generator
     -> Int       -- ^ batch number
-    -> (MCG.MCG, V.Vector Word64, V.Vector Word64)
-generateBatch' initialSize batchSize g b = (g'', lookups, inserts)
+    -> (MCG.MCG, V.Vector Word64)
+generateBatch' initialSize batchSize g b = (g'', lookups)
   where
     maxK :: Word64
     maxK = fromIntegral $ initialSize + batchSize * b
@@ -547,20 +571,13 @@ generateBatch' initialSize batchSize g b = (g'', lookups, inserts)
     (lookups, !g'') =
        runState (V.replicateM batchSize (state (MCG.reject maxK))) g
 
-    inserts :: V.Vector Word64
-    inserts = V.enumFromTo maxK (maxK + fromIntegral batchSize - 1)
-
 -- | Generate operation inputs
 {-# INLINE toOperations #-}
-toOperations :: V.Vector Word64 -> V.Vector Word64 -> (V.Vector K, V.Vector (K, LSM.Update V B))
-toOperations lookups inserts = (batch1, batch2)
+toOperations :: V.Vector Word64 -> V.Vector K
+toOperations lookups = batch1
   where
     batch1 :: V.Vector K
     batch1 = V.map makeKey lookups
-
-    batch2 :: V.Vector (K, LSM.Update V B)
-    batch2 = V.map (\k -> (k, LSM.Delete)) batch1 V.++
-             V.map (\k -> (makeKey k, LSM.Insert theValue Nothing)) inserts
 
 -------------------------------------------------------------------------------
 -- run
@@ -568,126 +585,227 @@ toOperations lookups inserts = (batch1, batch2)
 
 doRun :: GlobalOpts -> RunOpts -> IO ()
 doRun gopts opts = do
-    let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint (rootDir gopts)
+    -- Perform 3 measurement phases
+    --   * Phase 1: Measure performance before supplying any credits.
+    --   * Phase 2: Measure performance as credits are incrementally supplied and debt is repaid.
+    --   * Phase 3: Measure performance when debt is 0.
+    let tickCountPrefix = 50
+        tickCountMiddle = 100
+        tickCountSuffix = 50
+        tickCountEnding = maximum indicesPhase3
+        queriesEachTick = batchCount opts * batchSize opts
+        indicesPhase1 = negate <$> reverse [ 0 .. tickCountPrefix ]
+        indicesPhase2 = [ 1 .. tickCountMiddle ]
+        indicesPhase3 = [ tickCountMiddle + 1 .. tickCountMiddle + tickCountSuffix ]
+        indicesDomain = indicesPhase1 <> indicesPhase2 <> indicesPhase3
+        benchmarkIterations h
+          | pipelined opts = pipelinedIterations h
+          | otherwise = sequentialIterations h
 
-    let hasFS :: FS.HasFS IO FsIO.HandleIO
-        hasFS = FsIO.ioHasFS mountPoint
+    refRNG <- newIORef $ initGen
+                (initialSize gopts)
+                (batchSize opts)
+                (batchCount opts)
+                (seed gopts)
 
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
-
-    let name = LSM.toSnapshotName "bench"
-
-    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session ->
+    putStrLn "Operations per second:"
+    measurements <- LSM.withSession (rootDir gopts) $ \session ->
       withLatencyHandle $ \h -> do
-        -- open snapshot
-        -- In checking mode we start with an empty table, since our pure
-        -- reference version starts with empty (as it's not practical or
-        -- necessary for testing to load the whole snapshot).
-        tbl <- if check opts
-                then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts benchTableConfig)
-                else LSM.openSnapshot @IO @K @V @B session (mkTableConfigOverride gopts) label name
+        -- Load the baseline table
+        table_0 <- LSM.openTableFromSnapshot session baselineTableName label
 
-        -- In checking mode, compare each output against a pure reference.
-        checkvar <- newIORef $ pureReference
-                                (initialSize gopts) (batchSize opts)
-                                (batchCount opts) (seed opts)
-        let fcheck | not (check opts) = \_ _ -> return ()
-                   | otherwise = \b y -> do
-              (x:xs) <- readIORef checkvar
-              unless (x == y) $
-                fail $ "lookup result mismatch in batch " ++ show b
-              writeIORef checkvar xs
+        -- Load the union tables
+        tables <- forM (tableRange gopts) $ \tID -> do
+          let name = makeTableName tID
+          if check opts
+          then LSM.newTable session
+          else LSM.openTableFromSnapshot session name label
 
-        let benchmarkIterations
-              | pipelined opts = pipelinedIterations h
-              | lookuponly opts= sequentialIterationsLO
-              | otherwise      = sequentialIterations h
-            !progressInterval  = max 1 ((batchCount opts) `div` 100)
-            madeProgress b     = b `mod` progressInterval == 0
-        (time, _, _) <- timed_ $ do
-          benchmarkIterations
-            (\b y -> fcheck b y >> when (madeProgress b) (putChar '.'))
-            (initialSize gopts)
-            (batchSize opts)
-            (batchCount opts)
-            (seed opts)
-            tbl
-          putStrLn ""
+        LSM.withIncrementalUnions tables $ \table -> do
+          LSM.UnionDebt totalDebt <- LSM.remainingUnionDebt table
+          -- Determine the number of credits to supply per tick in order to
+          -- all debt repaid at the time specified by the rpayment rate.
+          -- Each tick should supply credits equal to:
+          --     paymentRate * totalDebt / tickCountMiddle
+          let paymentPerTick = ceiling $ toInteger totalDebt % tickCountMiddle
 
-        let ops = batchCount opts * batchSize opts
-        printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
+          let measurePerformance :: Integer -> IO (Int, Int, Integer, Integer)
+              measurePerformance tickIndex = do
+                -- Note this tick's debt for subsequent measurement purposes.
+                LSM.UnionDebt debtCurr <- LSM.remainingUnionDebt table
+                -- Note the cumulative credits supplied through this tick.
+                let paidCurr = max 0 $ totalDebt - fromInteger (max 0 tickIndex) * paymentPerTick
+                -- Generate the randomized lookup batches and update the RNG.
+                -- Use these exact same lookups for both the baseline table and the unioned table
+                currRNG <- readIORef refRNG
+                let generator = generateBatch (initialSize gopts) (batchSize opts)
+                    domain = [ 0 .. (batchCount opts) - 1 ]
+                    (nextRNG, allBatches) = traverseWithRNG currRNG domain generator
+                    thisMeasurement = benchmarkIterations h (\_ _ -> pure ()) allBatches
+                writeIORef refRNG nextRNG
+                -- Perform measurement of batched lookups
+                -- First, benchmark the baseline table
+                (base, _, _) <- thisMeasurement table_0
+                -- Next, benchmark the union table
+                (time, _, _) <- thisMeasurement table
+                -- Save the result for later to be included in the performance plot
+                let rate :: Double
+                    rate = fromRational $ fromIntegral queriesEachTick * 1_000 % time
+                -- Print a status report while running the benchmark
+                printf
+                  (Fold.fold [
+                    "    [%",
+                    show . length $ show tickCountEnding,
+                    "d/",
+                    show tickCountEnding,
+                    "]:    %9.01f ops/sec",
+                    "    with debt = %8d\n"
+                  ])
+                  tickIndex
+                  rate
+                  debtCurr
+                pure (debtCurr, paidCurr, base, time)
+
+          -- Phase 1 measurements: Debt = 100%
+          resultsPhase1 <- forM indicesPhase1 $ \step -> do
+            measurePerformance step
+
+          -- Phase 2 measurements: Debt ∈ [0%, 99%]
+          resultsPhase2 <- forM indicesPhase2 $ \step -> do
+            LSM.UnionDebt debtPrev <- LSM.remainingUnionDebt table
+            -- When there is debt remaining, supply the fixed credits-per-tick.
+            when (debtPrev > 0) . void $
+              LSM.supplyUnionCredits table (LSM.UnionCredits paymentPerTick)
+            measurePerformance step
+
+          -- Phase 3 measurements: Debt = 0%
+          resultsPhase3 <- forM indicesPhase3 $ \step -> do
+            measurePerformance step
+
+          pure $ mconcat [ resultsPhase1, resultsPhase2, resultsPhase3 ]
+
+    let (balances', payments', baseline, operations) = List.unzip4 measurements
+        maxValue = maximum operations
+        standardize xs =
+          let maxInput = toInteger $ maximum xs
+              scale :: Integral i=> i -> Integer
+              scale x = ceiling $ (fromIntegral x * maxValue) % maxInput
+          in  scale <$> xs
+        balances = standardize balances'
+        payments = standardize payments'
+        noDebtIndex = fst . head . dropWhile ((> 0) . snd) $ zip indicesDomain balances
+
+        labelX = "Percent of debt repaid: \"clamped\" to range [0%, 100%]"
+        labelY = "Time to perform " <> sep1000th ',' queriesEachTick <> " lookups (ms)"
+        labelP = unwords
+          [ "Measuring Incremental Union of"
+          , show $ tableCount gopts
+          , "Tables Containing"
+          , sep1000th ',' $ initialSize gopts
+          , "Entries Each"
+          ]
+
+    -- Generate a performance plot based on the benchmark results.
+    Plot.toFile Plot.def (rootDir gopts <> "/" <> deriveFileNameForPlot gopts) $ do
+      let colorD = Color.sRGB 1.000 0.625 0.5 `Plot.withOpacity` 0.500
+      let colorE = Color.sRGB 0.875 1.000 0.125 `Plot.withOpacity` 0.625
+
+      Plot.layout_x_axis . Plot.laxis_override .= Plot.axisGridHide
+      Plot.layout_x_axis . Plot.laxis_title    .= labelX
+      Plot.layout_y_axis . Plot.laxis_title    .= labelY
+      Plot.layout_title  .= labelP
+      Plot.layout_margin .= 30
+      Plot.layout_legend . Plot._Just . Plot.legend_margin .= 30
+
+      Plot.setColors $ Plot.opaque <$> [ Color.royalblue ]
+      Plot.plot $ Plot.line "Timing of Baseline Table (identical table without unions)"
+        [ zip indicesDomain baseline ]
+
+      Plot.setColors $ Plot.opaque <$> [ Color.red ]
+      Plot.plot $ "Start Supplying Credits" `plotAsymptoteAt` (000 :: Integer)
+
+      Plot.setColors $ Plot.opaque <$> [ Color.green ]
+      Plot.plot $ "Debt Fully Repaid" `plotAsymptoteAt` noDebtIndex
+
+      Plot.plot $ fillBetween colorD "Debt Balance Repaid (%)"
+        [ (d, (0,v)) | (d, v) <- zip indicesDomain balances ]
+
+      when (noDebtIndex /= 100) $ do
+        Plot.setColors $ Plot.opaque <$> [ Color.blue ]
+        Plot.plot $ "All Credits Supplied" `plotAsymptoteAt` (100 :: Integer)
+
+      let notAllEqual = any (uncurry (/=)) $ zip balances payments
+      when notAllEqual $ do
+        Plot.plot $ fillBetween colorE "Excess Credits (%)"
+          [ (d, (v,w)) | (d, v, w) <- zip3 indicesDomain balances payments ]
+
+      Plot.setColors $ Plot.opaque <$> [ Color.black ]
+      Plot.plot $ Plot.line "Timing of Unioned Table"
+        [ zip indicesDomain operations ]
+
+-------------------------------------------------------------------------------
+-- Plotting results
+-------------------------------------------------------------------------------
+
+plotAsymptoteAt :: (Integral i, Num x) => String -> i -> Plot.EC l20 (Plot.PlotLines x y)
+plotAsymptoteAt str i = do
+      let x = makeValue $ fromIntegral i
+      vLines <- Plot.line str [[]]
+      pure $ vLines { Plot._plot_lines_limit_values = [[(x, Plot.LMin), (x, Plot.LMax)]] }
+
+makeValue :: a -> Plot.Limit a
+makeValue x = Plot.LValue x
+
+fillBetween :: Plot.AlphaColour Double -> String -> [(x, (y, y))] -> Plot.EC l20 (Plot.PlotFillBetween x y)
+fillBetween color title vs = Plot.liftEC $ do
+  Plot.plot_fillbetween_title .= title
+  Plot.plot_fillbetween_style .= Plot.solidFillStyle color
+  Plot.plot_fillbetween_values .= vs
+
+deriveFileNameForPlot :: GlobalOpts  -> FilePath
+deriveFileNameForPlot gOpts =
+    let partTable = show $ tableCount gOpts
+        partWidth = sep1000th '_' $ initialSize gOpts
+        partSeed0 = printf "SEED_%016x" (seed gOpts)
+    in  List.intercalate "-"
+          [ "benchmark"
+          , partTable <> "x" <> partWidth
+          , partSeed0
+          ] <> ".png"
+
+sep1000th :: Integral i => Char -> i -> String
+sep1000th sep = reverse . List.intercalate [sep] . fmap Fold.toList . groupsOfN 3 . reverse . show . toInteger
 
 -------------------------------------------------------------------------------
 -- sequential
 -------------------------------------------------------------------------------
 
-type LookupResults = V.Vector (K, LSM.LookupResult V ())
+type LookupResults = V.Vector (K, Maybe V)
+
+assignLookupResults :: V.Vector K -> V.Vector (Maybe V) -> LookupResults
+assignLookupResults ls = V.zip ls . fmap (fmap (const mempty))
 
 {-# INLINE sequentialIteration #-}
 sequentialIteration :: LatencyHandle
-                    -> (Int -> LookupResults -> IO ())
-                    -> Int
-                    -> Int
-                    -> LSM.Table IO K V B
-                    -> Int
-                    -> MCG.MCG
-                    -> IO MCG.MCG
-sequentialIteration h output !initialSize !batchSize !tbl !b !g =
-    withTimedBatch h b $ \tref -> do
-    let (!g', ls, is) = generateBatch initialSize batchSize g b
-
+                      -> (Int -> LookupResults -> IO ())
+                      -> LSM.Table K V
+                      -> (Int, V.Vector K)
+                      -> IO ()
+sequentialIteration h output !tbl (!b, !ls) = withTimedBatch h b $ \tref -> do
     -- lookups
     results <- timeLatency tref $ LSM.lookups tbl ls
-    output b (V.zip ls (fmap (fmap (const ())) results))
-
-    -- deletes and inserts
-    _ <- timeLatency tref $ LSM.updates tbl is
-
-    -- continue to the next batch
-    return g'
-
+    output b $ assignLookupResults ls results
 
 sequentialIterations :: LatencyHandle
-                     -> (Int -> LookupResults -> IO ())
-                     -> Int -> Int -> Int -> Word64
-                     -> LSM.Table IO K V B
-                     -> IO ()
-sequentialIterations h output !initialSize !batchSize !batchCount !seed !tbl = do
+                       -> (Int -> LookupResults -> IO ())
+                       -> [V.Vector K]
+                       -> LSM.Table K V
+                       -> IO (Integer, RTSStatsDiff Triple, ProcIODiff)
+sequentialIterations h output allBatches tbl = do
     createGnuplotExampleFileSequential
     hPutHeaderSequential h
-    void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
-      sequentialIteration h output initialSize batchSize tbl b g
-  where
-    g0 = initGen initialSize batchSize batchCount seed
-
-{-# INLINE sequentialIterationLO #-}
-sequentialIterationLO :: (Int -> LookupResults -> IO ())
-                      -> Int
-                      -> Int
-                      -> LSM.Table IO K V B
-                      -> Int
-                      -> MCG.MCG
-                      -> IO MCG.MCG
-sequentialIterationLO output !initialSize !batchSize !tbl !b !g = do
-    let (!g', ls, _is) = generateBatch initialSize batchSize g b
-
-    -- lookups
-    results <- LSM.lookups tbl ls
-    output b (V.zip ls (fmap (fmap (const ())) results))
-
-    -- continue to the next batch
-    return g'
-
-sequentialIterationsLO :: (Int -> LookupResults -> IO ())
-                       -> Int -> Int -> Int -> Word64
-                       -> LSM.Table IO K V B
-                       -> IO ()
-sequentialIterationsLO output !initialSize !batchSize !batchCount !seed !tbl =
-    void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
-      sequentialIterationLO output initialSize batchSize tbl b g
-  where
-    g0 = initGen initialSize batchSize batchCount seed
+    (x,y,z) <- timed_ $ forM_ (zip [0 ..] allBatches) $ sequentialIteration h output tbl
+    pure (x,y,z)
 
 -------------------------------------------------------------------------------
 -- pipelined
@@ -697,9 +815,6 @@ sequentialIterationsLO output !initialSize !batchSize !batchCount !seed !tbl =
 
 1. Lookups (db_n-1) tx_n+0
 2. Sync ?  (db_n+0, updates)
-3. db_n+1 <- Dup (db_n+0)
-   Updates (db_n+1) tx_n+0
-4. Sync !  (db_n+1, updates)
 
 Thus for two threads running iterations concurrently, it looks like this:
 
@@ -740,66 +855,46 @@ And the initial setup looks like this:
 -}
 pipelinedIteration :: LatencyHandle
                    -> (Int -> LookupResults -> IO ())
+                   -> MVar (LSM.Table K V)
+                   -> MVar (LSM.Table K V)
+                   -> MVar (V.Vector K)
+                   -> MVar (V.Vector K)
+                   -> MVar [V.Vector K]
+                   -> LSM.Table K V
                    -> Int
-                   -> Int
-                   -> MVar (LSM.Table IO K V B, Map K (LSM.Update V B))
-                   -> MVar (LSM.Table IO K V B, Map K (LSM.Update V B))
-                   -> MVar MCG.MCG
-                   -> MVar MCG.MCG
-                   -> LSM.Table IO K V B
-                   -> Int
-                   -> IO (LSM.Table IO K V B)
-pipelinedIteration h output !initialSize !batchSize
+                   -> IO (LSM.Table K V)
+pipelinedIteration h output
                    !syncTblIn !syncTblOut
-                   !syncRngIn !syncRngOut
+                   !syncVecIn !syncVecOut
+                   !queue
                    !tbl_n !b =
     withTimedBatch h b $ \tref -> do
-    g <- takeMVar syncRngIn
-    let (!g', !ls, !is) = generateBatch initialSize batchSize g b
+    ls_curr <- takeMVar syncVecIn
 
     -- 1: perform the lookups
-    lrs <- timeLatency tref $ LSM.lookups tbl_n ls
+    lrs <- timeLatency tref $ LSM.lookups tbl_n ls_curr
 
     -- 2. sync: receive updates and new table
     tbl_n1 <- timeLatency tref $ do
-      putMVar syncRngOut g'
-      (tbl_n1, delta) <- takeMVar syncTblIn
+      tbl_n1 <- takeMVar syncTblIn
+      output b $ assignLookupResults ls_curr lrs
 
       -- At this point, after syncing, our peer is guaranteed to no longer be
       -- using tbl_n. They used it to generate tbl_n+1 (which they gave us).
-      LSM.close tbl_n
-      output b $! applyUpdates delta (V.zip ls lrs)
+      LSM.closeTable tbl_n
       pure tbl_n1
 
-    -- 3. perform the inserts and report outputs (in any order)
-    tbl_n2 <- timeLatency tref $ do
-      tbl_n2 <- LSM.duplicate tbl_n1
-      LSM.updates tbl_n2 is
-      pure tbl_n2
-
-    -- 4. sync: send the updates and new table
-    timeLatency tref $  do
-      let delta' :: Map K (LSM.Update V B)
-          !delta' = Map.fromList (V.toList is)
-      putMVar syncTblOut (tbl_n2, delta')
-
-    return tbl_n2
-  where
-    applyUpdates :: Map K (LSM.Update V a)
-                 -> V.Vector (K, LSM.LookupResult V b)
-                 -> V.Vector (K, LSM.LookupResult V ())
-    applyUpdates m lrs =
-        flip V.map lrs $ \(k, lr) ->
-          case Map.lookup k m of
-            Nothing -> (k, fmap (const ()) lr)
-            Just u  -> (k, updateToLookupResult u)
+    ls_next <- dequeue queue
+    putMVar syncTblOut tbl_n1
+    putMVar syncVecOut ls_next
+    pure tbl_n1
 
 pipelinedIterations :: LatencyHandle
                     -> (Int -> LookupResults -> IO ())
-                    -> Int -> Int -> Int -> Word64
-                    -> LSM.Table IO K V B
-                    -> IO ()
-pipelinedIterations h output !initialSize !batchSize !batchCount !seed tbl_0 = do
+                    -> [V.Vector K]
+                    -> LSM.Table K V
+                    -> IO (Integer, RTSStatsDiff Triple, ProcIODiff)
+pipelinedIterations h output allBatches tbl_0 = do
     createGnuplotExampleFilePipelined
     hPutHeaderPipelined h
     n <- getNumCapabilities
@@ -807,90 +902,53 @@ pipelinedIterations h output !initialSize !batchSize !batchCount !seed tbl_0 = d
 
     syncTblA2B <- newEmptyMVar
     syncTblB2A <- newEmptyMVar
-    syncRngA2B <- newEmptyMVar
-    syncRngB2A <- newEmptyMVar
+    syncVecA2B <- newEmptyMVar
+    syncVecB2A <- newEmptyMVar
+    queryQueue <- newEmptyMVar
 
-    let g0 = initGen initialSize batchSize batchCount seed
+    putMVar queryQueue allBatches
 
     tbl_1 <- LSM.duplicate tbl_0
-    let prelude = do
-          let (g1, ls0, is0) = generateBatch initialSize batchSize g0 0
+    let !batchSize = length allBatches
+
+        prelude = do
+          ls0 <- dequeue queryQueue
           lrs0 <- LSM.lookups tbl_0 ls0
-          output 0 $! V.zip ls0 (fmap (fmap (const ())) lrs0)
-          LSM.updates tbl_1 is0
-          let !delta = Map.fromList (V.toList is0)
-          putMVar syncTblA2B (tbl_1, delta)
-          putMVar syncRngA2B g1
+          output 0 $! V.zip ls0 (fmap (fmap (const mempty)) lrs0)
+          putMVar syncTblA2B tbl_1
+          vecNext <- dequeue queryQueue
+          putMVar syncVecA2B vecNext
 
         threadA =
-          forFoldM_ tbl_1 [ 2, 4 .. batchCount - 1 ] $ \b tbl_n ->
-            pipelinedIteration h output initialSize batchSize
+          forFoldM_ tbl_1 [ 2, 4 .. batchSize - 1 ] $ \b tbl_n ->
+            pipelinedIteration h output
                                syncTblB2A syncTblA2B -- in, out
-                               syncRngB2A syncRngA2B -- in, out
+                               syncVecB2A syncVecA2B -- in, out
+                               queryQueue
                                tbl_n b
 
         threadB =
-          forFoldM_ tbl_0 [ 1, 3 .. batchCount - 1 ] $ \b tbl_n ->
-            pipelinedIteration h output initialSize batchSize
+          forFoldM_ tbl_0 [ 1, 3 .. batchSize - 1 ] $ \b tbl_n ->
+            pipelinedIteration h output
                                syncTblA2B syncTblB2A -- in, out
-                               syncRngA2B syncRngB2A -- in, out
+                               syncVecA2B syncVecB2A -- in, out
+                               queryQueue
                                tbl_n b
 
-    -- We do batch 0 as a special prelude to get the pipeline started...
-    prelude
-    -- Run the pipeline: batches 2,4,6... concurrently with batches 1,3,5...
-    -- If run with +RTS -N2 then we'll put each thread on a separate core.
-    withAsyncOn 0 threadA $ \ta ->
-      withAsyncOn 1 threadB $ \tb ->
-        waitBoth ta tb >> return ()
+    let operations = do
+          -- We do batch 0 as a special prelude to get the pipeline started...
+          prelude
+          -- Run the pipeline: batches 2,4,6... concurrently with batches 1,3,5...
+          -- If run with +RTS -N2 then we'll put each thread on a separate core.
+          withAsyncOn 0 threadA $ \ta ->
+            withAsyncOn 1 threadB $ \tb ->
+              waitBoth ta tb >> return ()
 
--------------------------------------------------------------------------------
--- Testing
--------------------------------------------------------------------------------
+    (x,y,z) <- timed_ operations
+    pure (x,y,z)
 
-pureReference :: Int -> Int -> Int -> Word64 -> [V.Vector (K, LSM.LookupResult V ())]
-pureReference !initialSize !batchSize !batchCount !seed =
-    generate g0 Map.empty 0
-  where
-    g0 = initGen initialSize batchSize batchCount seed
-
-    generate !_ !_ !b | b == batchCount = []
-    generate !g !m !b = results : generate g' m' (b+1)
-      where
-        (g', lookups, inserts) = generateBatch initialSize batchSize g b
-        !results = V.map (lookup m) lookups
-        !m'      = Fold.foldl' (flip (uncurry Map.insert)) m inserts
-
-    lookup m k =
-      case Map.lookup k m of
-        Nothing -> (,) k LSM.NotFound
-        Just u  -> (,) k $! updateToLookupResult u
-
-updateToLookupResult :: LSM.Update v b -> LSM.LookupResult v ()
-updateToLookupResult (LSM.Insert v Nothing)  = LSM.Found v
-updateToLookupResult (LSM.Insert v (Just _)) = LSM.FoundWithBlob v ()
-updateToLookupResult  LSM.Delete             = LSM.NotFound
-
--- | Return the adjacent batches where there is overlap between one batch's
--- inserts and the next batch's lookups. Testing the pipelined version needs
--- some overlap to get proper coverage. So this function is used as a coverage
--- check.
---
-batchOverlaps :: Int -> Int -> Int -> Word64 -> [IS.IntSet]
-batchOverlaps initialSize batchSize batchCount seed =
-    let xs = generate g0 0
-
-     in filter (not . IS.null)
-      $ map (\((_, is),(ls, _)) -> IS.intersection (intSetFromVector is)
-                                                   (intSetFromVector ls))
-      $ zip xs (tail xs)
-  where
-    generate _ b | b == batchCount = []
-    generate g b = (lookups, inserts) : generate g' (b+1)
-      where
-        (g', lookups, inserts) = generateBatch' initialSize batchSize g b
-
-    g0 = initGen initialSize batchSize batchCount seed
+dequeue :: Monoid a => MVar [a] -> IO a
+dequeue q = modifyMVar q $ pure . swap . fromMaybe (mempty, []) . List.uncons
 
 -------------------------------------------------------------------------------
 -- measure batch latency
@@ -1007,7 +1065,7 @@ main = do
     print gopts
     print cmd
     case cmd of
-        CmdSetup opts  -> doSetup gopts opts
+        CmdSetup       -> doSetup gopts
         CmdDryRun opts -> doDryRun gopts opts
         CmdRun opts    -> doRun gopts opts
   where
@@ -1026,8 +1084,20 @@ forFoldM_ !s0 xs0 f = go s0 xs0
       !s' <- f x s
       go s' xs
 
-intSetFromVector :: V.Vector Word64 -> IS.IntSet
-intSetFromVector = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty
+traverseWithRNG :: forall a b rng. rng -> [a] -> (rng -> a -> (rng,b)) -> (rng, [b])
+traverseWithRNG !s0 xs0 f =
+    let stateful :: forall s. ST s (rng, [b])
+        stateful = do
+          genRef <- newSTRef s0
+          let action a = do
+                sCurr <- readSTRef genRef
+                let (sNext,b) = f sCurr a
+                writeSTRef genRef sNext
+                pure b
+          result <- traverse action xs0
+          sLast <- readSTRef genRef
+          pure (sLast, result)
+    in runST stateful
 
 -------------------------------------------------------------------------------
 -- unused for now

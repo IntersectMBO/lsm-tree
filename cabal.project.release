@@ -10,7 +10,7 @@ packages:
 tests: True
 benchmarks: True
 
--- this prevents occurence of Hackage bloomfilter anywhere in the install plan
+-- this prevents occurrence of Hackage bloomfilter anywhere in the install plan
 -- that is overconstraining, as we'd only need to make sure lsm-tree
 -- doesn't depend on Hackage bloomfilter.
 -- Luckily, bloomfilter is not commonly used package, so this is good enough.
@@ -38,3 +38,10 @@ source-repository-package
   type: git
   location: https://github.com/well-typed/quickcheck-lockstep
   tag: a2d95e9d0cdee376353ad9587faecc68a5c1f0f0
+
+-- For Chart-diagrams "backend" package compatibility with ghc-9.12
+allow-newer:
+  diagrams-lib:base,
+  diagrams-postscript:base,
+  diagrams-svg:base,
+  svg-builder:base,
