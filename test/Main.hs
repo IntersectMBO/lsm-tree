@@ -35,6 +35,7 @@ import qualified Test.Database.LSMTree.Internal.Serialise.Class
 import qualified Test.Database.LSMTree.Internal.Snapshot.Codec
 import qualified Test.Database.LSMTree.Internal.Snapshot.Codec.Golden
 import qualified Test.Database.LSMTree.Internal.Snapshot.FS
+import qualified Test.Database.LSMTree.Internal.Unsliced
 import qualified Test.Database.LSMTree.Internal.Vector
 import qualified Test.Database.LSMTree.Internal.Vector.Growing
 import qualified Test.Database.LSMTree.Internal.WriteBufferBlobs.FS
@@ -82,6 +83,7 @@ main = do
     , Test.Database.LSMTree.Internal.Snapshot.Codec.tests
     , Test.Database.LSMTree.Internal.Snapshot.Codec.Golden.tests
     , Test.Database.LSMTree.Internal.Snapshot.FS.tests
+    , Test.Database.LSMTree.Internal.Unsliced.tests
     , Test.Database.LSMTree.Internal.Vector.tests
     , Test.Database.LSMTree.Internal.Vector.Growing.tests
     , Test.Database.LSMTree.Internal.WriteBufferBlobs.FS.tests
