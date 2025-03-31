@@ -94,7 +94,8 @@ import           Database.LSMTree.Common (BlobRefInvalidError (..),
                      SessionDirLockedError (..), SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
                      SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableCorruptedError (..), TableNotCompatibleError (..))
+                     TableCorruptedError (..),
+                     TableUnionNotCompatibleError (..))
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
@@ -483,7 +484,7 @@ handleSomeException e =
     , handleSessionClosedError <$> fromException e
     , handleTableClosedError <$> fromException e
     , handleTableCorruptedError <$> fromException e
-    , handleTableNotCompatibleError <$> fromException e
+    , handleTableUnionNotCompatibleError <$> fromException e
     , handleSnapshotExistsError <$> fromException e
     , handleSnapshotDoesNotExistError <$> fromException e
     , handleSnapshotCorruptedError <$> fromException e
@@ -528,12 +529,12 @@ handleTableClosedError = \case
 
 handleTableCorruptedError :: TableCorruptedError -> Model.Err
 handleTableCorruptedError = \case
-  ErrLookupByteCountDiscrepancy _ _ -> Model.ErrTableCorrupted
+  ErrLookupByteCountDiscrepancy{} -> Model.ErrTableCorrupted
 
-handleTableNotCompatibleError :: TableNotCompatibleError -> Model.Err
-handleTableNotCompatibleError = \case
-  ErrTableTypeMismatch _ _ -> Model.ErrTableTypeMismatch
-  ErrTableSessionMismatch _ _ -> Model.ErrTableSessionMismatch
+handleTableUnionNotCompatibleError :: TableUnionNotCompatibleError -> Model.Err
+handleTableUnionNotCompatibleError = \case
+  ErrTableUnionHandleTypeMismatch{} -> Model.ErrTableUnionHandleTypeMismatch
+  ErrTableUnionSessionMismatch{} -> Model.ErrTableUnionSessionMismatch
 
 handleSnapshotExistsError :: SnapshotExistsError -> Model.Err
 handleSnapshotExistsError = \case
