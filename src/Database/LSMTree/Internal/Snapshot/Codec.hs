@@ -129,7 +129,7 @@ readFileSnapshotMetaData hfs contentPath checksumPath = do
       case Map.lookup checksumFileName checksumFile of
         Nothing ->
           throwIO $ FileFormatError
-                      checksumPath
+                      (FS.mkFsErrorPath hfs checksumPath)
                       ("key not found: " <> show checksumFileName)
         Just checksum -> pure checksum
 

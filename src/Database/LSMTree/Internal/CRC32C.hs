@@ -419,14 +419,17 @@ expectChecksum fp expected checksum =
   File format errors
 -------------------------------------------------------------------------------}
 
-data FileFormatError = FileFormatError FsPath String
+--TODO: move this somewhere more appropriate
+data FileFormatError = FileFormatError FsErrorPath String
   deriving stock Show
   deriving anyclass Exception
 
 expectValidFile ::
      MonadThrow f
-  => FsPath
+  => HasFS f h
+  -> FsPath
   -> Either String a
   -> f a
-expectValidFile _  (Right x)  = pure x
-expectValidFile fp (Left err) = throwIO $ FileFormatError fp err
+expectValidFile _   _  (Right x)  = pure x
+expectValidFile hfs fp (Left err) =
+    throwIO $ FileFormatError (mkFsErrorPath hfs fp) err
