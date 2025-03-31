@@ -36,8 +36,8 @@ source-repository-package
     fs-api
     fs-sim
 
--- ghc-9.12 and shrinkVar
+-- getVarContext
 source-repository-package
   type: git
   location: https://github.com/well-typed/quickcheck-lockstep
-  tag: a2d95e9d0cdee376353ad9587faecc68a5c1f0f0
+  tag: e5a485e84d1ab050674d5684c8b902df44ad9a1d

@@ -42,9 +42,12 @@ module Test.Database.LSMTree.StateMachine (
   , Key (..)
   , Value (..)
   , Blob (..)
+  , C
   , StateModel (..)
   , Action (..)
   , Action' (..)
+    -- * Generators and shrinkers
+  , findOpenTableVars
   ) where
 
 import           Control.ActionRegistry (AbortActionRegistryError (..),
@@ -1769,8 +1772,34 @@ catchErr hs action = catches (Right <$> action) (fmap f hs)
     f (Handler h) = Handler $ \e -> maybe (throwIO e) (pure . Left) =<< h e
 
 {-------------------------------------------------------------------------------
-  Generator and shrinking
+  Generators and shrinkers
 -------------------------------------------------------------------------------}
+
+findOpenTableVars ::
+     ( C k v b
+     , Eq (Class.TableConfig h)
+     , Show (Class.TableConfig h)
+     , Arbitrary (Class.TableConfig h)
+     , Typeable h
+     )
+  => ModelState h
+  -> ModelVarContext (ModelState h)
+  -> [Var h (WrapTable h IO k v b)]
+findOpenTableVars (ModelState st _) ctx = tableVars
+  where
+    tableVars =
+      [ fromRight v
+      | v <- findVars ctx Proxy
+      , case lookupVar ctx v of
+          MEither (Left _)                  -> False
+          MEither (Right (MTable t)) ->
+            Map.member (Model.tableID t) (Model.tables st)
+      ]
+
+fromRight ::
+      Var h (Either Model.Err a)
+  -> Var h a
+fromRight = mapGVar (\op -> OpFromRight `OpComp` op)
 
 arbitraryActionWithVars ::
      forall h k v b. (
@@ -1786,7 +1815,7 @@ arbitraryActionWithVars ::
   -> ModelVarContext (ModelState h)
   -> ModelState h
   -> Gen (Any (LockstepAction (ModelState h)))
-arbitraryActionWithVars _ label ctx (ModelState st _stats) =
+arbitraryActionWithVars _ label ctx mst@(ModelState st _stats) =
     QC.frequency $
       concat
         [ genActionsSession
@@ -1826,15 +1855,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genTableVar = QC.elements tableVars
 
-    tableVars :: [Var h (WrapTable h IO k v b)]
-    tableVars =
-      [ fromRight v
-      | v <- findVars ctx Proxy
-      , case lookupVar ctx v of
-          MEither (Left _)                  -> False
-          MEither (Right (MTable t)) ->
-            Map.member (Model.tableID t) (Model.tables st)
-      ]
+    tableVars = findOpenTableVars mst ctx
 
     -- We already want to enable unions, but some operations on tables don't
     -- support unions yet. Therefore, we want to only run them on tables that
@@ -2045,11 +2066,6 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | not (null blobRefsVars)
         , let genErrors = pure Nothing -- TODO: generate errors
         ]
-
-    fromRight ::
-         Var h (Either Model.Err a)
-      -> Var h a
-    fromRight = mapGVar (\op -> OpFromRight `OpComp` op)
 
     genLookupKeys :: Gen (V.Vector k)
     genLookupKeys = QC.arbitrary

@@ -11,8 +11,11 @@ import           Control.Monad (void)
 import           Control.RefCount
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
+import           Data.Proxy (Proxy (..))
+import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree as R
+import qualified Database.LSMTree.Class as Class
 import qualified Database.LSMTree.Model.Session as Model
 import qualified Database.LSMTree.Model.Table as Model (values)
 import           Prelude
@@ -319,11 +322,9 @@ dl_blobRefsNotInvalidated = do
     anyActions_
 
     -- pick two tables and union them
-    t1 <- forAllVar @(Either Model.Err (WrapTable R.Table IO Key Value Blob))
-    t2 <- forAllVar @(Either Model.Err (WrapTable R.Table IO Key Value Blob))
-    t3 <- action $ Action Nothing $ Union
-      (unsafeMkGVar t1 (OpFromRight `OpComp` OpId))
-      (unsafeMkGVar t2 (OpFromRight `OpComp` OpId))
+    t1 <- findOpenTableVarsDL @R.Table @Key @Value @Blob
+    t2 <- findOpenTableVarsDL @R.Table @Key @Value @Blob
+    t3 <- action $ Action Nothing $ Union t1 t2
 
     -- do lookups on the union table (the result contains blob refs)
     ks <- V.fromList <$> forAllQ arbitraryQ
@@ -337,5 +338,29 @@ dl_blobRefsNotInvalidated = do
       (unsafeMkGVar res (OpComp OpLookupResults (OpFromRight `OpComp` OpId)))
 
     pure ()
+
+getModelVarContextDL :: DL (Lockstep s) (ModelVarContext s)
+getModelVarContextDL = getModelVarContext <$> getModelStateDL
+
+_findVarsDL :: forall a s. (Typeable a, InLockstep s) => DL (Lockstep s) [GVar (ModelOp s) a]
+_findVarsDL = do
+    ctx <- getModelVarContextDL
+    pure $ findVars @s ctx (Proxy @a)
+
+findOpenTableVarsDL ::
+     forall h k v b. (
+       C k v b
+     , Eq (Class.TableConfig h)
+     , Show (Class.TableConfig h)
+     , Arbitrary (Class.TableConfig h)
+     , Typeable h
+     )
+  => DL (Lockstep (ModelState h))
+        (GVar (ModelOp (ModelState h)) (WrapTable h IO k v b))
+findOpenTableVarsDL = do
+    st <- getModel <$> getModelStateDL
+    ctx <- getModelVarContextDL
+    let ts = findOpenTableVars st ctx
+    forAllQ $ elementsQ ts
 
 deriving via HasNoVariables Key instance HasVariables Key
