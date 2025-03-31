@@ -22,7 +22,6 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
-import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (Exception (displayException),
                      MonadThrow (..))
 import           Data.Bifunctor (Bifunctor (..))
@@ -130,16 +129,15 @@ readFileSnapshotMetaData hfs contentPath checksumPath = do
     checksumFile <- readChecksumsFile hfs checksumPath
     let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
 
-    expectedChecksum <- getChecksum checksumPath checksumFile checksumFileName
+    expectedChecksum <- getChecksum hfs checksumPath checksumFile checksumFileName
 
     (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
       n <- FS.hGetSize hfs h
       FS.hGetExactlyCRC32C hfs h n initialCRC32C
 
-    when (expectedChecksum /= actualChecksum) . throwIO $
-      ErrFileChecksumMismatch contentPath (unCRC32C expectedChecksum) (unCRC32C actualChecksum)
+    expectChecksum hfs contentPath expectedChecksum actualChecksum
 
-    expectValidFile contentPath FormatSnapshotMetaData (decodeSnapshotMetaData lbs)
+    expectValidFile hfs contentPath FormatSnapshotMetaData (decodeSnapshotMetaData lbs)
 
 decodeSnapshotMetaData :: ByteString -> Either String SnapshotMetaData
 decodeSnapshotMetaData lbs = bimap displayException (getVersioned . snd) (deserialiseFromBytes decode lbs)
