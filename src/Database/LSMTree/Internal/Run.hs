@@ -294,7 +294,8 @@ openFromDisk ::
 -- TODO: make exception safe
 openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     expectedChecksums <-
-       CRC.expectValidFile (runChecksumsPath runRunFsPaths) CRC.FormatChecksumsFile . fromChecksumsFile
+       CRC.expectValidFile fs (runChecksumsPath runRunFsPaths) CRC.FormatChecksumsFile
+           . fromChecksumsFile
          =<< CRC.readChecksumsFile fs (runChecksumsPath runRunFsPaths)
 
     -- verify checksums of files we don't read yet
@@ -304,10 +305,12 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
 
     -- read and try parsing files
     runFilter <-
-      CRC.expectValidFile (forRunFilterRaw paths) CRC.FormatBloomFilterFile . bloomFilterFromSBS
+      CRC.expectValidFile fs (forRunFilterRaw paths) CRC.FormatBloomFilterFile
+          . bloomFilterFromSBS
         =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
     (runNumEntries, runIndex) <-
-      CRC.expectValidFile (forRunIndexRaw paths) CRC.FormatIndexFile . Index.fromSBS indexType
+      CRC.expectValidFile fs (forRunIndexRaw paths) CRC.FormatIndexFile
+          . Index.fromSBS indexType
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
@@ -336,5 +339,5 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
         (sbs, !checksum) <- CRC.hGetExactlyCRC32C_SBS fs h (fromIntegral n) CRC.initialCRC32C
         -- drop the file from the OS page cache
         FS.hAdviseAll hbio h FS.AdviceDontNeed
-        CRC.expectChecksum fp expected checksum
+        CRC.expectChecksum fs fp expected checksum
         return sbs

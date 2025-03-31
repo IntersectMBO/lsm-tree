@@ -282,24 +282,30 @@ newtype ChecksumsFileName = ChecksumsFileName {unChecksumsFileName :: BSC.ByteSt
 
 {-# SPECIALISE
   getChecksum ::
-     FsPath
+     HasFS IO h
+  -> FsPath
   -> ChecksumsFile
   -> ChecksumsFileName
   -> IO CRC32C
   #-}
 getChecksum ::
      MonadThrow m
-  => FsPath
+  => HasFS m h
+  -> FsPath
   -> ChecksumsFile
   -> ChecksumsFileName
   -> m CRC32C
-getChecksum fsPath checksumsFile checksumsFileName =
+getChecksum hfs fsPath checksumsFile checksumsFileName =
   case Map.lookup checksumsFileName checksumsFile of
     Just checksum ->
       pure checksum
     Nothing ->
-      throwIO . ErrFileFormatInvalid fsPath FormatChecksumsFile $
-        "could not find checksum for " <> show (unChecksumsFileName checksumsFileName)
+      throwIO $
+        ErrFileFormatInvalid
+          (mkFsErrorPath hfs fsPath)
+          FormatChecksumsFile
+          ("could not find checksum for " <>
+           show (unChecksumsFileName checksumsFileName))
 
 {-# SPECIALISE
   readChecksumsFile ::
@@ -314,7 +320,7 @@ readChecksumsFile ::
   -> m ChecksumsFile
 readChecksumsFile fs path = do
     str <- withFile fs path ReadMode (\h -> hGetAll fs h)
-    expectValidFile path FormatChecksumsFile (parseChecksumsFile (BSL.toStrict str))
+    expectValidFile fs path FormatChecksumsFile (parseChecksumsFile (BSL.toStrict str))
 
 {-# SPECIALISE writeChecksumsFile :: HasFS IO h -> FsPath -> ChecksumsFile -> IO () #-}
 writeChecksumsFile :: MonadThrow m
@@ -414,24 +420,30 @@ checkCRC fs hbio dropCache expected fp = withFile fs fp ReadMode $ \h -> do
   hAdviseAll hbio h AdviceSequential
   !checksum <- hGetAllCRC32C' fs h defaultChunkSize initialCRC32C
   when dropCache $ hDropCacheAll hbio h
-  expectChecksum fp expected checksum
+  expectChecksum fs fp expected checksum
 
 {-# SPECIALISE
   expectChecksum ::
-     FsPath
+     HasFS IO h
+  -> FsPath
   -> CRC32C
   -> CRC32C
   -> IO ()
   #-}
 expectChecksum ::
      MonadThrow m
-  => FsPath
+  => HasFS m h
+  -> FsPath
   -> CRC32C
   -> CRC32C
   -> m ()
-expectChecksum fp expected checksum =
+expectChecksum hfs fp expected checksum =
     when (expected /= checksum) $
-      throwIO $ ErrFileChecksumMismatch fp (unCRC32C expected) (unCRC32C checksum)
+      throwIO $
+        ErrFileChecksumMismatch
+          (mkFsErrorPath hfs fp)
+          (unCRC32C expected)
+          (unCRC32C checksum)
 
 
 {-------------------------------------------------------------------------------
@@ -451,7 +463,7 @@ data FileCorruptedError
     = -- | The file fails to parse.
       ErrFileFormatInvalid
         -- | File.
-        !FsPath
+        !FsErrorPath
         -- | File format.
         !FileFormat
         -- | Error message.
@@ -459,7 +471,7 @@ data FileCorruptedError
     | -- | The file CRC32 checksum is invalid.
       ErrFileChecksumMismatch
         -- | File.
-        !FsPath
+        !FsErrorPath
         -- | Expected checksum.
         !Word32
         -- | Actual checksum.
@@ -469,19 +481,21 @@ data FileCorruptedError
 
 {-# SPECIALISE
   expectValidFile ::
-       FsPath
+       HasFS IO h
+    -> FsPath
     -> FileFormat
     -> Either String a
     -> IO a
   #-}
 expectValidFile ::
-     (MonadThrow m)
-  => FsPath
+     MonadThrow m
+  => HasFS f h
+  -> FsPath
   -> FileFormat
   -> Either String a
   -> m a
-expectValidFile _file _format (Right x) =
+expectValidFile _hfs _file _format (Right x) =
     pure x
-expectValidFile file format (Left msg) =
-    throwIO $ ErrFileFormatInvalid file format msg
+expectValidFile hfs file format (Left msg) =
+    throwIO $ ErrFileFormatInvalid (mkFsErrorPath hfs file) format msg
 

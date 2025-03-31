@@ -504,7 +504,8 @@ openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths = do
   -- TODO: This reads the blobfile twice: once to check the CRC and once more
   --       to copy it from the snapshot directory to the active directory.
   (expectedChecksumForKOps, expectedChecksumForBlob) <-
-    CRC.expectValidFile (writeBufferChecksumsPath snapWriteBufferPaths) CRC.FormatWriteBufferFile . fromChecksumsFileForWriteBufferFiles
+    CRC.expectValidFile hfs (writeBufferChecksumsPath snapWriteBufferPaths) CRC.FormatWriteBufferFile
+        . fromChecksumsFileForWriteBufferFiles
       =<< CRC.readChecksumsFile hfs (writeBufferChecksumsPath snapWriteBufferPaths)
   checkCRC hfs hbio False (unForKOps expectedChecksumForKOps) (writeBufferKOpsPath snapWriteBufferPaths)
   checkCRC hfs hbio False (unForBlob expectedChecksumForBlob) (writeBufferBlobPath snapWriteBufferPaths)
