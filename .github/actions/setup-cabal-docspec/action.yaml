@@ -1,0 +1,18 @@
+name: "Setup cabal-docspec"
+description: "Setup cabal-docspec"
+runs:
+  using: composite
+  steps:
+    - name: 🛠️ Install cabal-docspec (Linux)
+      if: ${{ runner.os == 'Linux' }}
+      run: |
+        mkdir -p "${{ github.workspace }}/.cabal-docspec/bin"
+        curl -sL https://github.com/phadej/cabal-extras/releases/download/cabal-docspec-0.0.0.20240414/cabal-docspec-0.0.0.20240414-x86_64-linux.xz > "${{ runner.temp }}/cabal-docspec.xz"
+        echo '2d18a3f79619e8ec5f11870f926f6dc2616e02a6c889315b7f82044b95a1adb9  ${{ runner.temp }}/cabal-docspec.xz' | sha256sum -c -
+        xz -d < "${{ runner.temp }}/cabal-docspec.xz" > "${{ github.workspace }}/.cabal-docspec/bin/cabal-docspec"
+        chmod a+x "${{ github.workspace }}/.cabal-docspec/bin/cabal-docspec"
+      shell: sh
+
+    - name: 🛠️ Add cabal-docspec to PATH
+      run: echo "${{ github.workspace }}/.cabal-docspec/bin" >> "$GITHUB_PATH"
+      shell: sh
