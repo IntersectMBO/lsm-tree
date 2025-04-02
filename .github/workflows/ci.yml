@@ -137,12 +137,9 @@ jobs:
 
     - name: 🧪 Test with cabal-docspec (Linux)
       if: ${{ !matrix.cabal-skip-tests && runner.os == 'Linux' }}
-      run: |
-        cabal-docspec \
-          --extra-package lsm-tree:prototypes \
-          -XNumericUnderscores \
-          -XOverloadedStrings \
-          -XTypeApplications
+      run: ./scripts/test-cabal-docspec.sh
+      env:
+        SKIP_CABAL_BUILD: true
 
     - name: 🏗️ Build documentation
       if: ${{ matrix.cabal-documentation }}

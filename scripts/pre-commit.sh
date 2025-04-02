@@ -46,6 +46,10 @@ echo
 ./scripts/lint-hlint.sh || echo > "$fail"
 echo
 
+# Test Haskell files with cabal-docspec
+./scripts/test-cabal-docspec.sh || echo > "$fail"
+echo
+
 # Check whether or not any subcommand failed:
 if [ -s "$fail" ]; then
     rm "$fail"
