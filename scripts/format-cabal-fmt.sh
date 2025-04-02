@@ -15,7 +15,7 @@ if [ ! "${cabal_fmt_installed_version}" = "${cabal_fmt_required_version}" ]; the
     exit 1
 fi
 
-# Check Cabal files with cabal-fmt
+# Format Cabal files with cabal-fmt
 echo "Formatting Cabal source files with cabal-fmt version ${cabal_fmt_required_version}"
 # shellcheck disable=SC2016
 if ! git ls-files --exclude-standard --no-deleted --deduplicate '*.cabal' | xargs -L 1 sh -c 'echo "$0" && cabal-fmt -c "$0" 2>/dev/null || (cabal-fmt -i "$0" && exit 1)'; then

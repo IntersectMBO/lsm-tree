@@ -15,7 +15,7 @@ if [ ! "${stylish_haskell_installed_version}" = "${stylish_haskell_required_vers
     exit 1
 fi
 
-# Check Haskell files with stylish-haskell
+# Format Haskell files with stylish-haskell
 echo "Formatting Haskell source files with stylish-haskell version ${stylish_haskell_required_version}"
 # shellcheck disable=SC2016
 if ! git ls-files --exclude-standard --no-deleted --deduplicate '*.hs' | xargs -L 50 stylish-haskell -i -c .stylish-haskell.yaml; then

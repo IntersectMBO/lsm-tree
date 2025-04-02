@@ -1,0 +1,16 @@
+name: "Print CPU info"
+description: "Prints CPU info"
+runs:
+  using: "composite"
+  steps:
+    - if: ${{ runner.os == 'macOS' }}
+      run: sysctl -a machdep.cpu
+      shell: sh
+
+    - if: ${{ runner.os == 'Linux' }}
+      run: cat /proc/cpuinfo
+      shell: sh
+
+    - if: ${{ runner.os == 'Windows' }}
+      run: wmic cpu get caption, deviceid, name, numberofcores, maxclockspeed, status
+      shell: cmd

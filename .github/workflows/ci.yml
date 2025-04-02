@@ -1,0 +1,333 @@
+name: CI
+
+on:
+  push:
+    branches:
+    - "main"
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Set the default shell on all platforms.
+defaults:
+  run:
+    shell: sh
+
+# Set the default GHC and Cabal versions.
+env:
+  DEFAULT_GHC_VERSION: "9.6"
+  DEFAULT_CABAL_VERSION: "3.10"
+  DEFAULT_CABAL_PROJECT_FILE: "cabal.project.debug"
+
+jobs:
+  ################################################################################
+  # Build
+  ################################################################################
+  build:
+    name: |
+      ${{ matrix.name 
+       || format(
+            'Build on {0}{1}{2}',
+            startsWith(matrix.os, 'ubuntu-') && 'Linux' || startsWith(matrix.os, 'macOS-') && 'macOS' || startsWith(matrix.os, 'windows-') && 'Windows',
+            matrix.ghc-version && format(' with GHC {0}', matrix.ghc-version),
+            matrix.cabal-version && format(' and Cabal {0}', matrix.cabal-version)
+          )
+       }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🗄️ Print Job info
+      run: |
+        echo 'matrix.os: ${{ matrix.os }}'
+        echo 'matrix.ghc-version: ${{ matrix.ghc-version || env.DEFAULT_GHC_VERSION }}'
+        echo 'matrix.cabal-version: ${{ matrix.os || env.DEFAULT_CABAL_VERSION }}'
+        echo 'matrix.cabal-flags: ${{ matrix.cabal-flags }}'
+        echo 'matrix.cabal-project-file: ${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}'
+        echo 'matrix.cabal-skip-tests: ${{ matrix.cabal-skip-tests || false }}'
+        echo 'matrix.cabal-skip-benchmarks: ${{ matrix.cabal-skip-benchmarks || false}}'
+        echo 'matrix.cabal-documentation: ${{ matrix.cabal-documentation || false }}'
+        echo 'toJSON(matrix): ${{ toJSON(matrix) }}'
+
+    - name: 🗄️ Print CPU info
+      uses: ./.github/actions/print-cpu-info
+
+    - name: 🛠️ Setup Haskell
+      id: setup-haskell
+      uses:  haskell-actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc-version || env.DEFAULT_GHC_VERSION }}
+        cabal-version: ${{ matrix.cabal-version || env.DEFAULT_CABAL_VERSION }}
+
+    - name: 🛠️ Setup system dependencies (Linux)
+      if: ${{ runner.os == 'Linux' }}
+      run: sudo apt-get update && sudo apt-get -y install liburing-dev librocksdb-dev
+      env:
+        DEBIAN_FRONTEND: "noninteractive"
+
+    - name: 🛠️ Configure
+      run: |
+        cabal configure \
+          --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}" \
+          ${{ matrix.cabal-skip-tests && '--disable-tests' || '--enable-tests' }} \
+          ${{ matrix.cabal-skip-benchmarks && '--disable-benchmarks' || '--enable-benchmarks' }} \
+          ${{ matrix.cabal-documentation && '--enable-documentation' || '--disable-documentation' }} \
+          --ghc-options="-Werror" \
+          --flag="${{ matrix.cabal-flags }}"
+        cat "${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}.local"
+
+    - name: 💾 Generate Cabal plan
+      run: |
+        cabal build all \
+          --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}" \
+          --dry-run
+
+    - name: 💾 Restore Cabal dependencies
+      uses: actions/cache/restore@v4
+      if: ${{ !env.ACT }}
+      id: cache-cabal
+      env:
+        key: build-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ env.key }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
+        restore-keys: ${{ env.key }}-
+
+    - name: 🛠️ Build Cabal dependencies
+      run: |
+        cabal build all \
+          --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}" \
+          --only-dependencies
+
+    - name: 💾 Save Cabal dependencies
+      uses: actions/cache/save@v4
+      if: ${{ !env.ACT && steps.cache-cabal.outputs.cache-hit != 'true' }}
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ steps.cache-cabal.outputs.cache-primary-key }}
+
+    - name: 🏗️ Build
+      if: ${{ !matrix.cabal-skip-tests }}
+      run: |
+        cabal build all \
+          --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}"
+
+    - name: 🧪 Test
+      if: ${{ !matrix.cabal-skip-tests }}
+      run: |
+        cabal test all \
+          -j1 \
+          --test-show-details=direct \
+          --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}"
+      env:
+        TASTY_TIMEOUT: "5m"
+
+    - name: 🛠️ Setup cabal-docspec (Linux)
+      if: ${{ !matrix.cabal-skip-tests && runner.os == 'Linux' }}
+      uses: ./.github/actions/setup-cabal-docspec
+
+    - name: 🧪 Test with cabal-docspec (Linux)
+      if: ${{ !matrix.cabal-skip-tests && runner.os == 'Linux' }}
+      run: ./scripts/test-cabal-docspec.sh
+      env:
+        SKIP_CABAL_BUILD: true
+
+    - name: 🏗️ Build documentation
+      if: ${{ matrix.cabal-documentation }}
+      run: cabal haddock-project
+
+    - name: 📦 Upload documentation
+      if: ${{ matrix.cabal-documentation }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: haddocks-${{ runner.os }}-ghc-${{ matrix.ghc-version || env.DEFAULT_GHC_VERSION }}-cabal-${{ matrix.cabal-version || env.DEFAULT_CABAL_VERSION }}
+        path: haddocks
+        if-no-files-found: error
+        retention-days: 1
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macOS-latest", "windows-latest"]
+        ghc-version: ["8.10", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
+        cabal-version: ["3.10"]
+        # The inclusion of these default keys in the matrix ensures that any
+        # entry under include that assigns these keys creates a new matrix entry
+        cabal-flags: [""]
+        cabal-project-file: [""]
+        cabal-documentation: [false]
+      
+        exclude:
+          # GHC 8.10 is not supported on macOS wit ARM CPU
+          - ghc-version: "8.10"
+            os: "macOS-latest"
+
+        include:
+          # Include builds for various special cases
+          - name: "Build on macOS with Intel CPU and GHC 8.10"
+            os: "macOS-13"
+            ghc-version: "8.10"
+          - name: "Build with +serialblockio"
+            os: "ubuntu-latest"
+            cabal-flags: "+serialblockio"
+          - name: "Build with cabal.project.release"
+            os: "ubuntu-latest"
+            cabal-project-file: "cabal.project.release"
+          # Include build for documentation
+          - name: "Build documentation"
+            os: "ubuntu-latest"
+            cabal-skip-tests: true
+            cabal-skip-benchmarks: true
+            cabal-documentation: true
+  
+  ################################################################################
+  # Lint with actionlint
+  ################################################################################
+  lint-actionlint:
+    name: Lint with actionlint
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Setup actionlint
+      uses: ./.github/actions/setup-actionlint
+      with:
+        actionlint-version: "1.7.7"
+
+    - name: 🎗️ Lint with actionlint
+      run: ./scripts/lint-actionlint.sh
+
+  ################################################################################
+  # Lint with cabal-fmt
+  ################################################################################
+  lint-cabal-fmt:
+    name: Lint with cabal-fmt
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Setup cabal-fmt
+      uses: ./.github/actions/setup-cabal-fmt
+      with:
+        cabal-fmt-version: "0.1.12"
+        ghc-version: ${{ env.DEFAULT_GHC_VERSION }}
+        cabal-version: ${{ env.DEFAULT_CABAL_VERSION }}
+        # The index-state is fixed to enable caching and ensure that the version
+        # regardless of the current state of Hackage head.
+        # If you want a newer version of cabal-fmt, use a more recent time.
+        hackage-index-state: "2024-04-27T12:31:04Z"
+
+    - name: 🎗️ Lint with cabal-fmt
+      run: ./scripts/format-cabal-fmt.sh && git diff --exit-code
+  
+  ################################################################################
+  # Lint with cabal
+  ################################################################################
+  lint-cabal:
+    name: Lint with cabal
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Setup Haskell
+      id: setup-haskell
+      uses:  haskell-actions/setup@v2
+      with:
+        ghc-version: ${{ env.DEFAULT_GHC_VERSION }}
+        cabal-version: ${{ env.DEFAULT_CABAL_VERSION }}
+        cabal-update: false
+
+    - name: 🎗️ Lint with cabal
+      run: ./scripts/lint-cabal.sh
+
+  ################################################################################
+  # Lint with stylish-haskell
+  ################################################################################
+  lint-stylish-haskell:
+    name: Lint with stylish-haskell
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Setup stylish-haskell
+      uses: ./.github/actions/setup-stylish-haskell
+      with:
+        stylish-haskell-version: "0.14.6.0"
+        ghc-version: ${{ env.DEFAULT_GHC_VERSION }}
+        cabal-version: ${{ env.DEFAULT_CABAL_VERSION }}
+        # The index-state is fixed to enable caching and ensure that the version
+        # regardless of the current state of Hackage head.
+        # If you want a newer version of stylish-haskell, use a more recent time.
+        hackage-index-state: "2024-04-10T14:36:07Z"
+
+    - name: 🎗️ Lint with stylish-haskell
+      run: ./scripts/format-stylish-haskell.sh && git diff --exit-code
+  
+  ################################################################################
+  # Lint with HLint
+  ################################################################################
+  lint-hlint:
+    name: Lint with HLint
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Setup HLint
+      uses: haskell-actions/hlint-setup@v2
+      with:
+        version: "3.8"
+
+    - name: 🎗️ Lint with HLint
+      run: ./scripts/lint-hlint.sh
+  
+  ################################################################################
+  # Publish documentation
+  ################################################################################
+  publish-documentation:
+    name: Publish documentation
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }}
+    needs: [build]
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.publish-pages.outputs.page_url }}
+
+    steps:
+      - name: 🛠️ Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: 📦 Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          # Ensure that the job that builds the documentation uses the default GHC and Cabal versions.
+          name: haddocks-Linux-ghc-${{ env.DEFAULT_GHC_VERSION }}-cabal-${{ env.DEFAULT_CABAL_VERSION }}
+          path: hadocks
+
+      - name: 📦 Upload documentation to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: haddocks
+
+      - name: 🚀 Publish documentation to Pages
+        id: publish-pages
+        uses: actions/deploy-pages@v4

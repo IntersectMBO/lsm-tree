@@ -1,0 +1,55 @@
+name: "Setup cabal-fmt"
+description: "Install a specific cabal-fmt version"
+inputs:
+  cabal-fmt-version:
+    required: true
+    description: "Version of cabal-fmt"
+  ghc-version:
+    required: true
+    description: "Version of GHC"
+  cabal-version:
+    required: true
+    description: "Version of cabal"
+  hackage-index-state:
+    required: false
+    description: "Timestamp for Hackage index"
+runs:
+  using: composite
+  steps:
+    - name: 💾 Restore cache
+      uses: actions/cache/restore@v4
+      if: ${{ !env.ACT }}
+      id: cache-cabal-fmt
+      with:
+        path: "${{ github.workspace }}/.cabal-fmt/bin"
+        key: ${{ runner.os }}-cabal-fmt-${{ inputs.cabal-fmt-version }}-input-state-${{ inputs.hackage-index-state }}
+
+    - name: 🛠️ Install Haskell
+      if: ${{ env.ACT || steps.cache-cabal-fmt.outputs.cache-hit != 'true' }}
+      uses: haskell-actions/setup@v2
+      id: setup-haskell
+      with:
+        ghc-version: ${{ inputs.ghc-version }}
+        cabal-version: ${{ inputs.cabal-version }}
+
+    - name: 🛠️ Install cabal-fmt
+      if: ${{ env.ACT || steps.cache-cabal-fmt.outputs.cache-hit != 'true' }}
+      run: |
+        mkdir --parents "${{ github.workspace }}/.cabal-fmt/bin"
+        cabal install cabal-fmt-${{ inputs.cabal-fmt-version }} \
+          ${{ inputs.hackage-index-state && format('--index-state={0}', inputs.hackage-index-state) }} \
+          --overwrite-policy=always \
+          --install-method=copy \
+          --installdir="${{ github.workspace }}/.cabal-fmt/bin"
+      shell: sh
+
+    - name: 🛠️ Add cabal-fmt to PATH
+      run: echo "${{ github.workspace }}/.cabal-fmt/bin" >> "$GITHUB_PATH"
+      shell: sh
+
+    - name: 💾 Save cache
+      uses: actions/cache/save@v4
+      if: ${{ !env.ACT && steps.cache-cabal-fmt.outputs.cache-hit != 'true' }}
+      with:
+        path: "${{ github.workspace }}/.cabal-fmt/bin"
+        key: ${{ steps.cache-cabal-fmt.outputs.cache-primary-key }}

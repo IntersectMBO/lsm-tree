@@ -1,0 +1,57 @@
+
+name: "Setup stylish-haskell"
+description: "Install a specific stylish-haskell version"
+inputs:
+  stylish-haskell-version:
+    required: true
+    description: "Version of stylish-haskell"
+  ghc-version:
+    required: true
+    description: "Version of GHC"
+  cabal-version:
+    required: true
+    description: "Version of cabal"
+  hackage-index-state:
+    required: false
+    description: "Timestamp for Hackage index"
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: 💾 Restore cache
+      uses: actions/cache/restore@v4
+      if: ${{ !env.ACT }}
+      id: cache-stylish-haskell
+      with:
+        path: "${{ github.workspace }}/.stylish-haskell/bin"
+        key: ${{ runner.os }}-stylish-haskell-${{ inputs.stylish-haskell-version }}-input-state-${{ inputs.hackage-index-state }}
+
+    - name: 🛠️ Install Haskell
+      if: ${{ env.ACT || steps.cache-stylish-haskell.outputs.cache-hit != 'true' }}
+      uses: haskell-actions/setup@v2
+      id: setup-haskell
+      with:
+        ghc-version: ${{ inputs.ghc-version }}
+        cabal-version: ${{ inputs.cabal-version }}
+
+    - name: 🛠️ Install stylish-haskell
+      if: ${{ env.ACT || steps.cache-stylish-haskell.outputs.cache-hit != 'true' }}
+      run: |
+        mkdir --parents "${{ github.workspace }}/.stylish-haskell/bin"
+        cabal install stylish-haskell-${{ inputs.stylish-haskell-version }} \
+          ${{ inputs.hackage-index-state && format('--index-state={0}', inputs.hackage-index-state) }} \
+          --overwrite-policy=always \
+          --install-method=copy \
+          --installdir="${{ github.workspace }}/.stylish-haskell/bin"
+      shell: sh
+
+    - name: 🛠️ Add stylish-haskell to PATH
+      run: echo "${{ github.workspace }}/.stylish-haskell/bin" >> "$GITHUB_PATH"
+      shell: sh
+
+    - name: 💾 Save cache
+      uses: actions/cache/save@v4
+      if: ${{ !env.ACT && steps.cache-stylish-haskell.outputs.cache-hit != 'true' }}
+      with:
+        path: "${{ github.workspace }}/.stylish-haskell/bin"
+        key: ${{ steps.cache-stylish-haskell.outputs.cache-primary-key }}

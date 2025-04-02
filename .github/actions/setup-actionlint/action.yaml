@@ -1,0 +1,19 @@
+name: "Setup actionlint"
+description: "Install a specific actionlint version"
+inputs:
+  actionlint-version:
+    required: true
+    description: "Version of actionlint"
+runs:
+  using: composite
+  steps:
+    - name: 🛠️ Install actionlint
+      if: ${{ env.ACT || steps.cache-actionlint.outputs.cache-hit != 'true' }}
+      run: |
+        mkdir --parents "${{ github.workspace }}/.actionlint/bin"
+        bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) ${{ inputs.actionlint-version }} "${{ github.workspace }}/.actionlint/bin"
+      shell: bash
+
+    - name: 🛠️ Add actionlint to PATH
+      run: echo "${{ github.workspace }}/.actionlint/bin" >> "$GITHUB_PATH"
+      shell: sh
