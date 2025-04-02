@@ -191,6 +191,24 @@ jobs:
             cabal-skip-tests: true
             cabal-skip-benchmarks: true
             cabal-documentation: true
+  
+  ################################################################################
+  # Lint with actionlint
+  ################################################################################
+  lint-actionlint:
+    name: Lint with actionlint
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Setup actionlint
+      uses: ./.github/actions/setup-actionlint
+      with:
+        actionlint-version: "1.7.7"
+
+    - name: 🎗️ Lint with actionlint
+      run: ./scripts/lint-actionlint.sh
 
   ################################################################################
   # Lint with cabal-fmt

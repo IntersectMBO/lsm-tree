@@ -22,6 +22,10 @@ if [ ! "${unstaged_cabal_files}" = "" ]; then
     echo "${unstaged_cabal_files}"
 fi
 
+# Lint GitHub Actions workflows with actionlint
+./scripts/lint-actionlint.sh || echo > "$fail"
+echo
+
 # Format Cabal files with cabal-fmt
 ./scripts/format-cabal-fmt.sh || echo > "$fail"
 echo
