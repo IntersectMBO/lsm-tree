@@ -1,3 +1,6 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE StandaloneDeriving #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Main (main) where
@@ -16,7 +19,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "blockio-sim" [
+tests = testGroup "blockio:test-sim" [
       testProperty "prop_tryLockFileTwice" prop_tryLockFileTwice
     ]
 
