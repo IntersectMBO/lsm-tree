@@ -16,6 +16,7 @@ import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree as R
 import qualified Database.LSMTree.Class as Class
+import           Database.LSMTree.Extras (showPowersOf)
 import qualified Database.LSMTree.Model.Session as Model
 import qualified Database.LSMTree.Model.Table as Model (values)
 import           Prelude
@@ -327,17 +328,45 @@ dl_blobRefsNotInvalidated = do
     t3 <- action $ Action Nothing $ Union t1 t2
 
     -- do lookups on the union table (the result contains blob refs)
-    ks <- V.fromList <$> forAllQ arbitraryQ
+    s <- getModelStateDL
+    let ks = case getModel s of
+          ModelState Model.Model {tables} _ ->
+            V.fromList $ foldMap (undefined . snd) tables
     res <- action $ Action Nothing $ Lookups ks
       (unsafeMkGVar t3 (OpFromRight `OpComp` OpId))
 
-    -- TODO: progress t1 and t2 (supplying merge credits would be most direct)
+    -- progress t1 and t2 (supplying merge credits would be most direct)
+    anyActions_
+    -- upds1 <- V.fromList <$> forAllQ arbitraryQ
+    -- action $ Action Nothing $ Updates upds1 t1
+    -- upds2 <- V.fromList <$> forAllQ arbitraryQ
+    -- action $ Action Nothing $ Updates upds2 t2
+
+    action $ Action Nothing $ Close t1
+    action $ Action Nothing $ Close t2
 
     -- resolve the blob refs we obtained earlier
-    _blobs <- action $ Action Nothing $ RetrieveBlobs
-      (unsafeMkGVar res (OpComp OpLookupResults (OpFromRight `OpComp` OpId)))
+    let blobRefs = unsafeMkGVar res (OpComp OpLookupResults (OpFromRight `OpComp` OpId))
+    ctx <- getModelVarContextDL
+    monitorDL $ QC.tabulate "number of found entries" $ pure $ showPowersOf 2 $
+      case lookupVar ctx (unsafeMkGVar res (OpFromRight `OpComp` OpId)) of
+        MVector v -> V.length (V.filter (\(MLookupResult r) -> isFound r) v)
+    monitorDL $ QC.tabulate "number of blob refs" $ pure $ showPowersOf 2 $
+      case lookupVar ctx blobRefs of
+        MVector v -> V.length v
+
+    blobs <- action $ Action Nothing $ RetrieveBlobs blobRefs
+
+    ctx <- getModelVarContextDL
+    assert "blobs resolved successfully" $
+      case lookupVar ctx (unsafeMkGVar blobs OpId) of
+        MEither (Left _)  -> False
+        MEither (Right _) -> True
 
     pure ()
+  where
+    isFound NotFound = False
+    isFound _        = True
 
 getModelVarContextDL :: DL (Lockstep s) (ModelVarContext s)
 getModelVarContextDL = getModelVarContext <$> getModelStateDL
@@ -364,3 +393,4 @@ findOpenTableVarsDL = do
     forAllQ $ elementsQ ts
 
 deriving via HasNoVariables Key instance HasVariables Key
+deriving via HasNoVariables (Update Value Blob) instance HasVariables (Update Value Blob)

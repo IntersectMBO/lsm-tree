@@ -46,6 +46,7 @@ module Test.Database.LSMTree.StateMachine (
   , StateModel (..)
   , Action (..)
   , Action' (..)
+  , ModelValue (..)
     -- * Generators and shrinkers
   , findOpenTableVars
   ) where
