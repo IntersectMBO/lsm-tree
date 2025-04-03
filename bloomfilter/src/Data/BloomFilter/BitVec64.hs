@@ -26,14 +26,10 @@ import           Data.Word (Word64, Word8)
 
 import           GHC.Exts (Int (I#), prefetchByteArray0#, uncheckedIShiftRL#,
                      (+#))
+import qualified GHC.Exts
 import           GHC.ST (ST (ST))
 import           GHC.Word (Word64 (W64#))
 
-#if MIN_VERSION_base(4,17,0)
-import           GHC.Exts (remWord64#)
-#else
-import           GHC.Exts (remWord#)
-#endif
 
 -- | Bit vector backed up by an array of Word64
 --
@@ -115,9 +111,9 @@ roundUpTo64 i = unsafeShiftR (i + 63) 6
 -- | Like 'rem' but does not check for division by 0.
 unsafeRemWord64 :: Word64 -> Word64 -> Word64
 #if MIN_VERSION_base(4,17,0)
-unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `GHC.Exts.remWord64#` y#)
 #else
-unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `GHC.Exts.remWord#` y#)
 #endif
 
 w2i :: Word64 -> Int
