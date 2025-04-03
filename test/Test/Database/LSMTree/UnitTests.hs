@@ -8,6 +8,7 @@ module Test.Database.LSMTree.UnitTests (tests) where
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
+import           Data.Foldable (for_)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import qualified Data.Vector as V
@@ -37,6 +38,7 @@ tests =
       , testCase      "unit_unions_1"       unit_unions_1
       , testCase      "unit_union_credits"  unit_union_credits
       , testCase      "unit_union_credit_0" unit_union_credit_0
+      , testCase      "unit_union_blobref_invalidation" unit_union_blobref_invalidation
       ]
 
 unit_blobs :: (String -> IO ()) -> Assertion
@@ -213,6 +215,36 @@ unit_union_credit_0 =
         -- And the table is still vaguely cromulent
         r <- lookups table' [Key1 17]
         V.map ignoreBlobRef r @?= [Found (Value1 42)]
+
+-- | Blob refs into a union don't get invalidated when updating the union's
+-- input tables.
+unit_union_blobref_invalidation :: Assertion
+unit_union_blobref_invalidation =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+      t1 <- new @_ @Key1 @Value1 @Blob1 sess config
+      for_ ([0..99] :: [Word64]) $ \i ->
+        inserts t1 [(Key1 i, Value1 i, Just (Blob1 i))]
+      t2 <- union t1 t1
+
+      -- do lookups on the union table (the result contains blob refs)
+      res <- lookups t2 (Key1 <$> [0..99])
+
+      -- progress original table (supplying merge credits would be most direct)
+      inserts t1 (fmap (\i -> (Key1 i, Value1 i, Nothing)) [1000..2000])
+      close t1
+
+      -- resolve the blob refs we obtained earlier
+      _blobs <- retrieveBlobs sess (V.mapMaybe getBlobRef res)
+      return ()
+  where
+    config = defaultTableConfig { confWriteBufferAlloc = AllocNumEntries (NumEntries 4) }
+
+    getBlobRef :: LookupResult v b -> Maybe b
+    getBlobRef = \case
+      NotFound          -> Nothing
+      Found _           -> Nothing
+      FoundWithBlob _ b -> Just b
 
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())
