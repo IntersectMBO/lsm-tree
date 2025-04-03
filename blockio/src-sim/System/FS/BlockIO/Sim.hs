@@ -1,3 +1,7 @@
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module System.FS.BlockIO.Sim (
     fromHasFS
     -- * Initialisation helpers

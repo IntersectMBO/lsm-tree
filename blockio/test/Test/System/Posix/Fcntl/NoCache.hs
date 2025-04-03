@@ -26,14 +26,14 @@ tests = testGroup "Test.System.Posix.Fcntl.NoCache" []
 
 tests = testGroup "Test.System.Posix.Fcntl.NoCache"
     [ testCaseSteps "basic-read" $ \info -> do
-        withFile "lsm-tree.cabal" ReadMode $ \hdl -> do
+        withFile "blockio.cabal" ReadMode $ \hdl -> do
             GHC.FD {GHC.fdFD = fd} <- GHC.handleToFd hdl
             noCache <- readFcntlNoCache (Fd fd)
             info $ show noCache
             noCache @?= False
 
     , testCaseSteps "write-read" $ \info -> do
-        withFile "lsm-tree.cabal" ReadMode $ \hdl -> do
+        withFile "blockio.cabal" ReadMode $ \hdl -> do
             GHC.FD {GHC.fdFD = fd} <- GHC.handleToFd hdl
             writeFcntlNoCache (Fd fd) True
             noCache <- readFcntlNoCache (Fd fd)
