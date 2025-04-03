@@ -321,7 +321,7 @@ jobs:
         with:
           # Ensure that the job that builds the documentation uses the default GHC and Cabal versions.
           name: haddocks-Linux-ghc-${{ env.DEFAULT_GHC_VERSION }}-cabal-${{ env.DEFAULT_CABAL_VERSION }}
-          path: hadocks
+          path: haddocks
 
       - name: 📦 Upload documentation to Pages
         uses: actions/upload-pages-artifact@v3
