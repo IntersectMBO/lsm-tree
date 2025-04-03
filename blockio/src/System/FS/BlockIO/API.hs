@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE DoAndIfThenElse            #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE RankNTypes                 #-}
