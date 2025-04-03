@@ -261,7 +261,6 @@ type SerialisedNonEmptyRunData =
   QuickCheck
 -------------------------------------------------------------------------------}
 
-{- HLINT ignore "Hoist not" -}
 labelRunData :: SerialisedRunData -> Property -> Property
 labelRunData (RunData m) =
       tabulate "value size" valSizes

@@ -1,7 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_HADDOCK not-home #-}
-{- HLINT ignore "Redundant lambda" -}
-{- HLINT ignore "Use camelCase" -}
 
 -- | Incremental (in-memory portion of) run consruction
 --

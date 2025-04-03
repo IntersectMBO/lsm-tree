@@ -10,7 +10,7 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Int (Int16, Int32, Int64, Int8)
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64)
 import           System.IO (BufferMode (..), hSetBuffering, stdout)
 import           Test.Tasty
@@ -42,12 +42,12 @@ tests = testGroup "bloomfilter"
         ]
     , testGroup "equality"
         [ testProperty "doesn't care about leftover bits a" $
-          BI.Bloom 1 48 (BV64.BV64 (P.singleton 0xffff_0000_1234_5678)) ===
-          BI.Bloom 1 48 (BV64.BV64 (P.singleton 0xeeee_0000_1234_5678))
+          BI.Bloom 1 48 (BV64.BV64 (VP.singleton 0xffff_0000_1234_5678)) ===
+          BI.Bloom 1 48 (BV64.BV64 (VP.singleton 0xeeee_0000_1234_5678))
 
         , testProperty "doesn't care about leftover bits b" $
-          BI.Bloom 1 49 (BV64.BV64 (P.singleton 0xffff_0000_1234_5678)) =/=
-          BI.Bloom 1 49 (BV64.BV64 (P.singleton 0xeeee_0000_1234_5678))
+          BI.Bloom 1 49 (BV64.BV64 (VP.singleton 0xffff_0000_1234_5678)) =/=
+          BI.Bloom 1 49 (BV64.BV64 (VP.singleton 0xeeee_0000_1234_5678))
         ]
     ]
 

@@ -1,6 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{- HLINT ignore "Use camelCase" -}
 
 module Test.Database.LSMTree.Internal.CRC32C (
     -- * Main test tree

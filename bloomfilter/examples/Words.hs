@@ -29,7 +29,7 @@ main = do
   forM_ files $ \file -> do
     a <- getCurrentTime
     words <- B.lines `fmap` B.readFile file
-    putStrLn $ {-# SCC "words/length" #-} show (length words) ++ " words"
+    putStrLn $ {-# SCC "words/length" #-} (show (length words) ++ " words")
     b <- getCurrentTime
     putStrLn $ show (diffUTCTime b a) ++ "s to count words"
     let filt = {-# SCC "construct" #-} testFunction 0.01 words

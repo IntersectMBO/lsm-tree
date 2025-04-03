@@ -20,4 +20,4 @@ fi
 # Lint Haskell files with HLint
 echo "Linting Haskell files with HLint..."
 # shellcheck disable=SC2086
-git ls-files --exclude-standard --no-deleted --deduplicate 'src/**/*.hs' 'test/**/*.hs' 'src-extras/**/*.hs' 'src-fcntl-nocache/**/*.hs' 'src-kmerge/**/*.hs' 'src-mcg/**/*.hs' 'src-rocksdb/**/*.hs' | xargs -L50 ${hlint}
+git ls-files --exclude-standard --no-deleted --deduplicate '*.hs' | xargs -L50 ${hlint}

@@ -10,7 +10,7 @@ import           Data.Bits
 import qualified Data.BloomFilter.BitVec64 as V
 import           Data.Kind (Type)
 import           Data.Primitive.ByteArray (sizeofByteArray)
-import qualified Data.Vector.Primitive as P
+import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64)
 
 type Bloom' :: (Type -> Type) -> Type -> Type
@@ -22,7 +22,7 @@ data Bloom' h a = Bloom {
 type role Bloom' nominal nominal
 
 bloomInvariant :: Bloom' h a -> Bool
-bloomInvariant (Bloom _ s (V.BV64 (P.Vector off len ba))) =
+bloomInvariant (Bloom _ s (V.BV64 (VP.Vector off len ba))) =
        s > 0
     && s <= 2^(48 :: Int)
     && off >= 0
@@ -38,7 +38,7 @@ instance Eq (Bloom' h a) where
     Bloom k n (V.BV64 v) == Bloom k' n' (V.BV64 v') =
         k == k' &&
         n == n' &&
-        P.take w v == P.take w v' && -- compare full words
+        VP.take w v == VP.take w v' && -- compare full words
         if l == 0 then True else unsafeShiftL x s == unsafeShiftL x' s -- compare last words
       where
         !w = fromIntegral (unsafeShiftR n 6) :: Int  -- n `div` 64
@@ -46,8 +46,8 @@ instance Eq (Bloom' h a) where
         !s = 64 - l
 
         -- last words
-        x = P.unsafeIndex v w
-        x' = P.unsafeIndex v' w
+        x = VP.unsafeIndex v w
+        x' = VP.unsafeIndex v' w
 
 instance Show (Bloom' h a) where
     show mb = "Bloom { " ++ show (size mb) ++ " bits } "

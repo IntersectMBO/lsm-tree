@@ -3,7 +3,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE TypeFamilies       #-}
 {-# OPTIONS_HADDOCK not-home #-}
-{- HLINT ignore "Use unless" -}
 
 module Database.LSMTree.Internal.BlobRef (
     BlobSpan (..)

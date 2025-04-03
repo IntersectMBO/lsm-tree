@@ -5,7 +5,6 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE TypeFamilies               #-}
-{- HLINT ignore "Redundant <$>" -}
 
 module Database.LSMTree.Extras.UTxO (
     UTxOKey (..)
