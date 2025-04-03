@@ -1,7 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 {-# OPTIONS_HADDOCK not-home #-}
-{- HLINT ignore "Use record patterns" -}
 
 -- | An on-disk store for blobs for the write buffer.
 --

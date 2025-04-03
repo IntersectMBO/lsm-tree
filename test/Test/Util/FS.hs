@@ -1,6 +1,5 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-{- HLINT ignore "Redundant if" -}
 
 module Test.Util.FS (
     -- * Real file system

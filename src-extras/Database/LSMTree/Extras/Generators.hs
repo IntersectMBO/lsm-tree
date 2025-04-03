@@ -1,5 +1,4 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
-{- HLINT ignore "Use camelCase" -}
 
 module Database.LSMTree.Extras.Generators (
     -- * WithSerialised

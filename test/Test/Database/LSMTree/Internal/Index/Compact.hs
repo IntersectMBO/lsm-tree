@@ -1,7 +1,6 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{- HLINT ignore "Eta reduce" -}
 
 module Test.Database.LSMTree.Internal.Index.Compact (tests) where
 
