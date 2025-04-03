@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 module System.FS.BlockIO.IO (
     ioHasBlockIO
   , withIOHasBlockIO
