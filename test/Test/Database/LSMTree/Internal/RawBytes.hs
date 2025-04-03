@@ -1,11 +1,8 @@
-{- HLINT ignore "Avoid restricted alias" -}
-{- HLINT ignore "Use /=" -}
-
 module Test.Database.LSMTree.Internal.RawBytes (tests) where
 
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
-import qualified Database.LSMTree.Internal.RawBytes as RawBytes (size)
+import qualified Database.LSMTree.Internal.RawBytes as RB (size)
 import           Test.QuickCheck (Property, classify, collect, mapSize,
                      withDiscardRatio, withMaxSuccess, (.||.), (===), (==>))
 import           Test.Tasty (TestTree, testGroup)
@@ -41,7 +38,7 @@ twoBlocksProp msgAddition block1 block2
 
 withFirstBlockSizeInfo :: RawBytes -> Property -> Property
 withFirstBlockSizeInfo firstBlock
-    = collect ("Size of first block is " ++ show (RawBytes.size firstBlock))
+    = collect ("Size of first block is " ++ show (RB.size firstBlock))
 
 -- * Properties to test
 

@@ -374,7 +374,6 @@ shrinkMergingTreeData shrinkKey shrinkVal shrinkBlob = \case
     | mr' <- shrinkMergingRunData shrinkKey shrinkVal shrinkBlob mr
     ]
   PendingLevelMergeData prs t ->
-    {- HLINT ignore "Use catMaybes" -}
     -- just use the child tree, if present
     [ t' | Just t' <- [t] ]
     <>

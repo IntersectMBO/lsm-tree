@@ -1,6 +1,5 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeApplications   #-}
-{- HLINT ignore "Eta reduce" -}
 
 module Bench.Database.LSMTree.Internal.Index.Compact (
     benchmarks

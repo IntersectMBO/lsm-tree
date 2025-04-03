@@ -27,6 +27,15 @@
 - ignore: {name: "Use shows"}
 - ignore: {name: "Use fmap"}
 - ignore: {name: "Use <=<"}
+- ignore: {name: "Use void"}
+- ignore: {name: "Use zipWith"}
+- ignore: {name: "Evaluate"}
+- ignore: {name: "Redundant if"}
+- ignore: {name: "Use catMaybes"}
+- ignore: {name: "Replace case with maybe"}
+- ignore: {name: "Redundant =="}
+- ignore: {name: "Hoist not"}
+- ignore: {name: "Use /="}
 
 # Specify additional command line arguments
 #

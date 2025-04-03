@@ -3,8 +3,6 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-{- HLINT ignore "Use camelCase" -}
-
 module Main (main) where
 
 import           Control.Concurrent (modifyMVar_, newMVar, threadDelay,
