@@ -117,9 +117,6 @@ data SnapshotMetaData = SnapshotMetaData {
     -- distinction, we can get rid of this field.
   , snapMetaTableType :: !SnapshotTableType
     -- | The 'TableConfig' for the snapshotted table.
-    --
-    -- Some of these configuration options can be overridden when a snapshot is
-    -- opened: see 'TableConfigOverride'.
   , snapMetaConfig    :: !TableConfig
     -- | The write buffer.
   , snapWriteBuffer   :: !RunNumber

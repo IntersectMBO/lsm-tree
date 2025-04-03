@@ -120,6 +120,8 @@ import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager)
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
+import           Database.LSMTree.Internal.Config.Override
+                     (OverrideDiskCachePolicy, overrideDiskCachePolicy)
 import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
                      FileFormat (..))
 import qualified Database.LSMTree.Internal.Cursor as Cursor
@@ -219,7 +221,7 @@ data LSMTreeTrace =
   | TraceCloseSession
     -- Table
   | TraceNewTable
-  | TraceOpenSnapshot SnapshotName TableConfigOverride
+  | TraceOpenSnapshot SnapshotName OverrideDiskCachePolicy
   | TraceTable TableId TableTrace
   | TraceDeleteSnapshot SnapshotName
   | TraceListSnapshots
@@ -1319,9 +1321,9 @@ data SnapshotNotCompatibleError
 
 {-# SPECIALISE openSnapshot ::
      Session IO h
+  -> OverrideDiskCachePolicy
   -> SnapshotLabel
   -> SnapshotTableType
-  -> TableConfigOverride
   -> SnapshotName
   -> ResolveSerialisedValue
   -> IO (Table IO h) #-}
@@ -1329,15 +1331,15 @@ data SnapshotNotCompatibleError
 openSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
+  -> OverrideDiskCachePolicy
   -> SnapshotLabel -- ^ Expected label
   -> SnapshotTableType -- ^ Expected table type
-  -> TableConfigOverride -- ^ Optional config override
   -> SnapshotName
   -> ResolveSerialisedValue
   -> m (Table m h)
-openSnapshot sesh label tableType override snap resolve =
+openSnapshot sesh policyOveride label tableType snap resolve =
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
-    traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap override
+    traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap policyOveride
     withOpenSession sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
         let hfs     = sessionHasFS seshEnv
@@ -1354,7 +1356,8 @@ openSnapshot sesh label tableType override snap resolve =
 
         snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath
 
-        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels mTreeOpt = snapMetaData
+        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels mTreeOpt
+              = overrideDiskCachePolicy policyOveride snapMetaData
 
         unless (tableType == tableType') $
           throwIO (ErrSnapshotWrongTableType snap tableType tableType')
@@ -1362,7 +1365,6 @@ openSnapshot sesh label tableType override snap resolve =
         unless (label == label') $
           throwIO (ErrSnapshotWrongLabel snap label label')
 
-        let conf' = applyOverride override conf
         am <- newArenaManager
 
         let activeDir = Paths.activeDir (sessionRoot seshEnv)
@@ -1387,7 +1389,7 @@ openSnapshot sesh label tableType override snap resolve =
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
-        newWith reg sesh seshEnv conf' am $! TableContent {
+        newWith reg sesh seshEnv conf am $! TableContent {
             tableWriteBuffer
           , tableWriteBufferBlobs
           , tableLevels

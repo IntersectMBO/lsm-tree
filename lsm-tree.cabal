@@ -241,6 +241,7 @@ library
     Database.LSMTree.Internal.ChecksumHandle
     Database.LSMTree.Internal.Chunk
     Database.LSMTree.Internal.Config
+    Database.LSMTree.Internal.Config.Override
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Cursor
     Database.LSMTree.Internal.Entry

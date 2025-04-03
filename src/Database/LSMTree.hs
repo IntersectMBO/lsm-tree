@@ -88,9 +88,7 @@ module Database.LSMTree (
   , Common.SnapshotLabel (..)
   , createSnapshot
   , openSnapshot
-  , Common.TableConfigOverride
-  , Common.configNoOverride
-  , Common.configOverrideDiskCachePolicy
+  , Common.OverrideDiskCachePolicy (..)
   , deleteSnapshot
   , listSnapshots
 
@@ -142,6 +140,7 @@ import qualified Database.LSMTree.Internal.BlobRef as Internal
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import qualified Database.LSMTree.Internal.Serialise as Internal
+import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
 import           Database.LSMTree.Monoidal (ResolveValue (..),
                      resolveDeserialised, resolveValueAssociativity,
@@ -501,12 +500,12 @@ createSnapshot :: forall m k v b.
   -> Table m k v b
   -> m ()
 createSnapshot label snap (Internal.Table' t) =
-    void $ Internal.createSnapshot snap label Common.SnapFullTable t
+    void $ Internal.createSnapshot snap label Internal.SnapFullTable t
 
 {-# SPECIALISE openSnapshot ::
      ResolveValue v
   => Session IO
-  -> Common.TableConfigOverride
+  -> Common.OverrideDiskCachePolicy
   -> Common.SnapshotLabel
   -> Common.SnapshotName
   -> IO (Table IO k v b ) #-}
@@ -515,12 +514,19 @@ openSnapshot :: forall m k v b.
      , ResolveValue v
      )
   => Session m
-  -> Common.TableConfigOverride -- ^ Optional config override
+  -> Common.OverrideDiskCachePolicy
   -> Common.SnapshotLabel
   -> Common.SnapshotName
   -> m (Table m k v b)
-openSnapshot (Internal.Session' sesh) override label snap =
-    Internal.Table' <$!> Internal.openSnapshot sesh label Common.SnapFullTable override snap (resolve (Proxy @v))
+openSnapshot (Internal.Session' sesh) policyOveride label snap =
+    Internal.Table' <$!>
+      Internal.openSnapshot
+        sesh
+        policyOveride
+        label
+        Internal.SnapFullTable
+        snap
+        (resolve (Proxy @v))
 
 {-------------------------------------------------------------------------------
   Mutiple writable tables
