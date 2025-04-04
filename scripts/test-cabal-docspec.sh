@@ -20,7 +20,9 @@ if [ "${SKIP_CABAL_BUILD}" = "" ]; then
     fi
 fi
 cabal-docspec \
+    --extra-package directory \
     --extra-package lsm-tree:prototypes \
-    -XNumericUnderscores \
     -XOverloadedStrings \
-    -XTypeApplications
+    -XNumericUnderscores \
+    -XTypeApplications \
+    -XScopedTypeVariables
