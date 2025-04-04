@@ -111,8 +111,7 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe, maybeToList)
-import           Data.Monoid (First (..))
+import           Data.Maybe (catMaybes, maybeToList)
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -1408,45 +1407,8 @@ wrapFileCorruptedErrorAsSnapshotCorruptedError ::
     => SnapshotName
     -> m a
     -> m a
-wrapFileCorruptedErrorAsSnapshotCorruptedError snapshotName action =
-    action `catches` handlers
-    where
-        handlers :: [Handler m a]
-        handlers =
-            [ Handler $ throwIO . wrapFileCorruptedError
-            , Handler $ throwIO . wrapAbortActionRegistryError
-            , Handler $ throwIO . wrapCommitActionRegistryError
-            ]
-
-        -- TODO: This erases the `ExceptionContext` of the underlying `FileCorruptedError`,
-        --       `AbortActionRegistryError`, or `CommitActionRegistryError`.
-        --       Unfortunately, the API exposed by `io-classes` does not currently expose
-        --       any primitives that could be used to preserve the `ExceptionContext`.
-        wrapSomeException :: SomeException -> SomeException
-        wrapSomeException e =
-            fromMaybe e . getFirst . mconcat . fmap First $
-                [ toException . wrapFileCorruptedError <$> fromException e
-                , toException . wrapAbortActionRegistryError <$> fromException e
-                , toException . wrapCommitActionRegistryError <$> fromException e
-                ]
-
-        wrapFileCorruptedError :: FileCorruptedError -> SnapshotCorruptedError
-        wrapFileCorruptedError = ErrSnapshotCorrupted snapshotName
-
-        wrapAbortActionRegistryError :: AbortActionRegistryError -> AbortActionRegistryError
-        wrapAbortActionRegistryError = \case
-            AbortActionRegistryError reason es ->
-                AbortActionRegistryError (wrapAbortActionRegistryReason reason) (mapActionError wrapSomeException <$> es)
-
-        wrapAbortActionRegistryReason :: AbortActionRegistryReason -> AbortActionRegistryReason
-        wrapAbortActionRegistryReason = \case
-            ReasonExitCaseException e -> ReasonExitCaseException (wrapSomeException e)
-            ReasonExitCaseAbort -> ReasonExitCaseAbort
-
-        wrapCommitActionRegistryError :: CommitActionRegistryError -> CommitActionRegistryError
-        wrapCommitActionRegistryError = \case
-            CommitActionRegistryError es ->
-                CommitActionRegistryError (mapActionError wrapSomeException <$> es)
+wrapFileCorruptedErrorAsSnapshotCorruptedError snapshotName =
+    mapExceptionWithActionRegistry (ErrSnapshotCorrupted snapshotName)
 
 {-# SPECIALISE doesSnapshotExist ::
      Session IO h
