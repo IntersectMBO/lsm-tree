@@ -275,6 +275,29 @@ jobs:
 
     - name: 🎗️ Lint with stylish-haskell
       run: ./scripts/format-stylish-haskell.sh && git diff --exit-code
+
+  ################################################################################
+  # Lint with generate-readme
+  ################################################################################
+  lint-generate-readme:
+    name: Lint with generate-readme
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Generate README.md
+      uses: ./.github/actions/generate-readme
+      with:
+        ghc-version: ${{ env.DEFAULT_GHC_VERSION }}
+        cabal-version: ${{ env.DEFAULT_CABAL_VERSION }}
+        # The index-state is fixed to enable caching and ensure that the version
+        # regardless of the current state of Hackage head.
+        # If you want a newer version of cabal-fmt, use a more recent time.
+        hackage-index-state: "2024-04-27T12:31:04Z"
+
+    - name: 🎗️ Lint with generate-readme
+      run: git diff --exit-code
   
   ################################################################################
   # Lint with HLint
