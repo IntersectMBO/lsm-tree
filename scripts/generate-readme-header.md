@@ -2,9 +2,8 @@
 
 # lsm-tree
 
-[![handbook](https://img.shields.io/badge/policy-Cardano%20Engineering%20Handbook-informational)](https://input-output-hk.github.io/cardano-engineering-handbook)
-[![Haskell CI](https://img.shields.io/github/actions/workflow/status/IntersectMBO/lsm-tree/haskell.yml?label=Build)](https://github.com/IntersectMBO/lsm-tree/actions/workflows/haskell.yml)
-[![Documentation CI](https://img.shields.io/github/actions/workflow/status/IntersectMBO/lsm-tree/documentation.yml?label=Documentation%20build)](https://github.com/IntersectMBO/lsm-tree/actions/workflows/documentation.yml)
+[![Cardano Handbook](https://img.shields.io/badge/policy-Cardano%20Engineering%20Handbook-informational)](https://input-output-hk.github.io/cardano-engineering-handbook)
+[![Build](https://img.shields.io/github/actions/workflow/status/IntersectMBO/lsm-tree/ci.yml?label=Build)](https://github.com/IntersectMBO/lsm-tree/actions/workflows/ci.yml)
 [![Haddocks](https://img.shields.io/badge/documentation-Haddocks-purple)](https://IntersectMBO.github.io/lsm-tree/)
 
 > :warning: **This library is in active development**: there is currently no release schedule!
