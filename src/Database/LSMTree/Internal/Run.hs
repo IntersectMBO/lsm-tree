@@ -43,7 +43,7 @@ import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef hiding (mkRawBlobRef,
                      mkWeakBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
-import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromSBS)
+import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromFile)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexType (..))
@@ -304,10 +304,11 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     checkCRC runRunDataCaching (forRunBlobRaw expectedChecksums) (forRunBlobRaw paths)
 
     -- read and try parsing files
-    runFilter <-
-      CRC.expectValidFile fs (forRunFilterRaw paths) CRC.FormatBloomFilterFile
-          . bloomFilterFromSBS
-        =<< readCRC (forRunFilterRaw expectedChecksums) (forRunFilterRaw paths)
+    let filterPath = forRunFilterRaw paths
+    checkCRC CacheRunData (forRunFilterRaw expectedChecksums) filterPath
+    runFilter <- FS.withFile fs filterPath FS.ReadMode $
+                   bloomFilterFromFile fs
+
     (runNumEntries, runIndex) <-
       CRC.expectValidFile fs (forRunIndexRaw paths) CRC.FormatIndexFile
           . Index.fromSBS indexType

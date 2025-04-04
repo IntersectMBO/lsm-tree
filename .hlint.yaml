@@ -36,6 +36,7 @@
 - ignore: {name: "Redundant =="}
 - ignore: {name: "Hoist not"}
 - ignore: {name: "Use /="}
+- ignore: {name: "Use unless"}
 
 # Specify additional command line arguments
 #

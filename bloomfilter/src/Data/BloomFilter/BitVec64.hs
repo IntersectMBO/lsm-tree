@@ -71,13 +71,10 @@ newtype MBitVec64 s = MBV64 (VP.MVector s Word64)
 -- TODO: remove this workaround once a solution exists, e.g. a new primop that
 -- allows checking for implicit pinning.
 new :: Word64 -> ST s (MBitVec64 s)
-new s
-  | numWords >= 128 = do
+new s = do
     mba <- newPinnedByteArray numBytes
     setByteArray mba 0 numBytes (0 :: Word8)
     return (MBV64 (VP.MVector 0 numWords mba))
-  | otherwise =
-    MBV64 <$> VPM.new numWords
   where
     !numWords = w2i (roundUpTo64 s)
     !numBytes = unsafeShiftL numWords 3 -- * 8
