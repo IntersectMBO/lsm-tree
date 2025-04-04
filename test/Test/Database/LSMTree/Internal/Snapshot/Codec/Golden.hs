@@ -193,9 +193,10 @@ enumerateSnapshotLabel =
 
 enumerateSnapshotTableType :: [(ComponentAnnotation, SnapshotTableType)]
 enumerateSnapshotTableType =
-  [ ("N0", SnapNormalTable)
-  , ("N1", SnapMonoidalTable)
-  , ("N2", SnapFullTable)
+  [ ("N0", SnapSimpleTable)
+  , ("N1", SnapFullTable)
+  , ("N2", SnapNormalTable)
+  , ("N3", SnapMonoidalTable)
   ]
 
 enumerateTableConfig :: [(ComponentAnnotation, TableConfig)]
