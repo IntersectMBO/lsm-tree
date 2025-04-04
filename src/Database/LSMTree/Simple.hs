@@ -131,13 +131,15 @@ module Database.LSMTree.Simple (
     InvalidSnapshotNameError (..),
 ) where
 
+import           Control.ActionRegistry (mapExceptionWithActionRegistry)
 import           Control.Exception.Base (Exception, SomeException (..), assert,
-                     bracket, bracketOnError, mapException)
+                     bracket, bracketOnError)
 import           Control.Monad (join)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
 import           Data.Maybe (isJust)
+import           Data.Typeable (TypeRep)
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal (BlobRefInvalidError (..),
@@ -145,8 +147,7 @@ import           Database.LSMTree.Internal (BlobRefInvalidError (..),
                      SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
                      SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableCorruptedError (..), TableTooLargeError (..),
-                     TableUnionNotCompatibleError (..))
+                     TableCorruptedError (..), TableTooLargeError (..))
 import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Config
                      (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
@@ -763,15 +764,15 @@ union table1 table2 =
 unions ::
     NonEmpty (Table k v) ->
     IO (Table k v)
-unions (Table table :| tables) =
+unions (Table table :| tables) = do
     -- TODO: add variant of 'unions' that incrementally computes unions
-    bracketOnError acquire Internal.close $ \table' -> do
-      Internal.UnionDebt debt <- Internal.remainingUnionDebt table'
-      leftovers <- Internal.supplyUnionCredits const table' (Internal.UnionCredits debt)
+    bracketOnError acquireUnionOfTables Internal.close $ \unionOfTables -> do
+      Internal.UnionDebt debt <- Internal.remainingUnionDebt unionOfTables
+      leftovers <- Internal.supplyUnionCredits const unionOfTables (Internal.UnionCredits debt)
       assert (leftovers >= 0) $ pure ()
-      pure $ Table table'
+      pure $ Table unionOfTables
   where
-    acquire = Internal.unions (table :| fmap unTable tables)
+    acquireUnionOfTables = Internal.unions (table :| fmap unTable tables)
 
 --------------------------------------------------------------------------------
 -- Snapshots
@@ -1104,7 +1105,47 @@ data SessionDirCorruptedError
 -}
 _convertSessionDirErrors :: FilePath -> IO a -> IO a
 _convertSessionDirErrors sessionDir =
-    mapException (\(Internal.ErrSessionDirDoesNotExist _fsErrorPath) -> SomeException $ ErrSessionDirDoesNotExist sessionDir)
-        . mapException (\(Internal.ErrSessionDirLocked _fsErrorPath) -> SomeException $ ErrSessionDirLocked sessionDir)
-        . mapException (\(Internal.ErrSessionDirCorrupted _fsErrorPath) -> SomeException $ ErrSessionDirCorrupted sessionDir)
+    mapExceptionWithActionRegistry (\(Internal.ErrSessionDirDoesNotExist _fsErrorPath) -> SomeException $ ErrSessionDirDoesNotExist sessionDir)
+        . mapExceptionWithActionRegistry (\(Internal.ErrSessionDirLocked _fsErrorPath) -> SomeException $ ErrSessionDirLocked sessionDir)
+        . mapExceptionWithActionRegistry (\(Internal.ErrSessionDirCorrupted _fsErrorPath) -> SomeException $ ErrSessionDirCorrupted sessionDir)
 
+{-------------------------------------------------------------------------------
+   Table union
+-------------------------------------------------------------------------------}
+
+-- | A table union was constructed with two tables that are not compatible.
+data TableUnionNotCompatibleError
+    = ErrTableUnionHandleTypeMismatch
+        -- | The index of the first table.
+        !Int
+        -- | The type of the filesystem handle of the first table.
+        !TypeRep
+        -- | The index of the second table.
+        !Int
+        -- | The type of the filesystem handle of the second table.
+        !TypeRep
+    | ErrTableUnionSessionMismatch
+        -- | The index of the first table.
+        !Int
+        -- | The session directory of the first table.
+        !FilePath
+        -- | The index of the second table.
+        !Int
+        -- | The session directory of the second table.
+        !FilePath
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+{- | Internal helper. Convert:
+
+    * t'Internal.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
+    * t'Internal.SessionDirLockedError' to t'SessionDirLockedError'; and
+    * t'Internal.SessionDirCorruptedError' to t'SessionDirCorruptedError'.
+-}
+_convertTableUnionNotCompatibleError :: (Int -> FilePath) -> IO a -> IO a
+_convertTableUnionNotCompatibleError sessionDirFor =
+    mapExceptionWithActionRegistry $ \case
+        Internal.ErrTableUnionHandleTypeMismatch i1 typeRep1 i2 typeRep2 ->
+            ErrTableUnionHandleTypeMismatch i1 typeRep1 i2 typeRep2
+        Internal.ErrTableUnionSessionMismatch i1 _fsErrorPath1 i2 _fsErrorPath2 ->
+            ErrTableUnionSessionMismatch i1 (sessionDirFor i1) i2 (sessionDirFor i2)
