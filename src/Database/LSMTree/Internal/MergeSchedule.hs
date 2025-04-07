@@ -354,8 +354,8 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -------------------------------------------------------------------------------}
 
 -- | An additional optional last level, created as a result of
--- 'Database.LSMTree.Monoidal.union'. It can not only contain an ongoing merge
--- of multiple runs, but a nested tree of merges.
+-- 'Database.LSMTree.union'. It can not only contain an ongoing merge of
+-- multiple runs, but a nested tree of merges.
 --
 -- TODO: So far, this is
 -- * not considered when creating cursors (also used for range lookups)

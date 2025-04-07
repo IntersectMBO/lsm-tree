@@ -5,12 +5,11 @@ module Test.Database.LSMTree.Model.Table (tests) where
 
 import qualified Data.ByteString as BS
 import qualified Data.Vector as V
+import           Database.LSMTree (ResolveValue (..), resolveDeserialised)
 import           Database.LSMTree.Common
 import           Database.LSMTree.Model.Table (LookupResult (..), Table,
                      Update (..), lookups)
 import qualified Database.LSMTree.Model.Table as Model
-import           Database.LSMTree.Monoidal (ResolveValue (..),
-                     resolveDeserialised)
 import           GHC.Exts (IsList (..))
 import           Test.QuickCheck.Instances ()
 import           Test.Tasty

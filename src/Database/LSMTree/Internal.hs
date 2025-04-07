@@ -1,11 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 
 -- | This module brings together the internal parts to provide an API in terms
--- of untyped serialised keys, values and blobs. It makes no distinction between
--- normal and monoidal tables, accepting both blobs and mupserts.
--- The typed [normal]("Database.LSMTree.Normal") and
--- [monoidal]("Database.LSMTree.Monoidal") APIs then provide more type-safe
--- wrappers and handle serialisation.
+-- of untyped serialised keys, values and blobs.
 --
 -- Apart from defining the API, this module mainly deals with concurrency- and
 -- exception-safe opening and closing of resources. Any other non-trivial logic
@@ -16,10 +12,6 @@ module Database.LSMTree.Internal (
     Session' (..)
   , Table' (..)
   , Cursor' (..)
-  , NormalTable (..)
-  , NormalCursor (..)
-  , MonoidalTable (..)
-  , MonoidalCursor (..)
     -- * Exceptions
   , SessionDirDoesNotExistError (..)
   , SessionDirLockedError (..)
@@ -179,34 +171,6 @@ data Cursor' m k v b = forall h. Typeable h => Cursor' (Cursor m h)
 
 instance NFData (Cursor' m k v b) where
   rnf (Cursor' t) = rnf t
-
-type NormalTable :: (Type -> Type) -> Type -> Type -> Type -> Type
-data NormalTable m k v b = forall h. Typeable h =>
-    NormalTable !(Table m h)
-
-instance NFData (NormalTable m k v b) where
-  rnf (NormalTable t) = rnf t
-
-type NormalCursor :: (Type -> Type) -> Type -> Type -> Type -> Type
-data NormalCursor m k v b = forall h. Typeable h =>
-    NormalCursor !(Cursor m h)
-
-instance NFData (NormalCursor m k v b) where
-  rnf (NormalCursor c) = rnf c
-
-type MonoidalTable :: (Type -> Type) -> Type -> Type -> Type
-data MonoidalTable m k v = forall h. Typeable h =>
-    MonoidalTable !(Table m h)
-
-instance NFData (MonoidalTable m k v) where
-  rnf (MonoidalTable t) = rnf t
-
-type MonoidalCursor :: (Type -> Type) -> Type -> Type -> Type
-data MonoidalCursor m k v = forall h. Typeable h =>
-    MonoidalCursor !(Cursor m h)
-
-instance NFData (MonoidalCursor m k v) where
-  rnf (MonoidalCursor c) = rnf c
 
 {-------------------------------------------------------------------------------
   Traces
@@ -560,7 +524,7 @@ closeSession Session{sessionState, sessionTracer} = do
 
 -- | A handle to an on-disk key\/value table.
 --
--- For more information, see 'Database.LSMTree.Normal.Table'.
+-- For more information, see 'Database.LSMTree.Table'.
 data Table m h = Table {
       tableConfig       :: !TableConfig
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
@@ -676,7 +640,7 @@ withOpenTable t action = RW.withReadAccess (tableState t) $ \case
   -> TableConfig
   -> (Table IO h -> IO a)
   -> IO a #-}
--- | See 'Database.LSMTree.Normal.withTable'.
+-- | See 'Database.LSMTree.withTable'.
 withTable ::
      (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Session m h
@@ -689,7 +653,7 @@ withTable sesh conf = bracket (new sesh conf) close
      Session IO h
   -> TableConfig
   -> IO (Table IO h) #-}
--- | See 'Database.LSMTree.Normal.new'.
+-- | See 'Database.LSMTree.new'.
 new ::
      (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
   => Session m h
@@ -769,7 +733,7 @@ newWith reg sesh seshEnv conf !am !tc = do
     pure $! t
 
 {-# SPECIALISE close :: Table IO h -> IO () #-}
--- | See 'Database.LSMTree.Normal.close'.
+-- | See 'Database.LSMTree.close'.
 close ::
      (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Table m h
@@ -795,7 +759,7 @@ close t = do
   -> V.Vector SerialisedKey
   -> Table IO h
   -> IO (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef IO h)))) #-}
--- | See 'Database.LSMTree.Normal.lookups'.
+-- | See 'Database.LSMTree.lookups'.
 lookups ::
      (MonadAsync m, MonadMask m, MonadMVar m, MonadST m)
   => ResolveSerialisedValue
@@ -863,14 +827,14 @@ lookups resolve ks t = do
   -> Table IO h
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO h) -> res)
   -> IO (V.Vector res) #-}
--- | See 'Database.LSMTree.Normal.rangeLookup'.
+-- | See 'Database.LSMTree.rangeLookup'.
 rangeLookup ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> Range SerialisedKey
   -> Table m h
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)
-     -- ^ How to map to a query result, different for normal/monoidal
+     -- ^ How to map to a query result
   -> m (V.Vector res)
 rangeLookup resolve range t fromEntry = do
     traceWith (tableTracer t) $ TraceRangeLookup range
@@ -902,7 +866,7 @@ rangeLookup resolve range t fromEntry = do
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table IO h
   -> IO () #-}
--- | See 'Database.LSMTree.Normal.updates'.
+-- | See 'Database.LSMTree.updates'.
 --
 -- Does not enforce that mupsert and blobs should not occur in the same table.
 updates ::
@@ -971,7 +935,7 @@ retrieveBlobs sesh wrefs =
 
 -- | A read-only view into the table state at the time of cursor creation.
 --
--- For more information, see 'Database.LSMTree.Normal.Cursor'.
+-- For more information, see 'Database.LSMTree.Cursor'.
 --
 -- The representation of a cursor is similar to that of a 'Table', but
 -- simpler, as it is read-only.
@@ -1038,7 +1002,7 @@ data CursorEnv m h = CursorEnv {
   -> Table IO h
   -> (Cursor IO h -> IO a)
   -> IO a #-}
--- | See 'Database.LSMTree.Normal.withCursor'.
+-- | See 'Database.LSMTree.withCursor'.
 withCursor ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
@@ -1051,7 +1015,7 @@ withCursor offsetKey t = bracket (newCursor offsetKey t) closeCursor
      OffsetKey
   -> Table IO h
   -> IO (Cursor IO h) #-}
--- | See 'Database.LSMTree.Normal.newCursor'.
+-- | See 'Database.LSMTree.newCursor'.
 newCursor ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => OffsetKey
@@ -1100,7 +1064,7 @@ newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
           pure (wb, wbblobs', runs')
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
--- | See 'Database.LSMTree.Normal.closeCursor'.
+-- | See 'Database.LSMTree.closeCursor'.
 closeCursor ::
      (MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
   => Cursor m h
@@ -1129,7 +1093,7 @@ closeCursor Cursor {..} = do
   -> Cursor IO h
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef IO h) -> res)
   -> IO (V.Vector res) #-}
--- | See 'Database.LSMTree.Normal.readCursor'.
+-- | See 'Database.LSMTree.readCursor'.
 readCursor ::
      forall m h res.
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
@@ -1137,7 +1101,7 @@ readCursor ::
   -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)
-     -- ^ How to map to a query result, different for normal/monoidal
+     -- ^ How to map to a query result
   -> m (V.Vector res)
 readCursor resolve n cursor fromEntry =
     readCursorWhile resolve (const True) n cursor fromEntry
@@ -1171,7 +1135,7 @@ readCursorWhile ::
   -> Int  -- ^ Maximum number of entries to read
   -> Cursor m h
   -> (SerialisedKey -> SerialisedValue -> Maybe (WeakBlobRef m h) -> res)
-     -- ^ How to map to a query result, different for normal/monoidal
+     -- ^ How to map to a query result
   -> m (V.Vector res)
 readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
     traceWith cursorTracer $ TraceReadCursor n
@@ -1206,7 +1170,7 @@ data SnapshotExistsError
   -> SnapshotTableType
   -> Table IO h
   -> IO () #-}
--- |  See 'Database.LSMTree.Normal.createSnapshot''.
+-- |  See 'Database.LSMTree.createSnapshot''.
 createSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => SnapshotName
@@ -1321,7 +1285,7 @@ data SnapshotNotCompatibleError
   -> SnapshotName
   -> ResolveSerialisedValue
   -> IO (Table IO h) #-}
--- |  See 'Database.LSMTree.Normal.openSnapshot'.
+-- |  See 'Database.LSMTree.openSnapshot'.
 openSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Session m h
@@ -1475,7 +1439,7 @@ listSnapshots sesh = do
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE duplicate :: Table IO h -> IO (Table IO h) #-}
--- | See 'Database.LSMTree.Normal.duplicate'.
+-- | See 'Database.LSMTree.duplicate'.
 duplicate ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Table m h
@@ -1526,7 +1490,7 @@ data TableUnionNotCompatibleError
     deriving anyclass (Exception)
 
 {-# SPECIALISE unions :: NonEmpty (Table IO h) -> IO (Table IO h) #-}
--- | See 'Database.LSMTree.Normal.unions'.
+-- | See 'Database.LSMTree.unions'.
 unions ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => NonEmpty (Table m h)
@@ -1710,12 +1674,12 @@ ensureSessionsMatch (t :| ts) = do
   Table union: debt and credit
 -------------------------------------------------------------------------------}
 
--- | See 'Database.LSMTree.Normal.UnionDebt'.
+-- | See 'Database.LSMTree.UnionDebt'.
 newtype UnionDebt = UnionDebt Int
   deriving newtype (Show, Eq, Ord, Num)
 
 {-# SPECIALISE remainingUnionDebt :: Table IO h -> IO UnionDebt #-}
--- | See 'Database.LSMTree.Normal.remainingUnionDebt'.
+-- | See 'Database.LSMTree.remainingUnionDebt'.
 remainingUnionDebt ::
      (MonadSTM m, MonadMVar m, MonadThrow m, PrimMonad m)
   => Table m h -> m UnionDebt
@@ -1730,13 +1694,13 @@ remainingUnionDebt t = do
             (MergeDebt (MergeCredits c), _) <- MT.remainingMergeDebt mt
             pure (UnionDebt c)
 
--- | See 'Database.LSMTree.Normal.UnionCredits'.
+-- | See 'Database.LSMTree.UnionCredits'.
 newtype UnionCredits = UnionCredits Int
   deriving newtype (Show, Eq, Ord, Num)
 
 {-# SPECIALISE supplyUnionCredits ::
      ResolveSerialisedValue -> Table IO h -> UnionCredits -> IO UnionCredits #-}
--- | See 'Database.LSMTree.Normal.supplyUnionCredits'.
+-- | See 'Database.LSMTree.supplyUnionCredits'.
 supplyUnionCredits ::
      (MonadST m, MonadSTM m, MonadMVar m, MonadMask m)
   => ResolveSerialisedValue -> Table m h -> UnionCredits -> m UnionCredits

@@ -49,7 +49,7 @@ import           Data.List (nub, sort)
 import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
-import qualified Database.LSMTree as Unified
+import qualified Database.LSMTree as Full
 import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Index (Append (..))
@@ -65,8 +65,6 @@ import qualified Database.LSMTree.Internal.Serialise.Class as S.Class
 import           Database.LSMTree.Internal.Unsliced (Unsliced, fromUnslicedKey,
                      makeUnslicedKey)
 import           Database.LSMTree.Internal.Vector (mkPrimVector)
-import qualified Database.LSMTree.Monoidal as Monoidal
-import qualified Database.LSMTree.Normal as Normal
 import           GHC.Generics (Generic)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Arbitrary1 (..),
@@ -78,58 +76,24 @@ import           Test.QuickCheck.Instances ()
   Common LSMTree types
 -------------------------------------------------------------------------------}
 
-instance (Arbitrary v, Arbitrary b) => Arbitrary (Unified.Update v b) where
+instance (Arbitrary v, Arbitrary b) => Arbitrary (Full.Update v b) where
   arbitrary = QC.arbitrary2
   shrink = QC.shrink2
 
-instance Arbitrary2 Unified.Update where
+instance Arbitrary2 Full.Update where
   liftArbitrary2 genVal genBlob = frequency
-    [ (10, Unified.Insert <$> genVal <*> liftArbitrary genBlob)
-    , (5, Unified.Mupsert <$> genVal)
-    , (1, pure Unified.Delete)
+    [ (10, Full.Insert <$> genVal <*> liftArbitrary genBlob)
+    , (5, Full.Mupsert <$> genVal)
+    , (1, pure Full.Delete)
     ]
 
   liftShrink2 shrinkVal shrinkBlob = \case
-    Unified.Insert v blob ->
-        Unified.Delete
-      : map (uncurry Unified.Insert)
+    Full.Insert v blob ->
+        Full.Delete
+      : map (uncurry Full.Insert)
             (liftShrink2 shrinkVal (liftShrink shrinkBlob) (v, blob))
-    Unified.Mupsert v -> Unified.Insert v Nothing : map Unified.Mupsert (shrinkVal v)
-    Unified.Delete -> []
-
-instance (Arbitrary v, Arbitrary b) => Arbitrary (Normal.Update v b) where
-  arbitrary = QC.arbitrary2
-  shrink = QC.shrink2
-
-instance Arbitrary2 Normal.Update where
-  liftArbitrary2 genVal genBlob = frequency
-    [ (10, Normal.Insert <$> genVal <*> liftArbitrary genBlob)
-    , (1, pure Normal.Delete)
-    ]
-
-  liftShrink2 shrinkVal shrinkBlob = \case
-    Normal.Insert v blob ->
-        Normal.Delete
-      : map (uncurry Normal.Insert)
-            (liftShrink2 shrinkVal (liftShrink shrinkBlob) (v, blob))
-    Normal.Delete ->
-      []
-
-instance (Arbitrary v) => Arbitrary (Monoidal.Update v) where
-  arbitrary = QC.arbitrary1
-  shrink = QC.shrink1
-
-instance Arbitrary1 Monoidal.Update where
-  liftArbitrary genVal = frequency
-    [ (10, Monoidal.Insert <$> genVal)
-    , (5, Monoidal.Mupsert <$> genVal)
-    , (1, pure Monoidal.Delete)
-    ]
-
-  liftShrink shrinkVal = \case
-    Monoidal.Insert v  -> Monoidal.Delete : map Monoidal.Insert (shrinkVal v)
-    Monoidal.Mupsert v -> Monoidal.Insert v : map Monoidal.Mupsert (shrinkVal v)
-    Monoidal.Delete    -> []
+    Full.Mupsert v -> Full.Insert v Nothing : map Full.Mupsert (shrinkVal v)
+    Full.Delete -> []
 
 instance (Arbitrary k, Ord k) => Arbitrary (Range k) where
   arbitrary = do

@@ -105,19 +105,12 @@ propNoThunks x = do
   Public API
 -------------------------------------------------------------------------------}
 
--- | Also checks 'NoThunks' for the 'Normal.Table's that are known to be
--- open in the 'Common.Session'.
+-- | Also checks 'NoThunks' for the tables that are known to be open in the
+-- 'Common.Session'.
 instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
       => NoThunks (Session' m ) where
   showTypeOf (_ :: Proxy (Session' m)) = "Session'"
   wNoThunks ctx (Session' s) = wNoThunks ctx s
-
--- | Does not check 'NoThunks' for the 'Common.Session' that this
--- 'Normal.Table' belongs to.
-instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
-      => NoThunks (NormalTable m k v b) where
-  showTypeOf (_ :: Proxy (NormalTable m k v b)) = "NormalTable"
-  wNoThunks ctx (NormalTable t) = wNoThunks ctx t
 
 {-------------------------------------------------------------------------------
   Internal

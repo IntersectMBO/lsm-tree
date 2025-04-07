@@ -77,7 +77,7 @@ import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
-import qualified Database.LSMTree.Normal as LSM
+import qualified Database.LSMTree as LSM
 
 -------------------------------------------------------------------------------
 -- Table configuration
@@ -94,6 +94,8 @@ benchTableConfig =
 type K = BS.ShortByteString
 type V = BS.ShortByteString
 type B = Void
+
+deriving via LSM.ResolveAsFirst V instance LSM.ResolveValue V
 
 label :: LSM.SnapshotLabel
 label = LSM.SnapshotLabel "K V B"
@@ -866,6 +868,8 @@ updateToLookupResult :: LSM.Update v b -> LSM.LookupResult v ()
 updateToLookupResult (LSM.Insert v Nothing)  = LSM.Found v
 updateToLookupResult (LSM.Insert v (Just _)) = LSM.FoundWithBlob v ()
 updateToLookupResult  LSM.Delete             = LSM.NotFound
+updateToLookupResult (LSM.Mupsert _)         = error $
+                                               "Unexpected mupsert encountered"
 
 -- | Return the adjacent batches where there is overlap between one batch's
 -- inserts and the next batch's lookups. Testing the pipelined version needs

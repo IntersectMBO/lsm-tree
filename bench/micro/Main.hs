@@ -3,6 +3,7 @@
 -- | Micro-benchmarks for the @lsm-tree@ library.
 module Main (main) where
 
+import qualified Bench.Database.LSMTree
 import qualified Bench.Database.LSMTree.Internal.BloomFilter
 import qualified Bench.Database.LSMTree.Internal.Index
 import qualified Bench.Database.LSMTree.Internal.Index.Compact
@@ -11,8 +12,6 @@ import qualified Bench.Database.LSMTree.Internal.Merge
 import qualified Bench.Database.LSMTree.Internal.RawPage
 import qualified Bench.Database.LSMTree.Internal.Serialise
 import qualified Bench.Database.LSMTree.Internal.WriteBuffer
-import qualified Bench.Database.LSMTree.Monoidal
-import qualified Bench.Database.LSMTree.Normal
 import           Criterion.Main (defaultMain)
 
 main :: IO ()
@@ -29,6 +28,5 @@ main = do
       , Bench.Database.LSMTree.Internal.RawPage.benchmarks
       , Bench.Database.LSMTree.Internal.Serialise.benchmarks
       , Bench.Database.LSMTree.Internal.WriteBuffer.benchmarks
-      , Bench.Database.LSMTree.Monoidal.benchmarks
-      , Bench.Database.LSMTree.Normal.benchmarks
+      , Bench.Database.LSMTree.benchmarks
       ]

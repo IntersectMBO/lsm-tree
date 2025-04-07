@@ -12,10 +12,8 @@
 --   updates :: MonadState Model m => [_] -> Table k v b -> m ()
 --   @
 --
--- * [@Model.IO.{Normal,Monoidal}@]:
+-- * [@Model.IO@]:
 --   STM-based model allowing multiple (potentially closed) sessions.
---   There are separate modules for normal/monoidal tables, which involves some
---   type conversions such as @convLookupResult@.
 --   @
 --   updates :: MonadSTM m => MSession m -> [_] -> Table k v b -> m ()
 --   @

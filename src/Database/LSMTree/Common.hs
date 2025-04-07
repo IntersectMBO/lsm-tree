@@ -110,8 +110,8 @@ type IOLike m = (
 -- snapshots (using 'open') is expensive, but snapshotting (using 'snapshot') is
 -- relatively cheap.
 --
--- The \"monoidal\" table types support a 'union' operation, which has the
--- constraint that the two input tables must be from the same 'Session'.
+-- When forming a union of tables, all input tables must come from the same
+-- 'Session'.
 --
 -- Each session places files for table data under a given directory. It is
 -- not permitted to open multiple sessions for the same directory at once.
@@ -123,10 +123,11 @@ type IOLike m = (
 -- created using 'duplicate', while unrelated tables can be created using 'new'.
 -- It is possible to have multiple unrelated tables with different configuration
 -- and key and value types in the same session. Similarly, a session can have
--- both \"normal\" and \"monoidal\" tables. For unrelated tables (that are not
--- involved in a 'union') one has a choice between using multiple sessions or a
--- shared session. Using multiple sessions requires using separate directories,
--- while a shared session will place all files under one directory.
+-- both [simple]("Database.LSMTree.Simple") and
+-- [full-featured]("Database.LSMTree") tables. For unrelated tables (that are
+-- not involved in a 'union') one has a choice between using multiple sessions
+-- or a shared session. Using multiple sessions requires using separate
+-- directories, while a shared session will place all files under one directory.
 --
 type Session :: (Type -> Type) -> Type
 type Session = Internal.Session'

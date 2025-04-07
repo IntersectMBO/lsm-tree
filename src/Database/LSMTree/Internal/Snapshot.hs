@@ -98,15 +98,11 @@ newtype SnapshotLabel = SnapshotLabel Text
 data SnapshotTableType
   = SnapSimpleTable
   | SnapFullTable
-  | SnapNormalTable
-  | SnapMonoidalTable
   deriving stock (Eq, Show)
 
 instance NFData SnapshotTableType where
-  rnf SnapSimpleTable   = ()
-  rnf SnapFullTable     = ()
-  rnf SnapNormalTable   = ()
-  rnf SnapMonoidalTable = ()
+  rnf SnapSimpleTable = ()
+  rnf SnapFullTable   = ()
 
 data SnapshotMetaData = SnapshotMetaData {
     -- | See 'SnapshotLabel'.
@@ -116,10 +112,7 @@ data SnapshotMetaData = SnapshotMetaData {
     -- by a checksum, whereas the contents of the file are. Therefore using the
     -- 'SnapshotLabel' is safer.
     snapMetaLabel     :: !SnapshotLabel
-    -- | Whether a table is normal or monoidal.
-    --
-    -- TODO: if we at some point decide to get rid of the normal vs. monoidal
-    -- distinction, we can get rid of this field.
+    -- | Whether a table is simple or full-featured.
   , snapMetaTableType :: !SnapshotTableType
     -- | The 'TableConfig' for the snapshotted table.
   , snapMetaConfig    :: !TableConfig

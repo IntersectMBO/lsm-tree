@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
 
--- | An abstraction of the normal LSM API, instantiated by both the real
+-- | An abstraction of the LSM API, instantiated by both the real
 -- implementation and a model (see "Database.LSMTree.Model.IO").
 module Database.LSMTree.Class (
     IsTable (..)
