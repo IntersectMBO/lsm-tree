@@ -218,7 +218,7 @@ function that combines the two.
 +------------+--------------------------+-------------------------+-------------------+
 | Resource   | Bracketed #bracketed#    | Allocate #allocate#     | Release #release# |
 +============+==========================+=========================+===================+
-|'Session'   | 'withSession'            | 'openSession'           | 'closeSession'    |
+| 'Session'  | 'withSession'            | 'openSession'           | 'closeSession'    |
 +------------+--------------------------+-------------------------+-------------------+
 | 'Table'    | 'withTable'              | 'newTable'              | 'closeTable'      |
 +            +--------------------------+-------------------------+                   +
@@ -304,12 +304,12 @@ Opening a table from a snapshot (using 'openTableFromSnapshot' or
 
 {- | A session stores context that is shared by multiple tables.
 
-  Each session is associated with one session directory where the files
-  containing table data are stored. Each session locks its session directory.
-  There can only be one active session for each session directory at a time.
-  If a database is must be accessed from multiple parts of a program,
-  one session should be opened and shared between those parts of the program.
-  Session directories cannot be shared between OS processes.
+Each session is associated with one session directory where the files
+containing table data are stored. Each session locks its session directory.
+There can only be one active session for each session directory at a time.
+If a database is must be accessed from multiple parts of a program,
+one session should be opened and shared between those parts of the program.
+Session directories cannot be shared between OS processes.
 -}
 type Session :: Type
 newtype Session = Session {unSession :: Internal.Session IO HandleIO}
@@ -373,7 +373,7 @@ closeSession = Internal.closeSession . unSession
 
 {- | A table is a handle to an individual LSM-tree key\/value store with both in-memory and on-disk parts.
 
-  __Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
+__Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
 -}
 type role Table nominal nominal
 
@@ -441,7 +441,7 @@ newTableWith tableConfig (Session session) =
 Closing is idempotent, i.e., closing a closed table does nothing.
 All other operations on a closed table will throw an exception.
 
-  __Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
+__Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
 -}
 closeTable :: Table k v -> IO ()
 closeTable (Table table) =
@@ -1099,9 +1099,9 @@ data SessionDirCorruptedError
 
 {- | Internal helper. Convert:
 
-    * t'Internal.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
-    * t'Internal.SessionDirLockedError' to t'SessionDirLockedError'; and
-    * t'Internal.SessionDirCorruptedError' to t'SessionDirCorruptedError'.
+*   t'Internal.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
+*   t'Internal.SessionDirLockedError'       to t'SessionDirLockedError'; and
+*   t'Internal.SessionDirCorruptedError'    to t'SessionDirCorruptedError'.
 -}
 _convertSessionDirErrors :: FilePath -> IO a -> IO a
 _convertSessionDirErrors sessionDir =
@@ -1138,9 +1138,9 @@ data TableUnionNotCompatibleError
 
 {- | Internal helper. Convert:
 
-    * t'Internal.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
-    * t'Internal.SessionDirLockedError' to t'SessionDirLockedError'; and
-    * t'Internal.SessionDirCorruptedError' to t'SessionDirCorruptedError'.
+*   t'Internal.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
+*   t'Internal.SessionDirLockedError'       to t'SessionDirLockedError'; and
+*   t'Internal.SessionDirCorruptedError'    to t'SessionDirCorruptedError'.
 -}
 _convertTableUnionNotCompatibleError :: (Int -> FilePath) -> IO a -> IO a
 _convertTableUnionNotCompatibleError sessionDirFor =
