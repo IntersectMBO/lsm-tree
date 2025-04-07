@@ -31,6 +31,7 @@ import           Text.Pandoc.Writers (writeMarkdown)
 
 main :: IO ()
 main = do
+    putStrLn "Generating README.md from package description..."
     let readmeHeaderFile = "scripts/generate-readme-header.md"
     readmeHeaderContent <- TIO.readFile readmeHeaderFile
     let lsmTreeCabalFile = "lsm-tree.cabal"
