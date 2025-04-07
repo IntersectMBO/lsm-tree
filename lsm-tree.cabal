@@ -286,6 +286,7 @@ library
     Database.LSMTree.Internal.WriteBufferWriter
     Database.LSMTree.Monoidal
     Database.LSMTree.Normal
+    Database.LSMTree.Simple
 
   build-depends:
     , base                    >=4.14      && <4.22

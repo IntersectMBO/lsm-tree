@@ -27,6 +27,7 @@ module Control.ActionRegistry (
   , AbortActionRegistryError (..)
   , AbortActionRegistryReason (..)
   , getReasonExitCaseException
+  , mapExceptionWithActionRegistry
     -- * Registering actions #registeringActions#
     -- $registering-actions
   , withRollback
@@ -42,6 +43,8 @@ import           Control.Monad.Primitive
 import           Data.Kind
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
+import           Data.Maybe (fromMaybe)
+import           Data.Monoid (First (..))
 import           Data.Primitive.MutVar
 
 #ifdef NO_IGNORE_ASSERTS
@@ -407,6 +410,46 @@ runActions = go []
       case eith of
         Left e  -> go (mkActionError e a : es) as
         Right _ -> go es as
+
+{-# SPECIALISE mapExceptionWithActionRegistry ::
+     (Exception e1, Exception e2)
+  => (e1 -> e2)
+  -> IO a
+  -> IO a #-}
+-- | As 'Control.Exception.mapException', but aware of the structure of
+--   'AbortActionRegistryError' and 'CommitActionRegistryError'.
+mapExceptionWithActionRegistry ::
+     (Exception e1, Exception e2, MonadCatch m)
+  => (e1 -> e2)
+  -> m a
+  -> m a
+mapExceptionWithActionRegistry f action = action `catch` (throwIO . mapSomeException)
+  where
+    -- TODO: This erases the `ExceptionContext` of the underlying exception.
+    --       Unfortunately, the API exposed by `io-classes` does not currently
+    --       have the primitives to preserve the `ExceptionContext`.
+    mapSomeException :: SomeException -> SomeException
+    mapSomeException e =
+      fromMaybe e . getFirst . mconcat . fmap First $
+        [ toException . f <$> fromException e
+        , toException . mapAbortActionRegistryError <$> fromException e
+        , toException . mapCommitActionRegistryError <$> fromException e
+        ]
+
+    mapAbortActionRegistryError :: AbortActionRegistryError -> AbortActionRegistryError
+    mapAbortActionRegistryError = \case
+      AbortActionRegistryError reason es ->
+        AbortActionRegistryError (mapAbortActionRegistryReason reason) (mapActionError mapSomeException <$> es)
+
+    mapAbortActionRegistryReason :: AbortActionRegistryReason -> AbortActionRegistryReason
+    mapAbortActionRegistryReason = \case
+      ReasonExitCaseException e -> ReasonExitCaseException (mapSomeException e)
+      ReasonExitCaseAbort -> ReasonExitCaseAbort
+
+    mapCommitActionRegistryError :: CommitActionRegistryError -> CommitActionRegistryError
+    mapCommitActionRegistryError = \case
+      CommitActionRegistryError es ->
+        CommitActionRegistryError (mapActionError mapSomeException <$> es)
 
 {-------------------------------------------------------------------------------
   Registering actions
