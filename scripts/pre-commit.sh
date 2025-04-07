@@ -46,6 +46,10 @@ echo
 ./scripts/lint-hlint.sh || echo > "$fail"
 echo
 
+# Generate README.md from package description
+./scripts/generate-readme.hs || echo > "$fail"
+echo
+
 # Check whether or not any subcommand failed:
 if [ -s "$fail" ]; then
     rm "$fail"
