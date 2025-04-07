@@ -74,6 +74,7 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import qualified Database.LSMTree.Internal.Vector as V
 import           GHC.Stack (HasCallStack, callStack)
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -275,7 +276,7 @@ duplicateRuns (DeRef mr) =
     withMVar (mergeState mr) $ \case
       CompletedMerge r  -> V.singleton <$> dupRef r
       OngoingMerge rs _ -> withActionRegistry $ \reg ->
-        V.mapM (\r -> withRollback reg (dupRef r) releaseRef) rs
+        V.mapMStrict (\r -> withRollback reg (dupRef r) releaseRef) rs
 
 -- | Take a snapshot of the state of a merging run.
 --

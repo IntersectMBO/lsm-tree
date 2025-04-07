@@ -28,6 +28,10 @@ module Database.LSMTree.Internal.MergeSchedule (
   , mergingRunParamsForLevel
     -- * Union level
   , UnionLevel (..)
+    -- * Union cache
+  , UnionCache (..)
+  , mkUnionCache
+  , releaseUnionCache
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
   , flushWriteBuffer
@@ -54,7 +58,7 @@ import           Control.Monad.Primitive
 import           Control.RefCount
 import           Control.Tracer
 import           Data.BloomFilter (Bloom)
-import           Data.Foldable (fold)
+import           Data.Foldable (fold, traverse_)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
@@ -67,6 +71,7 @@ import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
                      MergeDebt (..), MergingRun, RunParams (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
+import qualified Database.LSMTree.Internal.MergingTree.Lookup as MT
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
                      SessionRoot)
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -76,7 +81,8 @@ import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
-import           Database.LSMTree.Internal.Vector (forMStrict, mapStrict)
+import           Database.LSMTree.Internal.Vector (forMStrict, mapMStrict,
+                     mapStrict)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
@@ -141,7 +147,7 @@ data TableContent m h = TableContent {
   , tableLevels           :: !(Levels m h)
     -- | Cache of flattened regular 'levels'.
   , tableCache            :: !(LevelsCache m h)
-    -- | An optional final union level, not included in the table cache.
+    -- | An optional final union level, containing its own cache.
   , tableUnionLevel       :: !(UnionLevel m h)
   }
 
@@ -356,7 +362,7 @@ iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
 -- * never merged into the regular levels
 data UnionLevel m h =
     NoUnion
-  | Union !(Ref (MergingTree m h))
+  | Union !(Ref (MergingTree m h)) !(UnionCache m h)
 
 {-# SPECIALISE duplicateUnionLevel ::
      ActionRegistry IO
@@ -369,8 +375,9 @@ duplicateUnionLevel ::
   -> m (UnionLevel m h)
 duplicateUnionLevel reg ul =
     case ul of
-      NoUnion    -> return ul
-      Union tree -> Union <$> withRollback reg (dupRef tree) releaseRef
+      NoUnion          -> return ul
+      Union tree cache -> Union <$> withRollback reg (dupRef tree) releaseRef
+                                <*> duplicateUnionCache reg cache
 
 {-# SPECIALISE releaseUnionLevel ::
      ActionRegistry IO
@@ -381,8 +388,44 @@ releaseUnionLevel ::
   => ActionRegistry m
   -> UnionLevel m h
   -> m ()
-releaseUnionLevel _   NoUnion      = return ()
-releaseUnionLevel reg (Union tree) = delayedCommit reg (releaseRef tree)
+releaseUnionLevel _   NoUnion            = return ()
+releaseUnionLevel reg (Union tree cache) = delayedCommit reg (releaseRef tree)
+                                        >> releaseUnionCache reg cache
+
+{-------------------------------------------------------------------------------
+  Union cache
+-------------------------------------------------------------------------------}
+
+-- | Similar to the 'LevelsCache', but in a tree shape, since this structure is
+-- required to combine the individual lookup results.
+newtype UnionCache m h = UnionCache {
+    cachedTree :: MT.LookupTree (V.Vector (Ref (Run m h)))
+  }
+
+mkUnionCache ::
+     (PrimMonad m, MonadMVar m, MonadMask m)
+  => ActionRegistry m
+  -> Ref (MergingTree m h)
+  -> m (UnionCache m h)
+mkUnionCache reg mt =
+    UnionCache <$> MT.buildLookupTree reg mt
+
+duplicateUnionCache ::
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
+  -> UnionCache m h
+  -> m (UnionCache m h)
+duplicateUnionCache reg (UnionCache mt) =
+    UnionCache <$>
+      MT.mapMStrict (mapMStrict (\r -> withRollback reg (dupRef r) releaseRef)) mt
+
+releaseUnionCache ::
+     (PrimMonad m, MonadMask m)
+  => ActionRegistry m
+  -> UnionCache m h
+  -> m ()
+releaseUnionCache reg (UnionCache mt) =
+    traverse_ (traverse_ (\r -> delayedCommit reg (releaseRef r))) mt
 
 {-------------------------------------------------------------------------------
   Flushes and scheduled merges

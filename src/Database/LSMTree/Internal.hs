@@ -805,53 +805,48 @@ lookups ::
 lookups resolve ks t = do
     traceWith (tableTracer t) $ TraceLookups (V.length ks)
     withOpenTable t $ \tEnv ->
-      RW.withReadAccess (tableContent tEnv) $ \tableContent -> do
-        case tableUnionLevel tableContent of
-          NoUnion -> regularLevelLookups tEnv tableContent
-          Union tree -> do
+      RW.withReadAccess (tableContent tEnv) $ \tc -> do
+        case tableUnionLevel tc of
+          NoUnion -> lookupsRegular tEnv tc
+          Union tree unionCache -> do
             isStructurallyEmpty tree >>= \case
-              True  -> regularLevelLookups tEnv tableContent
-              False ->
-                -- TODO: the blob refs returned from the tree can be invalidated
-                -- by supplyUnionCredits or other operations on any table that
-                -- shares merging runs or trees. We need to keep open the runs!
-                -- This could be achieved by storing the LookupTree and only
-                -- calling MT.releaseLookupTree later, when we are okay with
-                -- invalidating the blob refs (similar to the LevelsCache).
-                -- Lookups then use the cached tree, but when should we rebuild
-                -- the tree? On each call to supplyUnionCredits?
-                withActionRegistry $ \reg -> do
-                  regularResult <-
-                    -- asynchronously, so tree lookup batches can already be
-                    -- submitted without waiting for the result.
-                    Async.async $ regularLevelLookups tEnv tableContent
-                  treeBatches <- MT.buildLookupTree reg tree
-                  treeResults <- forM treeBatches $ \runs ->
-                    Async.async $ treeBatchLookups tEnv runs
-                  -- TODO: if regular levels are empty, don't add them to tree
-                  res <- MT.foldLookupTree resolve $
-                    MT.mkLookupNode MR.MergeLevel $ V.fromList
-                      [ MT.LookupBatch regularResult
-                      , treeResults
-                      ]
-                  MT.releaseLookupTree reg treeBatches
-                  return res
+              True  -> lookupsRegular tEnv tc
+              False -> if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
+                         then lookupsUnion tEnv unionCache
+                         else lookupsRegularAndUnion tEnv tc unionCache
   where
-    regularLevelLookups tEnv tableContent = do
-        let !cache = tableCache tableContent
+    lookupsRegular tEnv tc = do
+        let !cache = tableCache tc
         lookupsIOWithWriteBuffer
           (tableHasBlockIO tEnv)
           (tableArenaManager t)
           resolve
-          (tableWriteBuffer tableContent)
-          (tableWriteBufferBlobs tableContent)
+          (tableWriteBuffer tc)
+          (tableWriteBufferBlobs tc)
           (cachedRuns cache)
           (cachedFilters cache)
           (cachedIndexes cache)
           (cachedKOpsFiles cache)
           ks
 
-    treeBatchLookups tEnv runs =
+    lookupsUnion tEnv unionCache = do
+        treeResults <- flip MT.mapMStrict (cachedTree unionCache) $ \runs ->
+          Async.async $ lookupsUnionSingleBatch tEnv runs
+        MT.foldLookupTree resolve treeResults
+
+    lookupsRegularAndUnion tEnv tc unionCache = do
+        -- asynchronously, so tree lookup batches can already be submitted
+        -- without waiting for the regular level result.
+        regularResult <- Async.async $ lookupsRegular tEnv tc
+        treeResults <- flip MT.mapMStrict (cachedTree unionCache) $ \runs ->
+          Async.async $ lookupsUnionSingleBatch tEnv runs
+        MT.foldLookupTree resolve $
+          MT.mkLookupNode MR.MergeLevel $ V.fromList
+            [ MT.LookupBatch regularResult
+            , treeResults
+            ]
+
+    lookupsUnionSingleBatch tEnv runs =
         lookupsIO
           (tableHasBlockIO tEnv)
           (tableArenaManager t)
@@ -1264,7 +1259,7 @@ createSnapshot snap label tableType t = do
         -- If a merging tree exists, do the same hard-linking for the runs within
         mTreeOpt <- case tableUnionLevel content of
           NoUnion -> pure Nothing
-          Union mTreeRef -> do
+          Union mTreeRef _cache -> do
             mTree <- toSnapMergingTree mTreeRef
             Just <$> traverse (snapshotRun hfs hbio snapUc reg snapDir) mTree
 
@@ -1380,8 +1375,13 @@ openSnapshot sesh policyOveride label tableType snap resolve =
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir) mTree
                 mt <- fromSnapMergingTree hfs hbio uc resolve activeDir reg snapTree
-                traverse_ (delayedCommit reg . releaseRef) snapTree
-                pure (Union mt)
+                isStructurallyEmpty mt >>= \case
+                  True ->
+                    pure NoUnion
+                  False -> do
+                    traverse_ (delayedCommit reg . releaseRef) snapTree
+                    cache <- mkUnionCache reg mt
+                    pure (Union mt cache)
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels hfs hbio uc conf resolve reg activeDir snapLevels'
@@ -1574,7 +1574,6 @@ unionsInOpenSession ::
   -> NonEmpty (Table m h)
   -> m (Table m h)
 unionsInOpenSession reg sesh seshEnv conf ts = do
-
     mts <- forM (NE.toList ts) $ \t ->
       withOpenTable t $ \tEnv ->
         RW.withReadAccess (tableContent tEnv) $ \tc ->
@@ -1591,13 +1590,20 @@ unionsInOpenSession reg sesh seshEnv conf ts = do
     -- the action registry bracket
     forM_ mts (delayedCommit reg . releaseRef)
 
-    empty <- newEmptyTableContent seshEnv reg
-    let content = empty { tableUnionLevel = Union mt }
+    content <- MT.isStructurallyEmpty mt >>= \case
+      True -> do
+        -- no need to have an empty merging tree
+        delayedCommit reg (releaseRef mt)
+        newEmptyTableContent seshEnv reg
+      False -> do
+        empty <- newEmptyTableContent seshEnv reg
+        cache <- mkUnionCache reg mt
+        return empty { tableUnionLevel = Union mt cache }
 
-        -- Pick the arena manager to optimise the case of:
-        -- someUpdates <> bigTableWithLotsOfLookups
-        -- by reusing the arena manager from the last one.
-        am = tableArenaManager (NE.last ts)
+    -- Pick the arena manager to optimise the case of:
+    -- someUpdates <> bigTableWithLotsOfLookups
+    -- by reusing the arena manager from the last one.
+    let am = tableArenaManager (NE.last ts)
 
     newWith reg sesh seshEnv conf am content
 
@@ -1625,8 +1631,9 @@ tableContentToMergingTree seshEnv conf
               ++ concatMap levelToPreExistingRuns (V.toList tableLevels)
           -- any pre-existing union in the input table:
           unionmt = case tableUnionLevel of
-                    NoUnion  -> Nothing
-                    Union mt -> Just mt
+                    NoUnion    -> Nothing
+                    Union mt _ -> Just mt  -- we could re-use the cache, but it
+                                           -- would complicate things
        in newPendingLevelMerge runs unionmt
   where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
@@ -1719,7 +1726,7 @@ remainingUnionDebt t = do
         case tableUnionLevel tableContent of
           NoUnion ->
             pure (UnionDebt 0)
-          Union mt -> do
+          Union mt _ -> do
             (MergeDebt (MergeCredits c), _) <- MT.remainingMergeDebt mt
             pure (UnionDebt c)
 
@@ -1736,14 +1743,15 @@ supplyUnionCredits ::
 supplyUnionCredits resolve t credits = do
     traceWith (tableTracer t) $ TraceSupplyUnionCredits credits
     withOpenTable t $ \tEnv -> do
-      -- No need to mutate the table content here. In the rare case that we want
-      -- to move a completed union level into the regular levels, we can still
-      -- take the write lock for that.
-      RW.withReadAccess (tableContent tEnv) $ \tableContent -> do
-        case tableUnionLevel tableContent of
+      -- We also want to mutate the table content to re-build the union cache,
+      -- but we don't need to hold a writer lock while we work on the tree
+      -- itself.
+      -- TODO: revisit the locking strategy here.
+      leftovers <- RW.withReadAccess (tableContent tEnv) $ \tc -> do
+        case tableUnionLevel tc of
           NoUnion ->
             pure (max 0 credits)  -- all leftovers (but never negative)
-          Union mt -> do
+          Union mt _ -> do
             let conf = tableConfig t
             let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
             -- We simply use the write buffer size as merge credit threshold, as
@@ -1762,3 +1770,20 @@ supplyUnionCredits resolve t credits = do
                 mt
                 (let UnionCredits c = credits in MergeCredits c)
             pure (UnionCredits leftovers)
+      -- TODO: don't go into this section if we know there is NoUnion
+      modifyWithActionRegistry_
+        (RW.unsafeAcquireWriteAccess (tableContent tEnv))
+        (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv))
+        $ \reg tc ->
+          case tableUnionLevel tc of
+            NoUnion -> pure tc
+            Union mt cache -> do
+              unionLevel' <- MT.isStructurallyEmpty mt >>= \case
+                True  ->
+                  return NoUnion
+                False -> do
+                  cache' <- mkUnionCache reg mt
+                  releaseUnionCache reg cache
+                  return (Union mt cache')
+              pure tc { tableUnionLevel = unionLevel' }
+      pure leftovers

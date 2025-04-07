@@ -52,6 +52,7 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.MergingTree
+import           Database.LSMTree.Internal.MergingTree.Lookup (LookupTree (..))
 import           Database.LSMTree.Internal.Page
 import           Database.LSMTree.Internal.PageAcc
 import           Database.LSMTree.Internal.Paths
@@ -338,6 +339,11 @@ deriving anyclass instance
   , NoThunks (StrictMVar m (MergingTreeState m h))
   ) => NoThunks (UnionLevel m h)
 
+deriving stock instance Generic (UnionCache m h)
+deriving anyclass instance
+  ( Typeable m, Typeable (PrimState m), Typeable h
+  ) => NoThunks (UnionCache m h)
+
 deriving stock instance Generic MergePolicyForLevel
 deriving anyclass instance NoThunks MergePolicyForLevel
 
@@ -403,6 +409,9 @@ deriving anyclass instance
   ( Typeable m, Typeable (PrimState m), Typeable h
   , NoThunks (StrictMVar m (MergingRunState LevelMergeType m h))
   ) => NoThunks (PreExistingRun m h)
+
+deriving stock instance Generic (LookupTree a)
+deriving anyclass instance NoThunks a => NoThunks (LookupTree a)
 
 {-------------------------------------------------------------------------------
   Entry
