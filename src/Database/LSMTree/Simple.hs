@@ -59,6 +59,12 @@ module Database.LSMTree.Simple (
     withUnions,
     union,
     unions,
+    withIncrementalUnion,
+    withIncrementalUnions,
+    incrementalUnion,
+    incrementalUnions,
+    remainingUnionDebt,
+    supplyUnionCredits,
 
     -- * Cursors #cursor#
     Cursor,
@@ -100,6 +106,10 @@ module Database.LSMTree.Simple (
 
     -- * Ranges #ranges#
     Range (..),
+
+    -- * Union Credit and Debt
+    UnionCredits(..),
+    UnionDebt(..),
 
     -- * Key\/Value Serialisation #key_value_serialisation#
     RawBytes (RawBytes),
@@ -147,7 +157,8 @@ import           Database.LSMTree.Internal (BlobRefInvalidError (..),
                      SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
                      SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableCorruptedError (..), TableTooLargeError (..))
+                     TableCorruptedError (..), TableTooLargeError (..),
+                     UnionCredits (..), UnionDebt (..))
 import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Config
                      (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
@@ -226,6 +237,8 @@ function that combines the two.
 +            +--------------------------+-------------------------+                   +
 |            | 'withUnion'              | 'union'                 |                   |
 +            +--------------------------+-------------------------+                   +
+|            | 'withIncrementalUnion'   | 'incrementalUnion'      |                   |
++            +--------------------------+-------------------------+                   +
 |            | 'withTableFromSnapshot'  | 'openTableFromSnapshot' |                   |
 +------------+--------------------------+-------------------------+-------------------+
 | 'Cursor'   | 'withCursor'             | 'newCursor'             | 'closeCursor'     |
@@ -302,7 +315,8 @@ Opening a table from a snapshot (using 'openTableFromSnapshot' or
 -- Sessions
 --------------------------------------------------------------------------------
 
-{- | A session stores context that is shared by multiple tables.
+{- |
+A session stores context that is shared by multiple tables.
 
 Each session is associated with one session directory where the files
 containing table data are stored. Each session locks its session directory.
@@ -315,6 +329,14 @@ type Session :: Type
 newtype Session = Session {unSession :: Internal.Session IO HandleIO}
 
 {- |
+Run an action with access to a session opened from a session directory.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'openSession' and 'closeSession'.
+
 Throws the following exceptions:
 
 ['SessionDirDoesNotExistError']:
@@ -339,6 +361,12 @@ withSession dir action = do
             Internal.withSession tracer hasFS hasBlockIO rootDir (action . Session)
 
 {- |
+Open a session from a session directory.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+
 Throws the following exceptions:
 
 ['SessionDirDoesNotExistError']:
@@ -364,6 +392,18 @@ openSession dir = do
     acquire hasFS = ioHasBlockIO hasFS defaultIOCtxParams
     release = \HasBlockIO{close} -> close
 
+{- |
+Close a session.
+
+The worst-case disk I\/O complexity of this operation is \(O(t \log_T n)\),
+where the variable \(t\) refers to the number of tables in the session.
+
+If the session has any open tables, then 'closeTable' is called for each open table.
+Otherwise, this operation takes constant time.
+
+Closing is idempotent, i.e., closing a closed session does nothing.
+All other operations on a closed session will throw an exception.
+-}
 closeSession :: Session -> IO ()
 closeSession = Internal.closeSession . unSession
 
@@ -371,7 +411,8 @@ closeSession = Internal.closeSession . unSession
 -- Tables
 --------------------------------------------------------------------------------
 
-{- | A table is a handle to an individual LSM-tree key\/value store with both in-memory and on-disk parts.
+{- |
+A table is a handle to an individual LSM-tree key\/value store with both in-memory and on-disk parts.
 
 __Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
 -}
@@ -382,7 +423,10 @@ data Table k v
     = (SerialiseKey k, SerialiseValue v) =>
     Table {unTable :: {-# UNPACK #-} !(Internal.Table IO HandleIO)}
 
-{- | Run an action with access to an empty table.
+{- |
+Run an action with access to an empty table.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -411,7 +455,10 @@ withTableWith ::
 withTableWith tableConfig session action =
     Internal.withTable (unSession session) tableConfig (action . Table)
 
-{- | Create an empty table.
+{- |
+Create an empty table.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 __Warning:__ Tables hold open resources and must be closed using 'closeTable'.
 
@@ -427,7 +474,9 @@ newTable ::
 newTable session =
     newTableWith defaultTableConfig session
 
--- | Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
+{- |
+Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
+-}
 newTableWith ::
     (SerialiseKey k, SerialiseValue v) =>
     TableConfig ->
@@ -436,7 +485,10 @@ newTableWith ::
 newTableWith tableConfig (Session session) =
     Table <$> Internal.new session tableConfig
 
-{- | Close a table.
+{- |
+Close a table.
+
+The worst-case disk I\/O complexity of this operation is \(O(\log_T n)\).
 
 Closing is idempotent, i.e., closing a closed table does nothing.
 All other operations on a closed table will throw an exception.
@@ -451,7 +503,13 @@ closeTable (Table table) =
 -- Lookups
 --------------------------------------------------------------------------------
 
-{- | Check if the key is a member of the table.
+{- |
+Check if the key is a member of the table.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T n)\).
 
 Membership tests can be performed concurrently from multiple Haskell threads.
 
@@ -470,8 +528,16 @@ member ::
     IO Bool
 member = (fmap isJust .) . lookup
 
-{- | Variant of 'member' for batch membership tests.
+{- |
+Variant of 'member' for batch membership tests.
 The batch of keys corresponds in-order to the batch of results.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \log_T n)\).
+
+The variable \(b\) refers to the length of the input vector.
 
 The following property holds in the absence of races:
 
@@ -483,7 +549,13 @@ members ::
     IO (Vector Bool)
 members = (fmap (fmap isJust) .) . lookups
 
-{- | Look up the value associated with a key.
+{- |
+Look up the value associated with a key.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T n)\).
 
 Lookups can be performed concurrently from multiple Haskell threads.
 
@@ -505,8 +577,16 @@ lookup table k = do
     let mmv = fst <$> V.uncons mvs
     pure (join mmv)
 
-{- | Variant of 'lookup' for batch lookups.
+{- |
+Variant of 'lookup' for batch lookups.
 The batch of keys corresponds in-order to the batch of results.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \log_T n)\).
+
+The variable \(b\) refers to the length of the input vector.
 
 The following property holds in the absence of races:
 
@@ -526,7 +606,12 @@ lookups (Table table) keys = do
         Entry.Mupdate !v -> Just (Internal.deserialiseValue v)
         Entry.Delete -> Nothing
 
-{- | Look up a batch of values associated with keys in the given range.
+
+{- |
+Look up a batch of values associated with keys in the given range.
+
+The worst-case disk I\/O complexity of this operation is \(O(\log_T n + b)\),
+where the variable \(b\) refers to the length of the /output/ vector.
 
 Range lookups can be performed concurrently from multiple Haskell threads.
 
@@ -539,6 +624,8 @@ Throws the following exceptions:
 ['TableCorruptedError']:
     If the table data is corrupted.
 -}
+-- The worst-case time complexity is \(O(b \log_T n)\).
+-- The amortised time complexity is \(\Theta(b \log\log_T n)\).
 rangeLookup ::
     Table k v ->
     Range k ->
@@ -552,9 +639,14 @@ rangeLookup (Table table) range =
 -- Updates
 --------------------------------------------------------------------------------
 
-{- | Insert a new key and value in the table.
-
+{- |
+Insert a new key and value in the table.
 If the key is already present in the table, the associated value is replaced with the given value.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T n)\).
 
 Throws the following exceptions:
 
@@ -571,7 +663,15 @@ insert ::
 insert table k v =
     inserts table (V.singleton (k, v))
 
-{- | Variant of 'insert' for batch insertions.
+{- |
+Variant of 'insert' for batch insertions.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \log_T n)\).
+
+The variable \(b\) refers to the length of the input vector.
 
 The following property holds in the absence of races:
 
@@ -584,9 +684,14 @@ inserts ::
 inserts table entries =
     updates table (fmap (second Just) entries)
 
-{- | Delete a key and its value from the table.
-
+{- |
+Delete a key and its value from the table.
 If the key is not present in the table, the table is left unchanged.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T n)\).
 
 Throws the following exceptions:
 
@@ -602,7 +707,15 @@ delete ::
 delete table k =
     deletes table (V.singleton k)
 
-{- | Variant of 'delete' for batch deletions.
+{- |
+Variant of 'delete' for batch deletions.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \log_T n)\).
+
+The variable \(b\) refers to the length of the input vector.
 
 The following property holds in the absence of races:
 
@@ -615,10 +728,16 @@ deletes ::
 deletes table entries =
     updates table (fmap (,Nothing) entries)
 
-{- | Update the value at a specific key:
+{- |
+Update the value at a specific key:
 
 * If the given value is 'Just', this operation acts as 'insert'.
 * If the given value is 'Nothing', this operation acts as 'delete'.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T n)\).
 
 Throws the following exceptions:
 
@@ -635,7 +754,15 @@ update ::
 update table k mv =
     updates table (V.singleton (k, mv))
 
-{- | Variant of 'update' for batch updates.
+{- |
+Variant of 'update' for batch updates.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \log_T n)\).
+
+The variable \(b\) refers to the length of the input vector.
 
 The following property holds in the absence of races:
 
@@ -655,7 +782,13 @@ updates (Table table) entries =
 -- Duplication
 --------------------------------------------------------------------------------
 
-{- | Run an action with access to the duplicate of a table.
+{- |
+Run an action with access to the duplicate of a table.
+
+The duplicate is an independent copy of the given table.
+The duplicate is unaffected by subsequent updates to the given table and vice versa.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -668,6 +801,7 @@ Throws the following exceptions:
 ['TableClosedError']:
     If the table is closed.
 -}
+-- The worst-case time complexity is \(O(\log_T n)\).
 withDuplicate ::
     Table k v ->
     (Table k v -> IO a) ->
@@ -675,10 +809,13 @@ withDuplicate ::
 withDuplicate table =
     bracket (duplicate table) closeTable
 
-{- | Duplicate a table.
+{- |
+Duplicate a table.
 
 The duplicate is an independent copy of the given table.
 The duplicate is unaffected by subsequent updates to the given table and vice versa.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 __Warning:__ The duplicate must be independently closed using 'closeTable'.
 
@@ -689,6 +826,7 @@ Throws the following exceptions:
 ['TableClosedError']:
     If the table is closed.
 -}
+-- The worst-case time complexity is \(O(\log_T n)\).
 duplicate ::
     Table k v ->
     IO (Table k v)
@@ -699,7 +837,10 @@ duplicate (Table table) =
 -- Union
 --------------------------------------------------------------------------------
 
-{- | Run an action with access to a table that contains the union of the entries of the given tables.
+{- |
+Run an action with access to a table that contains the union of the entries of the given tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -708,6 +849,7 @@ It is recommended to use this function instead of 'union' and 'closeTable'.
 __Warning:__ Both input tables must be from the same 'Session'.
 
 __Warning:__ This is a relatively expensive operation that may take some time to complete.
+See 'incrementalUnion' for an incremental alternative.
 
 Throws the following exceptions:
 
@@ -726,7 +868,9 @@ withUnion ::
 withUnion table1 table2 =
     bracket (table1 `union` table2) closeTable
 
--- | Variant of 'withUnions' for any number of tables.
+{- |
+Variant of 'withUnions' that takes any number of tables.
+-}
 withUnions ::
     NonEmpty (Table k v) ->
     (Table k v -> IO a) ->
@@ -734,15 +878,17 @@ withUnions ::
 withUnions tables =
     bracket (unions tables) closeTable
 
-{- | Create a table that contains the union of the entries of the given tables.
+{- |
+Create a table that contains the left-biased union of the entries of the given tables.
 
-The union of two tables is left-biased.
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
 
 __Warning:__ Both input tables must be from the same 'Session'.
 
 __Warning:__ This is a relatively expensive operation that may take some time to complete.
+See 'incrementalUnion' for an incremental alternative.
 
 Throws the following exceptions:
 
@@ -760,25 +906,147 @@ union ::
 union table1 table2 =
     unions (table1 :| table2 : [])
 
--- | Variant of 'union' for any number of tables.
+{- |
+Variant of 'union' that takes any number of tables.
+-}
 unions ::
     NonEmpty (Table k v) ->
     IO (Table k v)
-unions (Table table :| tables) = do
-    -- TODO: add variant of 'unions' that incrementally computes unions
-    bracketOnError acquireUnionOfTables Internal.close $ \unionOfTables -> do
-      Internal.UnionDebt debt <- Internal.remainingUnionDebt unionOfTables
-      leftovers <- Internal.supplyUnionCredits const unionOfTables (Internal.UnionCredits debt)
+unions tables = do
+    bracketOnError (incrementalUnions tables) closeTable $ \table -> do
+      UnionDebt debt <- remainingUnionDebt table
+      UnionCredits leftovers <- supplyUnionCredits table (UnionCredits debt)
       assert (leftovers >= 0) $ pure ()
-      pure $ Table unionOfTables
-  where
-    acquireUnionOfTables = Internal.unions (table :| fmap unTable tables)
+      pure table
+
+{- |
+Run an action with access to a table that incrementally computes the union of the given tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'incrementalUnion' and 'closeTable'.
+
+The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
+The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
+While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
+
+__Warning:__ Both input tables must be from the same 'Session'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableUnionNotCompatibleError']:
+    If both tables are not from the same 'Session'.
+-}
+-- The worst-case time complexity is \(O(\log_T n)\).
+withIncrementalUnion ::
+    Table k v ->
+    Table k v ->
+    (Table k v -> IO a) ->
+    IO a
+withIncrementalUnion table1 table2 =
+    bracket (incrementalUnion table1 table2) closeTable
+
+{- |
+Variant of 'withIncrementalUnion' that takes any number of tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the number of input tables.
+-}
+-- The worst-case time complexity is \(O(b \log_T n)\).
+withIncrementalUnions ::
+    NonEmpty (Table k v) ->
+    (Table k v -> IO a) ->
+    IO a
+withIncrementalUnions tables =
+    bracket (incrementalUnions tables) closeTable
+
+{- |
+Create a table that incrementally computes the union of the given tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
+The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
+While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
+
+__Warning:__ The new table must be independently closed using 'closeTable'.
+
+__Warning:__ Both input tables must be from the same 'Session'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableUnionNotCompatibleError']:
+    If both tables are not from the same 'Session'.
+-}
+-- The worst-case time complexity is \(O(\log_T n)\).
+incrementalUnion ::
+    Table k v ->
+    Table k v ->
+    IO (Table k v)
+incrementalUnion table1 table2 = do
+    incrementalUnions (table1 :| table2 : [])
+
+{- |
+Variant of 'incrementalUnion' for any number of tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the number of input tables.
+-}
+-- The worst-case time complexity is \(O(\log_T n)\).
+incrementalUnions ::
+    NonEmpty (Table k v) ->
+    IO (Table k v)
+incrementalUnions (Table table :| tables) = do
+    Table <$> Internal.unions (table :| fmap unTable tables)
+
+{- |
+Get the amount of remaining union debt.
+This includes the union debt of any table that was part of the union's input.
+
+The worst-case disk I\/O complexity of this operation is \(O\(1)\).
+-}
+remainingUnionDebt ::
+    Table k v ->
+    IO UnionDebt
+remainingUnionDebt (Table table) =
+    Internal.remainingUnionDebt table
+
+{- |
+Supply the given amount of union credits.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the amount of credits supplied.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+supplyUnionCredits ::
+    Table k v ->
+    UnionCredits ->
+    IO UnionCredits
+supplyUnionCredits (Table table) credits =
+    Internal.supplyUnionCredits const table credits
 
 --------------------------------------------------------------------------------
 -- Snapshots
 --------------------------------------------------------------------------------
 
-{- | Save the current state of the table to disk as a snapshot under the given
+{- |
+Save the current state of the table to disk as a snapshot under the given
 snapshot name. This is the /only/ mechanism that persists a table. Each snapshot
 must have a unique name, which may be used to restore the table from that snapshot
 using 'openTableFromSnapshot'.
@@ -786,7 +1054,8 @@ Saving a snapshot /does not/ close the table.
 
 Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
 However, it is not so cheap that one should use it after every operation.
-At very least, saving a snapshot requires writing the in-memory buffer to disk.
+
+The worst-case disk I\/O complexity of this operation is \(O(\log_T n)\).
 
 Throws the following exceptions:
 
@@ -806,7 +1075,10 @@ saveSnapshot snapName snapLabel (Table table) =
     -- TODO: remove SnapshotTableType
     Internal.createSnapshot snapName snapLabel Internal.SnapSimpleTable table
 
-{- | Run an action with access to a table from a snapshot.
+{- |
+Run an action with access to a table from a snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -835,7 +1107,9 @@ withTableFromSnapshot ::
 withTableFromSnapshot session snapName snapLabel =
     bracket (openTableFromSnapshot session snapName snapLabel) closeTable
 
--- | Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+{- |
+Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+-}
 withTableFromSnapshotWith ::
     (SerialiseKey k, SerialiseValue v) =>
     OverrideDiskCachePolicy ->
@@ -847,7 +1121,10 @@ withTableFromSnapshotWith ::
 withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
     bracket (openTableFromSnapshotWith session tableConfigOverride snapName snapLabel) closeTable
 
-{- | Open a table from a named snapshot.
+{- |
+Open a table from a named snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
 
@@ -873,7 +1150,9 @@ openTableFromSnapshot ::
 openTableFromSnapshot session snapName snapLabel =
     openTableFromSnapshotWith session NoOverrideDiskCachePolicy snapName snapLabel
 
--- | Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+{- |
+Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+-}
 openTableFromSnapshotWith ::
     (SerialiseKey k, SerialiseValue v) =>
     Session ->
@@ -884,7 +1163,10 @@ openTableFromSnapshotWith ::
 openTableFromSnapshotWith (Session session) tableConfigOverride snapName snapLabel =
     Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapSimpleTable snapName const
 
-{- | Delete the named snapshot.
+{- |
+Delete the named snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(\log_T n)\).
 
 Throws the following exceptions:
 
@@ -900,7 +1182,10 @@ deleteSnapshot ::
 deleteSnapshot (Session session) =
     Internal.deleteSnapshot session
 
-{- | Check if the named snapshot exists.
+{- |
+Check if the named snapshot exists.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 Throws the following exceptions:
 
@@ -914,7 +1199,11 @@ doesSnapshotExist ::
 doesSnapshotExist (Session session) =
     Internal.doesSnapshotExist session
 
-{- | List the names of all snapshots.
+{- |
+List the names of all snapshots.
+
+The worst-case disk I\/O complexity of this operation is \(O(s)\),
+where \(s\) refers to the number of snapshots in the session.
 
 Throws the following exceptions:
 
@@ -931,7 +1220,8 @@ listSnapshots (Session session) =
 -- Cursors
 --------------------------------------------------------------------------------
 
-{- | A cursor is a stable read-only iterator for a table.
+{- |
+A cursor is a stable read-only iterator for a table.
 
 A cursor iterates over the entries in a table following the order of the
 serialised keys. After the cursor is created, updates to the referenced table
@@ -946,7 +1236,10 @@ data Cursor k v
     = (SerialiseKey k, SerialiseValue v) =>
     Cursor {unCursor :: {-# UNPACK #-} !(Internal.Cursor IO HandleIO)}
 
-{- | Run an action with access to a cursor.
+{- |
+Run an action with access to a cursor.
+
+The worst-case disk I\/O complexity of this operation is \(O(\log_T n)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -966,7 +1259,9 @@ withCursor ::
 withCursor (Table table) action =
     Internal.withCursor Internal.NoOffsetKey table (action . Cursor)
 
--- | Variant of 'withCursor' that starts at a given key.
+{- |
+Variant of 'withCursor' that starts at a given key.
+-}
 withCursorAtOffset ::
     Table k v ->
     k ->
@@ -975,7 +1270,10 @@ withCursorAtOffset ::
 withCursorAtOffset (Table table) offsetKey action =
     Internal.withCursor (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table (action . Cursor)
 
-{- | Create a cursor for the given table.
+{- |
+Create a cursor for the given table.
+
+The worst-case disk I\/O complexity of this operation is \(O(\log_T n)\).
 
 __Warning:__ Cursors hold open resources and must be closed using 'closeCursor'.
 
@@ -992,7 +1290,9 @@ newCursor ::
 newCursor (Table table) =
     Cursor <$> Internal.newCursor Internal.NoOffsetKey table
 
--- | Variant of 'newCursor' that starts at a given key.
+{- |
+Variant of 'newCursor' that starts at a given key.
+-}
 newCursorAtOffset ::
     Table k v ->
     k ->
@@ -1000,7 +1300,10 @@ newCursorAtOffset ::
 newCursorAtOffset (Table table) offsetKey =
     Cursor <$> Internal.newCursor (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table
 
-{- | Close a cursor.
+{- |
+Close a cursor.
+
+The worst-case disk I\/O complexity of this operation is \(O(\log_T n)\).
 
 Closing is idempotent, i.e., closing a closed cursor does nothing.
 All other operations on a closed cursor will throw an exception.
@@ -1010,7 +1313,10 @@ closeCursor ::
     IO ()
 closeCursor = Internal.closeCursor . unCursor
 
-{- | Read the next table entry from the cursor.
+{- |
+Read the next table entry from the cursor.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 Throws the following exceptions:
 
@@ -1019,6 +1325,9 @@ Throws the following exceptions:
 ['CursorClosedError']:
     If the cursor is closed.
 -}
+-- The worst-case time complexity is \(O(\log_T n)\)
+-- The amortised time complexity is \(\Theta(\log\log_T n)\).
+-- TODO: implement this function in terms of 'readEntry'
 next ::
     Cursor k v ->
     IO (Maybe (k, v))
@@ -1026,10 +1335,14 @@ next iterator = do
     entries <- take 1 iterator
     pure $ fst <$> V.uncons entries
 
-{- | Read the next batch of table entries from the cursor.
+{- |
+Read the next batch of table entries from the cursor.
 
-The size of the batch is /at most/ equal to the given number, but may contain fewer entries.
-In practice, this occurs only when the cursor reaches the end of the table.
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the length of the /output/ vector,
+which is /at most/ equal to the given number.
+In practice, the length of the output vector is only less than the given number
+once the cursor reaches the end of the table.
 
 The following property holds:
 
@@ -1042,6 +1355,8 @@ Throws the following exceptions:
 ['CursorClosedError']:
     If the cursor is closed.
 -}
+-- The worst-case time complexity is \(O(b \log_T n)\).
+-- The amortised time complexity is \(\Theta(b \log\log_T n)\).
 take ::
     Int ->
     Cursor k v ->
@@ -1051,7 +1366,14 @@ take n (Cursor cursor) =
         assert (null b) $
             (Internal.deserialiseKey k, Internal.deserialiseValue v)
 
-{- | Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
+{- |
+Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the length of the /output/ vector,
+which is /at most/ equal to the given number.
+In practice, the length of the output vector is only less than the given number
+when the predicate returns false or the cursor reaches the end of the table.
 
 The following properties hold:
 
@@ -1065,13 +1387,15 @@ Throws the following exceptions:
 ['CursorClosedError']:
     If the cursor is closed.
 -}
+-- The worst-case time complexity is \(O(b \log_T n)\).
+-- The amortised time complexity is \(\Theta(b \log\log_T n)\).
+-- TODO: implement this function using a variant of 'readCursorWhile' that does not take the maximum batch size
 takeWhile ::
     Int ->
     (k -> Bool) ->
     Cursor k v ->
     IO (Vector (k, v))
 takeWhile n p (Cursor cursor) =
-    -- TODO: Rewrite to use a variant of 'readCursorWhile' that works without the maximum batch size.
     Internal.readCursorWhile const (p . Internal.deserialiseKey) n cursor $ \ !k !v !_b ->
         (Internal.deserialiseKey k, Internal.deserialiseValue v)
 
