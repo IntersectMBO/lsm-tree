@@ -1,7 +1,6 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeApplications   #-}
-{- HLINT ignore "Use camelCase" -}
-{- HLINT ignore "Eta reduce" -}
+
 
 module Bench.Database.LSMTree.Internal.BloomFilter (
     benchmarks
