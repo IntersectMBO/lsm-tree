@@ -46,8 +46,8 @@ echo
 ./scripts/lint-hlint.sh || echo > "$fail"
 echo
 
-# Test Haskell files with cabal-docspec
-./scripts/test-cabal-docspec.sh || echo > "$fail"
+# Generate README.md from package description
+./scripts/generate-readme.hs || echo > "$fail"
 echo
 
 # Check whether or not any subcommand failed:
