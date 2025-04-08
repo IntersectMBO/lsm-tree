@@ -2,5 +2,5 @@ if(os(linux))
   source-repository-package
     type: git
     location: https://github.com/well-typed/blockio-uring
-    -- ghc-9.12
-    tag: 6f6d7285a41a0807e9867e12a617e76942151531
+    -- liburing-2.9
+    tag: 9451e77bc00664c9a104c1b34a5b1aa002fc97d2
