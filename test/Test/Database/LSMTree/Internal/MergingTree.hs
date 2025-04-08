@@ -7,7 +7,7 @@ import           Control.Exception (bracket)
 import           Control.Monad.Class.MonadAsync as Async
 import           Control.RefCount
 import           Data.Coerce (coerce)
-import           Data.Foldable (toList)
+import           Data.Foldable (toList, traverse_)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -158,9 +158,9 @@ prop_lookupTree hfs hbio keys mtd = do
             return $ V.map (const Nothing) keys
           False -> do
             batches <- buildLookupTree reg tree
-            results <- traverse (performLookups mgr) batches
+            results <- mapMStrict (performLookups mgr) batches
             acc <- foldLookupTree resolveVal results
-            releaseLookupTree reg batches
+            traverse_ (traverse_ (delayedCommit reg . releaseRef)) batches
             return acc
 
     performLookups mgr runs =
