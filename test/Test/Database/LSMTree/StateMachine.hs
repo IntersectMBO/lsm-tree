@@ -1837,20 +1837,15 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             Map.member (Model.tableID t) (Model.tables st)
       ]
 
-    -- We already want to enable unions, but some operations on tables don't
-    -- support unions yet. Therefore, we want to only run them on tables that
-    -- don't descend from a union.
     genUnionDescendantTableVar = QC.elements unionDescendantTableVars
-    genNotUnionDescendantTableVar = QC.elements notUnionDescendantTableVars
 
-    unionDescendantTableVars, notUnionDescendantTableVars :: [Var h (WrapTable h IO k v b)]
-    (unionDescendantTableVars, notUnionDescendantTableVars) = partitionEithers $
-        [ case Model.isUnionDescendant t of
-            Model.IsUnionDescendant    -> Left v
-            Model.IsNotUnionDescendant -> Right v
+    unionDescendantTableVars :: [Var h (WrapTable h IO k v b)]
+    unionDescendantTableVars =
+        [ v
         | v <- tableVars
         , let t = case lookupVar ctx v of
                 MTable t' -> t'
+        , Model.isUnionDescendant t == Model.IsUnionDescendant
         ]
 
     genCursorVar = QC.elements cursorVars
@@ -1933,10 +1928,8 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (5,  fmap Some $ (Action <$> genErrors <*>) $
-            RangeLookup <$> genRange <*> genNotUnionDescendantTableVar)
-            -- TODO: enable range lookups on tables with unions
+            RangeLookup <$> genRange <*> genTableVar)
         | let genErrors = pure Nothing -- TODO: generate errors
-        , not (null notUnionDescendantTableVars) -- TODO: enable range lookups on tables with unions
         ]
      ++ [ (10, fmap Some $ (Action <$> genErrors <*>) $
             Updates <$> genUpdates <*> genTableVar)
@@ -1955,11 +1948,9 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (3,  fmap Some $ (Action <$> genErrors <*>) $
-            NewCursor <$> QC.arbitrary <*> genNotUnionDescendantTableVar)
-            -- TODO: cursors for tables with unions
+            NewCursor <$> QC.arbitrary <*> genTableVar)
         | length cursorVars <= 5 -- no more than 5 cursors at once
         , let genErrors = pure Nothing -- TODO: generate errors
-        , not (null notUnionDescendantTableVars) -- TODO: cursors for tables with unions
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
             CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
