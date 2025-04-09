@@ -31,8 +31,6 @@ module Database.LSMTree.Internal.RunAcc (
   , RunBloomFilterAlloc (..)
     -- ** Exposed for testing
   , newMBloom
-  , numHashFunctions
-  , falsePositiveRate
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -40,12 +38,10 @@ import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Data.BloomFilter (Bloom, MBloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Classic.Easy as Bloom.Easy
 import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
@@ -325,7 +321,7 @@ selectPagesAndChunks mpagemchunkPre page chunks =
 -- | See 'Database.LSMTree.Internal.Config.BloomFilterAlloc'
 data RunBloomFilterAlloc =
     -- | Bits per element in a filter
-    RunAllocFixed !Word64
+    RunAllocFixed !Word64 --TODO: this could be Double too
   | RunAllocRequestFPR !Double
   deriving stock (Show, Eq)
 
@@ -334,44 +330,11 @@ instance NFData RunBloomFilterAlloc where
     rnf (RunAllocRequestFPR a) = rnf a
 
 newMBloom :: NumEntries -> RunBloomFilterAlloc -> ST s (MBloom s a)
-newMBloom (NumEntries nentries) = \case
-      RunAllocFixed !bitsPerEntry    ->
-        let nbits :: Int
-            !nbits = fromIntegral bitsPerEntry * nentries
-        in  MBloom.new
-              Bloom.BloomSize {
-                bloomNumBits   = nbits,
-                bloomNumHashes = fromIntegralChecked $ numHashFunctions (fromIntegral nbits) (fromIntegralChecked nentries)
-              }
-      RunAllocRequestFPR !fpr ->
-        Bloom.Easy.easyNew fpr nentries
-
--- | Computes the optimal number of hash functions that minimises the false
--- positive rate for a bloom filter.
---
--- See Niv Dayan, Manos Athanassoulis, Stratos Idreos,
--- /Optimal Bloom Filters and Adaptive Merging for LSM-Trees/,
--- Footnote 2, page 6.
-numHashFunctions ::
-     Integer -- ^ Number of bits assigned to the bloom filter.
-  -> Integer -- ^ Number of entries inserted into the bloom filter.
-  -> Integer
-numHashFunctions nbits nentries = truncate @Double $ max 1 $
-    (fromIntegral nbits / fromIntegral nentries) * log 2
-
--- | False positive rate
---
--- Assumes that the bloom filter uses 'numHashFunctions' hash functions.
---
--- See Niv Dayan, Manos Athanassoulis, Stratos Idreos,
--- /Optimal Bloom Filters and Adaptive Merging for LSM-Trees/,
--- Equation 2.
-falsePositiveRate ::
-       Floating a
-    => a  -- ^ entries
-    -> a  -- ^ bits
-    -> a
-falsePositiveRate entries bits = exp ((-(bits / entries)) * sq (log 2))
-
-sq :: Num a => a -> a
-sq x = x * x
+newMBloom (NumEntries nentries) alloc =
+    MBloom.new (Bloom.sizeForPolicy (policy alloc) nentries)
+  where
+    --TODO: it'd be possible to turn the RunBloomFilterAlloc into a BloomPolicy
+    -- without the NumEntries, and cache the policy, avoiding recalculating the
+    -- policy every time.
+    policy (RunAllocFixed bitsPerEntry) = Bloom.policyForBits (fromIntegral bitsPerEntry)
+    policy (RunAllocRequestFPR fpr)     = Bloom.policyForFPR fpr

@@ -166,10 +166,10 @@ benchmarks !caching = withFS $ \hfs hbio -> do
     traceMarkerIO "Computing statistics for generated runs"
     let numEntries = V.map Run.size runs
         numPages   = V.map Run.sizeInPages runs
-        nhashes    = V.map (Bloom.bloomNumHashes . Bloom.size) blooms
+        nhashes    = V.map (Bloom.sizeHashes . Bloom.size) blooms
         bitsPerEntry = V.zipWith
                          (\b (NumEntries n) ->
-                             fromIntegral (Bloom.bloomNumBits (Bloom.size b))
+                             fromIntegral (Bloom.sizeBits (Bloom.size b))
                            / fromIntegral n :: Double)
                          blooms
                          numEntries

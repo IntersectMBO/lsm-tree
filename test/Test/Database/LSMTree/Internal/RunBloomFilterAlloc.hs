@@ -36,7 +36,7 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Random
 import qualified Database.LSMTree.Internal.Entry as LSMT
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
-                     falsePositiveRate, newMBloom)
+                     newMBloom)
 import           System.Random hiding (Seed)
 import           Test.QuickCheck
 import           Test.QuickCheck.Gen
@@ -80,9 +80,7 @@ prop_verifyFPR p alloc (NumEntries numEntries) (Seed seed) =
   let stdgen      = mkStdGen seed
       measuredFPR = measureApproximateFPR p (mkBloomFromAlloc alloc) numEntries stdgen
       expectedFPR = case alloc of
-        RunAllocFixed bits ->
-          falsePositiveRate (fromIntegral numEntries)
-                            (fromIntegral bits * fromIntegral numEntries)
+        RunAllocFixed bits -> Bloom.policyFPR (Bloom.policyForBits (fromIntegral bits))
         RunAllocRequestFPR requestedFPR -> requestedFPR
       -- error margins
       lb = expectedFPR - 0.1

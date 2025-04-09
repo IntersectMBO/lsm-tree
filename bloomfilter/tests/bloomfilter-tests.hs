@@ -2,8 +2,6 @@ module Main (main) where
 
 import qualified Data.BloomFilter.Classic as B
 import qualified Data.BloomFilter.Classic.BitVec64 as BV64
-import qualified Data.BloomFilter.Classic.Calc as B
-import qualified Data.BloomFilter.Classic.Easy as B
 import qualified Data.BloomFilter.Classic.Internal as BI
 import           Data.BloomFilter.Hash (Hashable (..), hash64)
 
@@ -29,7 +27,7 @@ tests = testGroup "bloomfilter"
         , testProperty "prop_calc_size_fpr_fpr"     prop_calc_size_fpr_fpr
         , testProperty "prop_calc_size_fpr_bits"    prop_calc_size_fpr_bits
         ]
-    , testGroup "easyList"
+    , testGroup "fromList"
         [ testProperty "()" $ prop_pai ()
         , testProperty "Char" $ prop_pai (undefined :: Char)
         , testProperty "Word32" $ prop_pai (undefined :: Word32)
@@ -61,7 +59,7 @@ tests = testGroup "bloomfilter"
 -------------------------------------------------------------------------------
 
 prop_pai :: (Hashable a) => a -> a -> [a] -> FPR -> Property
-prop_pai _ x xs (FPR q) = let bf = B.easyList q (x:xs) in
+prop_pai _ x xs (FPR q) = let bf = B.fromList (B.policyForFPR q) (x:xs) in
     B.elem x bf .&&. not (B.notElem x bf)
 
 -------------------------------------------------------------------------------
@@ -70,34 +68,32 @@ prop_pai _ x xs (FPR q) = let bf = B.easyList q (x:xs) in
 
 prop_calc_policy_fpr :: FPR -> Property
 prop_calc_policy_fpr (FPR fpr) =
-  let policy = B.bloomPolicyForFPR fpr
-   in B.bloomPolicyFPR policy ~~~ fpr
+  let policy = B.policyForFPR fpr
+   in B.policyFPR policy ~~~ fpr
 
 prop_calc_size_hashes_bits :: BitsPerEntry -> NumEntries -> Property
 prop_calc_size_hashes_bits (BitsPerEntry c) (NumEntries numEntries) =
-  let policy = B.bloomPolicyForBitsPerEntry c
-      bsize  = B.bloomSizeForPolicy policy numEntries
-   in numHashFunctions (fromIntegral (B.bloomNumBits bsize))
+  let bsize = B.sizeForBits c numEntries
+   in numHashFunctions (fromIntegral (B.sizeBits bsize))
                        (fromIntegral numEntries)
-  === fromIntegral (B.bloomNumHashes bsize)
+  === fromIntegral (B.sizeHashes bsize)
 
 prop_calc_size_fpr_fpr :: FPR -> NumEntries -> Property
 prop_calc_size_fpr_fpr (FPR fpr) (NumEntries numEntries) =
-  let policy = B.bloomPolicyForFPR fpr
-      bsize  = B.bloomSizeForPolicy policy numEntries
-   in falsePositiveRate (fromIntegral (B.bloomNumBits bsize))
+  let bsize = B.sizeForFPR fpr numEntries
+   in falsePositiveRate (fromIntegral (B.sizeBits bsize))
                         (fromIntegral numEntries)
-                        (fromIntegral (B.bloomNumHashes bsize))
+                        (fromIntegral (B.sizeHashes bsize))
    ~~~ fpr
 
 prop_calc_size_fpr_bits :: BitsPerEntry -> NumEntries -> Property
 prop_calc_size_fpr_bits (BitsPerEntry c) (NumEntries numEntries) =
-  let policy = B.bloomPolicyForBitsPerEntry c
-      bsize  = B.bloomSizeForPolicy policy numEntries
-   in falsePositiveRate (fromIntegral (B.bloomNumBits bsize))
+  let policy = B.policyForBits c
+      bsize  = B.sizeForPolicy policy numEntries
+   in falsePositiveRate (fromIntegral (B.sizeBits bsize))
                         (fromIntegral numEntries)
-                        (fromIntegral (B.bloomNumHashes bsize))
-   ~~~ B.bloomPolicyFPR policy
+                        (fromIntegral (B.sizeHashes bsize))
+   ~~~ B.policyFPR policy
 
 -- reference implementations used for sanity checks
 
