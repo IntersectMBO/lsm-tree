@@ -12,9 +12,9 @@ module Bench.Database.LSMTree.Internal.BloomFilter (
 import           Criterion.Main
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Classic.Easy as Bloom.Easy
 import           Data.BloomFilter.Hash (Hashable)
 import qualified Data.Foldable as Fold
+import qualified Data.Bifoldable as BiFold
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Database.LSMTree.Extras.Random
@@ -39,8 +39,11 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.BloomFilter" [
         ]
     , env (constructionEnv 2_500_000) $ \ m ->
       bgroup "construction" [
-          bench "easyList 0.1" $ whnf (constructBloom Bloom.Easy.easyList 0.1) m
-        , bench "easyList 0.9" $ whnf (constructBloom Bloom.Easy.easyList 0.9) m
+          bench "easyList 0.1" $
+            whnf (constructBloom 0.1) m
+
+        , bench "easyList 0.9" $
+            whnf (constructBloom 0.9) m
         ]
     ]
 
@@ -58,7 +61,9 @@ elemEnv fpr nbloom nelemsPositive nelemsNegative = do
                   $ uniformWithoutReplacement    @UTxOKey stdgen  (nbloom + nelemsNegative)
         ys2       = sampleUniformWithReplacement @UTxOKey stdgen' nelemsPositive xs
     zs <- generate $ shuffle (ys1 ++ ys2)
-    pure (Bloom.Easy.easyList fpr (fmap serialiseKey xs), fmap serialiseKey zs)
+    pure ( Bloom.fromList (Bloom.policyForFPR fpr) (fmap serialiseKey xs)
+         , fmap serialiseKey zs
+         )
 
 -- | Used for benchmarking 'Bloom.elem'.
 elems :: Hashable a => Bloom a -> [a] -> ()
@@ -75,8 +80,11 @@ constructionEnv n = do
 
 -- | Used for benchmarking the construction of bloom filters from write buffers.
 constructBloom ::
-     (Double -> [SerialisedKey] -> Bloom SerialisedKey)
-  -> Double
+     Double
   -> Map SerialisedKey SerialisedKey
   -> Bloom SerialisedKey
-constructBloom mkBloom fpr m = mkBloom fpr (Map.keys m)
+constructBloom fpr m =
+    -- For faster construction, avoid going via lists and use Bloom.create,
+    -- traversing the map inserting the keys
+    Bloom.create (Bloom.sizeForFPR fpr (Map.size m)) $ \b ->
+      BiFold.bifoldMap (\k -> Bloom.insert b k) (\_v -> pure ()) m

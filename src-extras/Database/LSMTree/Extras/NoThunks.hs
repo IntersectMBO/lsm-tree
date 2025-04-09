@@ -22,7 +22,7 @@ import           Control.RefCount
 import           Control.Tracer
 import           Data.Arena
 import           Data.Bit
-import           Data.BloomFilter
+import           Data.BloomFilter (Bloom, MBloom)
 import           Data.Map.Strict
 import           Data.Primitive
 import           Data.Primitive.PrimVar

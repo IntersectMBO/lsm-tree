@@ -26,7 +26,6 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding ((.&.))
 
 import qualified Data.BloomFilter as BF
-import qualified Data.BloomFilter.Classic.Easy as BF
 import qualified Data.BloomFilter.Classic.Internal as BF (bloomInvariant)
 import           Database.LSMTree.Internal.BloomFilter
 import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
@@ -66,7 +65,7 @@ roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
   where
     sz  = BF.BloomSize { sizeBits   = limitBits bits,
                          sizeHashes = hfN }
-    lhs = BF.fromList sz ws
+    lhs = BF.create sz (\b -> mapM_ (BF.insert b) ws)
     bs  = LBS.toStrict (bloomFilterToLBS lhs)
 
 limitBits :: Int -> Int
@@ -121,7 +120,7 @@ prop_bloomQueries1 :: FPR
                    -> Property
 prop_bloomQueries1 (FPR fpr) filters keys =
     let filters' :: [BF.Bloom SerialisedKey]
-        filters' = map (BF.easyList fpr . map (\(Small k) -> serialiseKey k))
+        filters' = map (BF.fromList (BF.policyForFPR fpr) . map (\(Small k) -> serialiseKey k))
                        filters
 
         keys' :: [SerialisedKey]
@@ -166,7 +165,8 @@ prop_bloomQueries2 :: FPR
                    -> Property
 prop_bloomQueries2 (FPR fpr) filters keys =
     let filters' :: [BF.Bloom SerialisedKey]
-        filters' = map (BF.easyList fpr . map (\(Small k) -> serialiseKey k)) filters
+        filters' = map (BF.fromList (BF.policyForFPR fpr) .
+                        map (\(Small k) -> serialiseKey k)) filters
 
         keys' :: [SerialisedKey]
         keys' = map (\(Small k) -> serialiseKey k) keys

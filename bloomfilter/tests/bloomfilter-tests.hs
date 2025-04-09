@@ -2,8 +2,6 @@ module Main (main) where
 
 import qualified Data.BloomFilter.Classic as B
 import qualified Data.BloomFilter.Classic.BitVec64 as BV64
-import qualified Data.BloomFilter.Classic.Calc as B
-import qualified Data.BloomFilter.Classic.Easy as B
 import qualified Data.BloomFilter.Classic.Internal as BI
 import           Data.BloomFilter.Hash (Hashable (..), hash64)
 
@@ -29,7 +27,7 @@ tests = testGroup "bloomfilter"
         , testProperty "prop_calc_size_fpr_fpr"     prop_calc_size_fpr_fpr
         , testProperty "prop_calc_size_fpr_bits"    prop_calc_size_fpr_bits
         ]
-    , testGroup "easyList"
+    , testGroup "fromList"
         [ testProperty "()" $ prop_pai ()
         , testProperty "Char" $ prop_pai (undefined :: Char)
         , testProperty "Word32" $ prop_pai (undefined :: Word32)
@@ -61,7 +59,7 @@ tests = testGroup "bloomfilter"
 -------------------------------------------------------------------------------
 
 prop_pai :: (Hashable a) => a -> a -> [a] -> FPR -> Property
-prop_pai _ x xs (FPR q) = let bf = B.easyList q (x:xs) in
+prop_pai _ x xs (FPR q) = let bf = B.fromList (B.policyForFPR q) (x:xs) in
     B.elem x bf .&&. not (B.notElem x bf)
 
 -------------------------------------------------------------------------------
