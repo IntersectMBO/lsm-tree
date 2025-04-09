@@ -26,8 +26,8 @@ import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import           Data.BloomFilter.Hash (Hashable)
-import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Foldable (Foldable (..))
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)

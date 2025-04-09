@@ -11,7 +11,7 @@ module Bench.Database.LSMTree.Internal.BloomFilter (
 import           Criterion.Main
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Easy as Bloom.Easy
+import qualified Data.BloomFilter.Classic.Easy as Bloom.Easy
 import           Data.BloomFilter.Hash (Hashable)
 import qualified Data.Foldable as Fold
 import           Data.Map.Strict (Map)

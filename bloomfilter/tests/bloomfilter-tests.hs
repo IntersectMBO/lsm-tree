@@ -1,11 +1,11 @@
 module Main (main) where
 
-import qualified Data.BloomFilter as B
-import qualified Data.BloomFilter.BitVec64 as BV64
-import qualified Data.BloomFilter.Calc as B
-import qualified Data.BloomFilter.Easy as B
+import qualified Data.BloomFilter.Classic as B
+import qualified Data.BloomFilter.Classic.BitVec64 as BV64
+import qualified Data.BloomFilter.Classic.Calc as B
+import qualified Data.BloomFilter.Classic.Easy as B
+import qualified Data.BloomFilter.Classic.Internal as BI
 import           Data.BloomFilter.Hash (Hashable (..), hash64)
-import qualified Data.BloomFilter.Internal as BI
 
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS

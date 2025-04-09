@@ -11,8 +11,8 @@ import           Control.Monad.ST.Unsafe
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import qualified Data.BloomFilter.Hash as Bloom
-import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as V

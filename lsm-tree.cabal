@@ -422,12 +422,13 @@ library bloomfilter
 
   exposed-modules:
     Data.BloomFilter
-    Data.BloomFilter.BitVec64
-    Data.BloomFilter.Calc
-    Data.BloomFilter.Easy
+    Data.BloomFilter.Classic
+    Data.BloomFilter.Classic.BitVec64
+    Data.BloomFilter.Classic.Calc
+    Data.BloomFilter.Classic.Easy
+    Data.BloomFilter.Classic.Internal
+    Data.BloomFilter.Classic.Mutable
     Data.BloomFilter.Hash
-    Data.BloomFilter.Internal
-    Data.BloomFilter.Mutable
 
   ghc-options:     -O2 -Wall
 

@@ -40,8 +40,8 @@ import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Data.BloomFilter (Bloom, MBloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Easy as Bloom.Easy
-import qualified Data.BloomFilter.Mutable as MBloom
+import qualified Data.BloomFilter.Classic.Easy as Bloom.Easy
+import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Data.Word (Word64)

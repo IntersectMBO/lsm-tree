@@ -6,7 +6,7 @@ import           Control.Monad (forM_, when)
 import           Data.Char (isLetter, toLower)
 import           System.Environment (getArgs)
 
-import           Data.BloomFilter.Easy (easyList, notElem)
+import           Data.BloomFilter.Classic.Easy (easyList, notElem)
 import           Prelude hiding (notElem)
 
 main :: IO ()
