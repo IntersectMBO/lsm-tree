@@ -33,12 +33,12 @@ bloomFilterToLBS bf =
     let (size, ba, off, len) = BF.serialise bf
      in header size <> byteArrayToLBS ba off len
   where
-    header BF.BloomSize { bloomNumBits, bloomNumHashes } =
+    header BF.BloomSize { sizeBits, sizeHashes } =
         -- creates a single 16 byte chunk
         B.toLazyByteStringWith (B.safeStrategy 16 B.smallChunkSize) mempty $
              B.word32Host bloomFilterVersion
-          <> B.word32Host (fromIntegral bloomNumHashes)
-          <> B.word64Host (fromIntegral bloomNumBits)
+          <> B.word32Host (fromIntegral sizeHashes)
+          <> B.word64Host (fromIntegral sizeBits)
 
     byteArrayToLBS :: P.ByteArray -> Int -> Int -> LBS.ByteString
     byteArrayToLBS ba off len =
@@ -81,8 +81,8 @@ bloomFilterFromFile hfs h = do
     bloom <-
       BF.deserialise
         BF.BloomSize {
-          BF.bloomNumBits   = fromIntegral nbits,
-          BF.bloomNumHashes = fromIntegral nhashes
+          BF.sizeBits   = fromIntegral nbits,
+          BF.sizeHashes = fromIntegral nhashes
         }
         (\buf off len ->
             rethrowEOFError "bloom filter file too short" $

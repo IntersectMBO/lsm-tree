@@ -425,7 +425,6 @@ library bloomfilter
     Data.BloomFilter.Classic
     Data.BloomFilter.Classic.BitVec64
     Data.BloomFilter.Classic.Calc
-    Data.BloomFilter.Classic.Easy
     Data.BloomFilter.Classic.Internal
     Data.BloomFilter.Classic.Mutable
     Data.BloomFilter.Hash

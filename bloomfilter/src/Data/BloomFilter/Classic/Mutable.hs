@@ -72,16 +72,14 @@ instance Show (MBloom s a) where
 -- The size is ceiled at $2^48$. Tell us if you need bigger bloom filters.
 --
 new :: BloomSize -> ST s (MBloom s a)
-new BloomSize { bloomNumBits = numBits, bloomNumHashes } = do
-    bitArray <- V.new (fromIntegral numBits')
+new BloomSize { sizeBits, sizeHashes = numHashes } = do
+    let !numBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
+    bitArray <- V.new (fromIntegral numBits)
     pure MBloom {
-      numBits   = numBits',
-      numHashes = bloomNumHashes,
+      numBits,
+      numHashes,
       bitArray
     }
-  where numBits' | numBits == 0                = 1
-                 | numBits >= 0xffff_ffff_ffff = 0x1_0000_0000_0000
-                 | otherwise                   = numBits
 
 -- | Modify the filter's bit array. The callback is expected to read (exactly)
 -- the given number of bytes into the given byte array buffer.
@@ -128,8 +126,8 @@ elemHashes !ch MBloom { numBits = m, numHashes = k, bitArray = v } =
 size :: MBloom s a -> BloomSize
 size MBloom { numBits, numHashes } =
     BloomSize {
-      bloomNumBits   = numBits,
-      bloomNumHashes = numHashes
+      sizeBits   = numBits,
+      sizeHashes = numHashes
     }
 
 -- $overview
