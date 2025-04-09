@@ -66,8 +66,8 @@ policyForFPR fpr =
     log_fpr = log fpr
 
 policyForBits :: BitsPerEntry -> BloomPolicy
-policyForBits c | c < 1 || c > 64 =
-    error "policyForBits: out of ragnge [1,64]"
+policyForBits c | c < 0 || c > 64 =
+    error "policyForBits: out of ragnge [0,64]"
 
 policyForBits c =
     BloomPolicy {
