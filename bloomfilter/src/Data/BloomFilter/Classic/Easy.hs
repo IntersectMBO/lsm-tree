@@ -87,14 +87,9 @@ safeSuggestSizing ::
     -> Double           -- ^ desired false positive rate (0 < /e/ < 1)
     -> Either String BloomSize
 safeSuggestSizing capacity errRate
-    | capacity <= 0 = Right BloomSize {
-                         bloomNumBits   = 1,
-                         bloomNumHashes = 1
-                      }
     | errRate <= 0 ||
       errRate >= 1  = Left "invalid error rate"
-    | otherwise     = Right $ bloomSizeForPolicy (bloomPolicyForFPR errRate)
-                                                 capacity
+    | otherwise     = Right (sizeForFPR errRate capacity)
 
 -- | Behaves as 'safeSuggestSizing', but calls 'error' if given
 -- invalid or out-of-range inputs.

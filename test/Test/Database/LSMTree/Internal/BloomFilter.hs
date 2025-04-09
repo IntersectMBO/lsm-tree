@@ -64,8 +64,8 @@ roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
       Left  err -> label (displayException err) $ property True
       Right rhs -> lhs === rhs
   where
-    sz  = BF.BloomSize { bloomNumBits   = limitBits bits,
-                         bloomNumHashes = hfN }
+    sz  = BF.BloomSize { sizeBits   = limitBits bits,
+                         sizeHashes = hfN }
     lhs = BF.fromList sz ws
     bs  = LBS.toStrict (bloomFilterToLBS lhs)
 

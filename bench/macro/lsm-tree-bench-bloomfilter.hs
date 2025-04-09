@@ -242,8 +242,8 @@ elemManyEnv filterSizes rng0 =
     -- create the filters
     mbs <- sequence
              [ MBloom.new MBloom.BloomSize {
-                 bloomNumBits   = fromIntegralChecked numBits,
-                 bloomNumHashes = fromIntegralChecked numHashFuncs
+                 sizeBits   = fromIntegralChecked numBits,
+                 sizeHashes = fromIntegralChecked numHashFuncs
                }
              | (_, _, numBits, numHashFuncs) <- filterSizes ]
     -- add elements

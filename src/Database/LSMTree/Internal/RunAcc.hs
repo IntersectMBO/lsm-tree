@@ -341,8 +341,8 @@ newMBloom (NumEntries nentries) = \case
             !nbits = fromIntegral bitsPerEntry * nentries
         in  MBloom.new
               Bloom.BloomSize {
-                bloomNumBits   = nbits,
-                bloomNumHashes = fromIntegralChecked $ numHashFunctions (fromIntegral nbits) (fromIntegralChecked nentries)
+                sizeBits   = nbits,
+                sizeHashes = fromIntegralChecked $ numHashFunctions (fromIntegral nbits) (fromIntegralChecked nentries)
               }
       RunAllocRequestFPR !fpr ->
         Bloom.Easy.easyNew fpr nentries

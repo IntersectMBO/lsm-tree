@@ -170,8 +170,8 @@ notElemHashes !ch !ub = not (elemHashes ch ub)
 size :: Bloom a -> BloomSize
 size Bloom { numBits, numHashes } =
     BloomSize {
-      bloomNumBits   = numBits,
-      bloomNumHashes = numHashes
+      sizeBits   = numBits,
+      sizeHashes = numHashes
     }
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
