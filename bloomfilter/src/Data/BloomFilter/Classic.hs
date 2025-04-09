@@ -13,9 +13,9 @@
 --   the element is present.
 --
 -- This module provides low-level control.  For an easier to use
--- interface, see the "Data.BloomFilter.Easy" module.
+-- interface, see the "Data.BloomFilter.Classic.Easy" module.
 
-module Data.BloomFilter (
+module Data.BloomFilter.Classic (
     -- * Overview
     -- $overview
 
@@ -64,12 +64,12 @@ import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld,
 import           Data.Primitive.ByteArray (ByteArray, MutableByteArray)
 import           Data.Word (Word64)
 
-import qualified Data.BloomFilter.BitVec64 as V
+import qualified Data.BloomFilter.Classic.BitVec64 as V
+import           Data.BloomFilter.Classic.Internal (Bloom (..), bloomInvariant)
+import           Data.BloomFilter.Classic.Mutable (BloomSize (..), MBloom)
+import qualified Data.BloomFilter.Classic.Mutable as MB
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
-import           Data.BloomFilter.Internal (Bloom (..), bloomInvariant)
-import           Data.BloomFilter.Mutable (BloomSize (..), MBloom)
-import qualified Data.BloomFilter.Mutable as MB
 
 import           Prelude hiding (elem, notElem)
 
@@ -199,7 +199,7 @@ unfold bloomsize f k = create bloomsize (loop k)
 -- values.
 --
 -- Here is an example that uses the @cheapHashes@ function from the
--- "Data.BloomFilter.Hash" module to create a hash function that
+-- "Data.BloomFilter.Classic.Hash" module to create a hash function that
 -- returns three hashes.
 --
 -- @
@@ -240,8 +240,8 @@ deserialise bloomsize fill = do
 --
 -- By choosing these parameters with care, it is possible to tune for
 -- a particular false positive rate.
--- The 'Data.BloomFilter.Easy.suggestSizing' function in
--- the "Data.BloomFilter.Easy" module calculates useful estimates for
+-- The 'Data.BloomFilter.Classic.Easy.suggestSizing' function in
+-- the "Data.BloomFilter.Classic.Easy" module calculates useful estimates for
 -- these parameters.
 
 -- $ease
@@ -251,7 +251,7 @@ deserialise bloomsize fill = do
 -- Bloom filters.
 --
 -- For a higher-level interface that is easy to use, see the
--- "Data.BloomFilter.Easy" module.
+-- "Data.BloomFilter.Classic.Easy" module.
 
 -- $performance
 --

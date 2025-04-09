@@ -26,8 +26,8 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding ((.&.))
 
 import qualified Data.BloomFilter as BF
-import qualified Data.BloomFilter.Easy as BF
-import qualified Data.BloomFilter.Internal as BF (bloomInvariant)
+import qualified Data.BloomFilter.Classic.Easy as BF
+import qualified Data.BloomFilter.Classic.Internal as BF (bloomInvariant)
 import           Database.LSMTree.Internal.BloomFilter
 import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,

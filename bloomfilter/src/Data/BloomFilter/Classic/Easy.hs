@@ -1,5 +1,5 @@
 -- | An easy-to-use Bloom filter interface.
-module Data.BloomFilter.Easy (
+module Data.BloomFilter.Classic.Easy (
     -- * Easy creation and querying
     Bloom,
     easyList,
@@ -23,12 +23,12 @@ module Data.BloomFilter.Easy (
 ) where
 
 import           Control.Monad.ST (ST)
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as B
-import           Data.BloomFilter.Calc
+import           Data.BloomFilter.Classic (Bloom)
+import qualified Data.BloomFilter.Classic as B
+import           Data.BloomFilter.Classic.Calc
+import           Data.BloomFilter.Classic.Mutable (MBloom)
+import qualified Data.BloomFilter.Classic.Mutable as MB
 import           Data.BloomFilter.Hash (Hashable)
-import           Data.BloomFilter.Mutable (MBloom)
-import qualified Data.BloomFilter.Mutable as MB
 import qualified Data.ByteString as SB
 
 -------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ import qualified Data.ByteString as SB
 
 -- | Create a Bloom filter with the desired false positive rate and
 -- members.  The hash functions used are computed by the @cheapHashes@
--- function from the 'Data.BloomFilter.Hash' module.
+-- function from the 'Data.BloomFilter.Classic.Hash' module.
 easyList :: Hashable a
          => Double              -- ^ desired false positive rate (0 < /ε/ < 1)
          -> [a]                 -- ^ values to populate with

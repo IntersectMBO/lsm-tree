@@ -6,7 +6,7 @@ module Main (main) where
 
 import           Control.Monad (forM_, mapM_)
 import qualified Data.BloomFilter as BF
-import           Data.BloomFilter.Easy (easyList, suggestSizing)
+import           Data.BloomFilter.Classic.Easy (easyList, suggestSizing)
 import           Data.BloomFilter.Hash (cheapHashes)
 import qualified Data.ByteString.Lazy.Char8 as B
 import           Data.Time.Clock (diffUTCTime, getCurrentTime)
