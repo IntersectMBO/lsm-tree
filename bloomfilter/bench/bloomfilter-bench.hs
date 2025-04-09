@@ -1,7 +1,7 @@
 module Main where
 
 import qualified Data.BloomFilter as B
-import qualified Data.BloomFilter.Easy as B
+import qualified Data.BloomFilter.Classic.Easy as B
 import           Data.BloomFilter.Hash (Hashable (..), hash64)
 
 import           Data.Word (Word64)

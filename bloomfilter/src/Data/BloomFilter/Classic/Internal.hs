@@ -1,13 +1,13 @@
 {-# OPTIONS_HADDOCK not-home #-}
 -- | This module exports 'Bloom'' definition.
-module Data.BloomFilter.Internal (
+module Data.BloomFilter.Classic.Internal (
     Bloom(..),
     bloomInvariant,
 ) where
 
 import           Control.DeepSeq (NFData (..))
 import           Data.Bits
-import qualified Data.BloomFilter.BitVec64 as V
+import qualified Data.BloomFilter.Classic.BitVec64 as V
 import           Data.Kind (Type)
 import           Data.Primitive.ByteArray (sizeofByteArray)
 import qualified Data.Vector.Primitive as VP

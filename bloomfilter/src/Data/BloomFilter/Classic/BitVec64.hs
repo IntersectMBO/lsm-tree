@@ -2,7 +2,7 @@
 {-# LANGUAGE MagicHash     #-}
 {-# LANGUAGE UnboxedTuples #-}
 -- | Minimal bit vector implementation.
-module Data.BloomFilter.BitVec64 (
+module Data.BloomFilter.Classic.BitVec64 (
     BitVec64 (..),
     unsafeIndex,
     prefetchIndex,

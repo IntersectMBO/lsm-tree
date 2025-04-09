@@ -1,5 +1,5 @@
 -- | Various formulas for working with bloomfilters.
-module Data.BloomFilter.Calc (
+module Data.BloomFilter.Classic.Calc (
     BloomSize (..),
     bloomSizeForPolicy,
     BloomPolicy (..),
