@@ -124,4 +124,3 @@ unsafeTestBit w k = w .&. (1 `unsafeShiftL` k) /= 0
 -- like setBit but using unsafeShiftL instead of shiftL
 unsafeSetBit :: Word64 -> Int -> Word64
 unsafeSetBit w k = w .|. (1 `unsafeShiftL` k)
-

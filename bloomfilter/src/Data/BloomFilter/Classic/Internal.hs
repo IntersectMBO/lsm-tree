@@ -22,7 +22,7 @@ module Data.BloomFilter.Classic.Internal (
     freeze,
     unsafeFreeze,
     thaw,
-) where
+  ) where
 
 import           Control.Exception (assert)
 import           Control.DeepSeq (NFData (..))
@@ -70,12 +70,12 @@ instance NFData (MBloom s a) where
 -- The size is ceiled at $2^48$. Tell us if you need bigger bloom filters.
 --
 new :: BloomSize -> ST s (MBloom s a)
-new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
+new BloomSize { sizeBits, sizeHashes } = do
     let !mbNumBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
-    mbBitArray <- BitArray.new (fromIntegral mbNumBits)
+    mbBitArray <- BitArray.new mbNumBits
     pure MBloom {
       mbNumBits,
-      mbNumHashes,
+      mbNumHashes = max 1 sizeHashes,
       mbBitArray
     }
 
@@ -119,10 +119,10 @@ data Bloom a = Bloom {
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
-bloomInvariant Bloom { numBits = s, bitArray = BitArray.BitArray ba } =
-       s > 0
-    && s <= 2^(48 :: Int)
-    && ceilDiv64 s == sizeofPrimArray ba
+bloomInvariant Bloom { numBits, bitArray = BitArray.BitArray pa } =
+       numBits > 0
+    && numBits <= 2^(48 :: Int)
+    && ceilDiv64 numBits == sizeofPrimArray pa
   where
     ceilDiv64 x = unsafeShiftR (x + 63) 6
 
@@ -205,6 +205,7 @@ thaw Bloom { numBits, numHashes, bitArray } = do
       mbNumHashes = numHashes,
       mbBitArray
     }
+
 
 -------------------------------------------------------------------------------
 -- Low level utils
