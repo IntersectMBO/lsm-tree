@@ -22,11 +22,11 @@ import qualified Control.Monad.Class.MonadST as ST
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive
-import           Data.BloomFilter (Bloom)
 import           Data.Foldable (for_, traverse_)
 import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
+import           Database.LSMTree.Internal.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.ChecksumHandle
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
