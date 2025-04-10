@@ -33,6 +33,7 @@ cabal-docspec \
     -XNumericUnderscores \
     -XInstanceSigs \
     --extra-package directory \
+    --extra-package primitive \
     --extra-package lsm-tree:prototypes \
     --extra-package blockio \
     --extra-package blockio:sim
