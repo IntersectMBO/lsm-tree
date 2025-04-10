@@ -44,6 +44,7 @@ ${cabal_docspec} \
     --extra-package blockio \
     --extra-package blockio:sim \
     --extra-package directory \
+    --extra-package primitive \
     --extra-package lsm-tree:prototypes \
     --extra-package process \
     || exit 1
