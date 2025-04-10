@@ -423,10 +423,10 @@ doStepsUnion m@Merge {..} requestedSteps = go 0
     -- all entries monoidally, so there are no obsolete/overwritten entries
     -- that we could skip.
     --
-    -- TODO(optimisation): If mergeMappend is const (which happens when calling
-    -- `union` on a non-monoidal table), we could skip all remaining entries for
-    -- the key. Unfortunately, we can't inspect the function. This would require
-    -- encoding it as something like `Const | Resolve (_ -> _ -> _)`.
+    -- TODO(optimisation): If mergeMappend is const, we could skip all remaining
+    -- entries for the key. Unfortunately, we can't inspect the function. This
+    -- would require encoding it as something like `Const | Resolve (_ -> _ ->
+    -- _)`.
     handleEntry !n !key !entry Readers.Drained = do
         -- no future entries, no previous entry to resolve, just write!
         writeReaderEntry m key entry

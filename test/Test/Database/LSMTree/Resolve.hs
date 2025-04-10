@@ -1,17 +1,17 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
-module Test.Database.LSMTree.Monoidal (tests) where
+module Test.Database.LSMTree.Resolve (tests) where
 
 import           Control.DeepSeq (NFData)
 import           Data.Monoid (Sum (..))
 import           Data.Word
+import           Database.LSMTree
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.Monoidal
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree.Monoidal"
+tests = testGroup "Test.Database.LSMTree.Resolve"
     [ testGroup "Sum Word64" (allProperties @(Sum Word64))
     ]
 

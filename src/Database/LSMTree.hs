@@ -127,13 +127,15 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
+import           Data.Monoid (Sum (..))
 import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl),
                      typeRep)
 import qualified Data.Vector as V
 import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
                      SerialiseKey, SerialiseValue, Session, UnionCredits (..),
                      UnionDebt (..), closeSession, deleteSnapshot,
-                     listSnapshots, openSession, withSession)
+                     deserialiseValue, listSnapshots, openSession,
+                     serialiseValue, withSession)
 import qualified Database.LSMTree.Common as Common
 import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
@@ -142,9 +144,6 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import qualified Database.LSMTree.Internal.Vector as V
-import           Database.LSMTree.Monoidal (ResolveValue (..),
-                     resolveDeserialised, resolveValueAssociativity,
-                     resolveValueValidOutput)
 import           GHC.Exts (Proxy#, proxy#)
 
 {-------------------------------------------------------------------------------
@@ -603,8 +602,82 @@ supplyUnionCredits (Internal.Table' t) (UnionCredits credits) =
   Monoidal value resolution
 -------------------------------------------------------------------------------}
 
+-- | A class to specify how to resolve/merge values when using monoidal updates
+-- ('Mupsert'). This is required for merging entries during compaction and also
+-- for doing lookups, resolving multiple entries of the same key on the fly.
+-- The class has some laws, which should be tested (e.g. with QuickCheck).
+--
+-- It is okay to assume that the input bytes can be deserialised using
+-- 'deserialiseValue', as they are produced by either 'serialiseValue' or
+-- 'resolveValue' itself, which are required to produce deserialisable output.
+--
+-- Prerequisites:
+--
+-- * [Valid Output] The result of resolution should always be deserialisable.
+--   See 'resolveValueValidOutput'.
+-- * [Associativity] Resolving values should be associative.
+--   See 'resolveValueAssociativity'.
+--
+-- Future opportunities for optimisations:
+--
+-- * Include a function that determines whether it is safe to remove an 'Update'
+--   from the last level of an LSM tree.
+--
+-- * Include a function @v -> RawBytes -> RawBytes@, which can then be used when
+--   inserting into the write buffer. Currently, using 'resolveDeserialised'
+--   means that the inserted value is serialised and (if there is another value
+--   with the same key in the write buffer) immediately deserialised again.
+--
+-- TODO: The laws depend on 'SerialiseValue', should we make it a superclass?
+-- TODO: should we additionally require Totality (for any input 'RawBytes',
+--       resolution should successfully provide a result)? This could reduce the
+--       risk of encountering errors during a run merge.
+class ResolveValue v where
+  resolveValue :: Proxy v -> RB.RawBytes -> RB.RawBytes -> RB.RawBytes
+
+-- | Test the __Valid Output__ law for the 'ResolveValue' class
+resolveValueValidOutput :: forall v.
+     (SerialiseValue v, ResolveValue v, NFData v)
+  => v -> v -> Bool
+resolveValueValidOutput (serialiseValue -> x) (serialiseValue -> y) =
+    (deserialiseValue (resolveValue (Proxy @v) x y) :: v) `deepseq` True
+
+-- | Test the __Associativity__ law for the 'ResolveValue' class
+resolveValueAssociativity :: forall v.
+     (SerialiseValue v, ResolveValue v)
+  => v -> v -> v -> Bool
+resolveValueAssociativity (serialiseValue -> x) (serialiseValue -> y) (serialiseValue -> z) =
+    x <+> (y <+> z) == (x <+> y) <+> z
+  where
+    (<+>) = resolveValue (Proxy @v)
+
+-- | A helper function to implement 'resolveValue' by operating on the
+-- deserialised representation. Note that especially for simple types it
+-- should be possible to provide a more efficient implementation by directly
+-- operating on the 'RawBytes'.
+--
+-- This function could potentially be used to provide a default implementation
+-- for 'resolveValue', but it's probably best to be explicit about instances.
+--
+-- To satisfy the prerequisites of 'ResolveValue', the function provided to
+-- 'resolveDeserialised' should itself satisfy some properties:
+--
+-- * [Associativity] The provided function should be associative.
+-- * [Totality] The provided function should be total.
+resolveDeserialised :: forall v.
+     SerialiseValue v
+  => (v -> v -> v) -> Proxy v -> RB.RawBytes -> RB.RawBytes -> RB.RawBytes
+resolveDeserialised f _ x y =
+    serialiseValue (f (deserialiseValue x) (deserialiseValue y))
+
 resolve ::  forall v. ResolveValue v => Proxy v -> Internal.ResolveSerialisedValue
 resolve = coerce . resolveValue
+
+-- | Mostly to give an example instance (plus the property tests for it).
+-- Additionally, this instance for 'Sum' provides a nice monoidal, numerical
+-- aggregator.
+instance (Num a, SerialiseValue a) => ResolveValue (Sum a) where
+  resolveValue = resolveDeserialised (+)
 
 -- | Newtype wrapper for values, so that 'Mupsert's behave like 'Insert's.
 --

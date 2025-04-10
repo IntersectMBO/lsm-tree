@@ -41,7 +41,7 @@ import qualified Test.Database.LSMTree.Internal.Vector.Growing
 import qualified Test.Database.LSMTree.Internal.WriteBufferBlobs.FS
 import qualified Test.Database.LSMTree.Internal.WriteBufferReader.FS
 import qualified Test.Database.LSMTree.Model.Table
-import qualified Test.Database.LSMTree.Monoidal
+import qualified Test.Database.LSMTree.Resolve
 import qualified Test.Database.LSMTree.StateMachine
 import qualified Test.Database.LSMTree.StateMachine.DL
 import qualified Test.Database.LSMTree.UnitTests
@@ -89,7 +89,7 @@ main = do
     , Test.Database.LSMTree.Internal.WriteBufferBlobs.FS.tests
     , Test.Database.LSMTree.Internal.WriteBufferReader.FS.tests
     , Test.Database.LSMTree.Model.Table.tests
-    , Test.Database.LSMTree.Monoidal.tests
+    , Test.Database.LSMTree.Resolve.tests
     , Test.Database.LSMTree.UnitTests.tests
     , Test.Database.LSMTree.StateMachine.tests
     , Test.Database.LSMTree.StateMachine.DL.tests

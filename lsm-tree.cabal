@@ -284,8 +284,6 @@ library
     Database.LSMTree.Internal.WriteBufferBlobs
     Database.LSMTree.Internal.WriteBufferReader
     Database.LSMTree.Internal.WriteBufferWriter
-    Database.LSMTree.Monoidal
-    Database.LSMTree.Normal
     Database.LSMTree.Simple
 
   build-depends:
@@ -509,7 +507,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.WriteBufferBlobs.FS
     Test.Database.LSMTree.Internal.WriteBufferReader.FS
     Test.Database.LSMTree.Model.Table
-    Test.Database.LSMTree.Monoidal
+    Test.Database.LSMTree.Resolve
     Test.Database.LSMTree.StateMachine
     Test.Database.LSMTree.StateMachine.DL
     Test.Database.LSMTree.StateMachine.Op
@@ -590,6 +588,7 @@ benchmark lsm-tree-micro-bench
   hs-source-dirs: bench/micro
   main-is:        Main.hs
   other-modules:
+    Bench.Database.LSMTree
     Bench.Database.LSMTree.Internal.BloomFilter
     Bench.Database.LSMTree.Internal.Index
     Bench.Database.LSMTree.Internal.Index.Compact
@@ -598,8 +597,6 @@ benchmark lsm-tree-micro-bench
     Bench.Database.LSMTree.Internal.RawPage
     Bench.Database.LSMTree.Internal.Serialise
     Bench.Database.LSMTree.Internal.WriteBuffer
-    Bench.Database.LSMTree.Monoidal
-    Bench.Database.LSMTree.Normal
 
   build-depends:
     , base

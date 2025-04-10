@@ -247,10 +247,8 @@ instance DecodeVersioned SnapshotLabel where
 -- TableType
 
 instance Encode SnapshotTableType where
-  encode SnapSimpleTable   = encodeWord 0
-  encode SnapFullTable     = encodeWord 1
-  encode SnapNormalTable   = encodeWord 2
-  encode SnapMonoidalTable = encodeWord 3
+  encode SnapSimpleTable = encodeWord 0
+  encode SnapFullTable   = encodeWord 1
 
 instance DecodeVersioned SnapshotTableType where
   decodeVersioned V0 = do
@@ -258,8 +256,6 @@ instance DecodeVersioned SnapshotTableType where
       case tag of
         0 -> pure SnapSimpleTable
         1 -> pure SnapFullTable
-        2 -> pure SnapNormalTable
-        3 -> pure SnapMonoidalTable
         _ -> fail ("[SnapshotTableType] Unexpected tag: " <> show tag)
 
 instance Encode SnapshotRun where

@@ -1,10 +1,6 @@
 {-# LANGUAGE PatternSynonyms #-}
 -- | A pure model of a single session containing multiple tables.
 --
--- This model supports all features for /both/ normal and monoidal tables,
--- in particular both blobs and mupserts. The former is typically only provided
--- by the normal API, and the latter only by the monoidal API.
---
 -- The session model builds on top of "Database.LSMTree.Model.Table", adding
 -- table and snapshot administration.
 module Database.LSMTree.Model.Session (
