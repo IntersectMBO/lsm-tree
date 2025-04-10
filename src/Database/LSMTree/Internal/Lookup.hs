@@ -18,7 +18,6 @@ module Database.LSMTree.Internal.Lookup (
 
 import           Data.Arena (Arena, ArenaManager, allocateFromArena, withArena)
 import           Data.Bifunctor
-import           Data.BloomFilter (Bloom)
 import           Data.Primitive.ByteArray
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
@@ -34,6 +33,7 @@ import           Control.Monad.ST.Strict
 import           Control.RefCount
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
+import           Database.LSMTree.Internal.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (search)

@@ -1,4 +1,6 @@
 module Database.LSMTree.Internal.BloomFilter (
+  BF.Bloom,
+  BF.MBloom,
   bloomFilterToLBS,
   bloomFilterFromFile,
 ) where

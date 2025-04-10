@@ -330,7 +330,6 @@ library extras
     , io-classes:strict-stm
     , lsm-tree
     , lsm-tree:blockio-api
-    , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:kmerge
     , lsm-tree:prototypes

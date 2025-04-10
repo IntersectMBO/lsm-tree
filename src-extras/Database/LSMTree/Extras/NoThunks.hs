@@ -22,7 +22,6 @@ import           Control.RefCount
 import           Control.Tracer
 import           Data.Arena
 import           Data.Bit
-import           Data.BloomFilter (Bloom, MBloom)
 import           Data.Map.Strict
 import           Data.Primitive
 import           Data.Primitive.PrimVar
@@ -36,6 +35,7 @@ import           Data.Word
 import           Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
+import           Database.LSMTree.Internal.BloomFilter (Bloom, MBloom)
 import           Database.LSMTree.Internal.ChecksumHandle
 import           Database.LSMTree.Internal.Chunk
 import           Database.LSMTree.Internal.Config
