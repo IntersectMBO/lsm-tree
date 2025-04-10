@@ -98,9 +98,10 @@ The documentation provides two measures of complexity:
 
 - The space complexity of tables is described in terms of the in-memory
   size of an LSM-tree table. Both the in-memory and on-disk size of an
-  LSM-tree table scales linearly. However, the in-memory size of an
-  LSM-tree table is smaller than its on-disk size by a significant
-  constant. This is discussed in detail below, under [In-memory size of
+  LSM-tree table scale linearly with the number of physical entries.
+  However, the in-memory size of an LSM-tree table is smaller than its
+  on-disk size by a significant constant. This is discussed in detail
+  below, under [In-memory size of
   tables](#performance_size "#performance_size").
 
 The complexities are described in terms of the following variables and
@@ -113,7 +114,17 @@ constants:
   describe the complexity of an operation that involves multiple tables,
   it refers to the sum of all table entries.
 
+- The variable *t* refers to the number of open tables in the session.
+
+- The variable *s* refers to the number of snapshots in the session.
+
+- The variable *b* usually refers to the size of a batch of
+  inputs/outputs. Its precise meaning is explained for each occurance.
+
 - The constant *T* refers to the size ratio of the table, which is a
+  configuration parameter.
+
+- The constant *B* refers to the size of the write buffer, which is a
   configuration parameter.
 
 #### Disk I/O cost of operations <span id="performance_time" class="anchor"></span>
@@ -143,9 +154,8 @@ Otherwise, the merge policy is listed as N/A.
 <td></td>
 <td>Close</td>
 <td>N/A</td>
-<td><span
-class="math inline"><em>O</em>(<em>t</em> log<sub><em>T</em></sub> <em>n</em>)</span>
-*</td>
+<td><span class="math inline">$O(t \: T \: \log_T
+\frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td>Table</td>
@@ -157,36 +167,32 @@ class="math inline"><em>O</em>(<em>t</em> log<sub><em>T</em></sub> <em>n</em>)
 <td></td>
 <td>Close</td>
 <td>N/A</td>
-<td><span
-class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Lookup</td>
 <td><code>MergePolicyLazyLevelling</code></td>
-<td><span
-class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Range Lookup</td>
 <td>N/A</td>
-<td><span
-class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em> + <em>b</em>)</span>
-**</td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B} + b)$</span>
+*</td>
 </tr>
 <tr>
 <td></td>
 <td>Insert/Delete/Update</td>
 <td><code>MergePolicyLazyLevelling</code></td>
-<td><span
-class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
+<td><span class="math inline">$O(\log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Duplicate</td>
 <td>N/A</td>
-<td><span class="math inline"><em>O</em>(1)</span></td>
+<td><span class="math inline"><em>O</em>(0)</span></td>
 </tr>
 <tr>
 <td></td>
@@ -198,8 +204,7 @@ class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
 <td>Snapshot</td>
 <td>Save</td>
 <td>N/A</td>
-<td><span
-class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
@@ -211,28 +216,25 @@ class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
 <td></td>
 <td>Delete</td>
 <td>N/A</td>
-<td><span class="math inline"><em>O</em>(<em>n</em>)</span></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>List</td>
 <td>N/A</td>
-<td><span class="math inline"><em>O</em>(<em>s</em>)</span>
-***</td>
+<td><span class="math inline"><em>O</em>(<em>s</em>)</span></td>
 </tr>
 <tr>
 <td>Cursor</td>
 <td>Create</td>
 <td>N/A</td>
-<td><span
-class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Close</td>
 <td>N/A</td>
-<td><span
-class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
@@ -243,10 +245,8 @@ class="math inline"><em>O</em>(log<sub><em>T</em></sub> <em>n</em>)</span></td>
 </tbody>
 </table>
 
-(\*The variable *t* refers to the number of open tables in the session.
-\*\*The variable *b* refers to the number of entries retrieved by the
-range lookup. \*\*\*The variable *s* refers to the number of snapshots
-in the session.)
+(\*The variable *b* refers to the number of entries retrieved by the
+range lookup.)
 
 #### In-memory size of tables <span id="performance_size" class="anchor"></span>
 
@@ -258,7 +258,7 @@ physical entries with the same key.
 
 The worst-case in-memory size of an LSM-tree is *O*(*n*).
 
-- The worst-case in-memory size of the write buffer is *O*(1).
+- The worst-case in-memory size of the write buffer is *O*(*B*).
 
   The maximum size of the write buffer on the write buffer allocation
   strategy, which is determined by the `confWriteBufferAlloc` field of
