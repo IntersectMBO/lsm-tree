@@ -258,11 +258,12 @@ library bloomfilter
   exposed-modules:
     Data.BloomFilter
     Data.BloomFilter.Classic
+    Data.BloomFilter.Hash
+  other-modules:
     Data.BloomFilter.Classic.BitVec64
     Data.BloomFilter.Classic.Calc
     Data.BloomFilter.Classic.Internal
     Data.BloomFilter.Classic.Mutable
-    Data.BloomFilter.Hash
 
   ghc-options:     -O2 -Wall
 
@@ -275,10 +276,10 @@ test-suite bloomfilter-tests
     , base
     , bytestring
     , lsm-tree:bloomfilter
+    , primitive
     , quickcheck-instances
     , tasty
     , tasty-quickcheck
-    , vector
 
 benchmark bloomfilter-bench
   import:         language

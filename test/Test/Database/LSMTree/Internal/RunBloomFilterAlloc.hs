@@ -11,32 +11,21 @@
 module Test.Database.LSMTree.Internal.RunBloomFilterAlloc (
     -- * Main test tree
     tests
-    -- * Bloom filter construction
-    --
-    -- A common interface to bloom filter construction, based on expected false
-    -- positive rates.
-  , BloomMaker
-  , mkBloomFromAlloc
     -- * Verifying FPRs
   , measureApproximateFPR
-  , measureExactFPR
+  , measureExactFPR --TODO: this is not currently used for anything, delete?
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad.ST
-import           Data.BloomFilter (Bloom)
+import           Data.BloomFilter (Bloom, Hashable)
 import qualified Data.BloomFilter as Bloom
-import           Data.BloomFilter.Hash (Hashable)
-import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import           Data.Foldable (Foldable (..))
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Random
-import qualified Database.LSMTree.Internal.Entry as LSMT
-import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
-                     newMBloom)
+import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           System.Random
 import           Test.QuickCheck
 import           Test.QuickCheck.Gen
@@ -285,12 +274,10 @@ instance Monoid Counts where
 
 type BloomMaker a = [a] -> Bloom a
 
--- | Create a bloom filter through the 'newMBloom' interface. Tunes the bloom
--- filter according to 'RunBloomFilterAlloc'.
+-- | Create a bloom filter, with size determined by a 'RunBloomFilterAlloc'.
 mkBloomFromAlloc :: Hashable a => RunBloomFilterAlloc -> BloomMaker a
-mkBloomFromAlloc alloc xs = runST $ do
-    mb <- newMBloom n alloc
-    mapM_ (MBloom.insert mb) xs
-    Bloom.unsafeFreeze mb
+mkBloomFromAlloc alloc = Bloom.fromList policy
   where
-    n = LSMT.NumEntries $ length xs
+    policy = case alloc of
+      RunAllocFixed bits     -> Bloom.policyForBits (fromIntegral bits)
+      RunAllocRequestFPR fpr -> Bloom.policyForFPR fpr

@@ -27,6 +27,7 @@ module Data.BloomFilter.Classic (
 
     -- * Types
     Hash,
+    Hashable,
     CheapHashes,
 
     -- * Immutable Bloom filters

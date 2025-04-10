@@ -30,8 +30,6 @@ module Database.LSMTree.Internal.RunAcc (
   , PageAcc.entryWouldFitInPage
     -- * Bloom filter allocation
   , RunBloomFilterAlloc (..)
-    -- ** Exposed for testing
-  , newMBloom
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -39,7 +37,6 @@ import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Data.BloomFilter (Bloom, MBloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Data.Word (Word64)
@@ -85,8 +82,12 @@ new ::
   -> RunBloomFilterAlloc
   -> IndexType
   -> ST s (RunAcc s)
-new nentries alloc indexType = do
-    mbloom <- newMBloom nentries alloc
+new (NumEntries nentries) alloc indexType = do
+    --TODO: it'd be possible to cache this BloomPolicy, since it is indepedent
+    -- of the NumEntries, avoiding recalculating the policy every time.
+    let policy = bloomFilterAllocPolicy alloc
+        bsize  = Bloom.sizeForPolicy policy nentries
+    mbloom <- Bloom.new bsize
     mindex <- Index.newWithDefaults indexType
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
@@ -168,7 +169,7 @@ addSmallKeyOp ::
 addSmallKeyOp racc@RunAcc{..} k e =
   assert (PageAcc.entryWouldFitInPage k e) $ do
     modifyPrimVar entryCount (+1)
-    MBloom.insert mbloom k
+    Bloom.insert mbloom k
 
     pageBoundaryNeeded <-
         -- Try adding the key/op to the page accumulator to see if it fits. If
@@ -214,7 +215,7 @@ addLargeKeyOp ::
 addLargeKeyOp racc@RunAcc{..} k e =
   assert (not (PageAcc.entryWouldFitInPage k e)) $ do
     modifyPrimVar entryCount (+1)
-    MBloom.insert mbloom k
+    Bloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
     -- new large key/op will need more than one page to itself.
@@ -268,7 +269,7 @@ addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
   assert (RawPage.rawPageOverflowPages page > 0) $
   assert (RawPage.rawPageOverflowPages page == length overflowPages) $ do
     modifyPrimVar entryCount (+1)
-    MBloom.insert mbloom k
+    Bloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
     -- new large key/op will need more than one page to itself.
@@ -330,12 +331,8 @@ instance NFData RunBloomFilterAlloc where
     rnf (RunAllocFixed a)      = rnf a
     rnf (RunAllocRequestFPR a) = rnf a
 
-newMBloom :: NumEntries -> RunBloomFilterAlloc -> ST s (MBloom s a)
-newMBloom (NumEntries nentries) alloc =
-    MBloom.new (Bloom.sizeForPolicy (policy alloc) nentries)
-  where
-    --TODO: it'd be possible to turn the RunBloomFilterAlloc into a BloomPolicy
-    -- without the NumEntries, and cache the policy, avoiding recalculating the
-    -- policy every time.
-    policy (RunAllocFixed bitsPerEntry) = Bloom.policyForBits (fromIntegral bitsPerEntry)
-    policy (RunAllocRequestFPR fpr)     = Bloom.policyForFPR fpr
+--TODO: RunBloomFilterAlloc could probably be replaced by Bloom.BloomPolicy
+bloomFilterAllocPolicy :: RunBloomFilterAlloc -> Bloom.BloomPolicy
+bloomFilterAllocPolicy = \case
+    RunAllocFixed bitsPerEntry -> Bloom.policyForBits (fromIntegral bitsPerEntry)
+    RunAllocRequestFPR fpr     -> Bloom.policyForFPR fpr
