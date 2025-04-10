@@ -7,8 +7,8 @@ runs:
       if: ${{ runner.os == 'Linux' }}
       run: |
         mkdir -p "${{ github.workspace }}/.cabal-docspec/bin"
-        curl -sL https://github.com/phadej/cabal-extras/releases/download/cabal-docspec-0.0.0.20240414/cabal-docspec-0.0.0.20240414-x86_64-linux.xz > "${{ runner.temp }}/cabal-docspec.xz"
-        echo '2d18a3f79619e8ec5f11870f926f6dc2616e02a6c889315b7f82044b95a1adb9  ${{ runner.temp }}/cabal-docspec.xz' | sha256sum -c -
+        curl -sL https://github.com/phadej/cabal-extras/releases/download/cabal-docspec-0.0.0.20240703/cabal-docspec-0.0.0.20240703-x86_64-linux.xz > "${{ runner.temp }}/cabal-docspec.xz"
+        echo '48bf3b7fd2f7f0caa6162afee57a755be8523e7f467b694900eb420f5f9a7b76  ${{ runner.temp }}/cabal-docspec.xz' | sha256sum -c -
         xz -d < "${{ runner.temp }}/cabal-docspec.xz" > "${{ github.workspace }}/.cabal-docspec/bin/cabal-docspec"
         chmod a+x "${{ github.workspace }}/.cabal-docspec/bin/cabal-docspec"
       shell: sh
