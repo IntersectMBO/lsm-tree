@@ -419,10 +419,14 @@ library bloomfilter
 
   exposed-modules:
     Data.BloomFilter
+    Data.BloomFilter.Blocked
     Data.BloomFilter.Classic
     Data.BloomFilter.Hash
 
   other-modules:
+    Data.BloomFilter.Blocked.BitArray
+    Data.BloomFilter.Blocked.Calc
+    Data.BloomFilter.Blocked.Internal
     Data.BloomFilter.Classic.BitArray
     Data.BloomFilter.Classic.Calc
     Data.BloomFilter.Classic.Internal
