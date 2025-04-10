@@ -55,14 +55,15 @@ module Data.BloomFilter.Classic (
     -- ** Accessors
     size,
     elem,
-    elemHashes,
     notElem,
+    elemHashes,
     serialise,
 
     -- * Mutable Bloom filters
     MBloom,
     new,
     insert,
+    insertHashes,
 
     -- ** Conversion
     freeze,
@@ -70,20 +71,15 @@ module Data.BloomFilter.Classic (
     unsafeFreeze,
 ) where
 
-import           Control.Exception (assert)
 import           Control.Monad.ST (ST, runST)
 import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld,
                      stToPrim)
-import           Data.Primitive.ByteArray (ByteArray, MutableByteArray)
-import           Data.Word (Word64)
+import           Data.Primitive.ByteArray (MutableByteArray)
 
-import qualified Data.BloomFilter.Classic.BitVec64 as V
 import           Data.BloomFilter.Classic.Calc
-import           Data.BloomFilter.Classic.Internal (Bloom (..), bloomInvariant)
-import           Data.BloomFilter.Classic.Mutable (MBloom (..), new, insert)
-import qualified Data.BloomFilter.Classic.Mutable as MB
-import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
-                     makeHashes)
+import           Data.BloomFilter.Classic.Internal hiding (deserialise)
+import qualified Data.BloomFilter.Classic.Internal as Internal
+import           Data.BloomFilter.Hash
 
 import           Prelude hiding (elem, notElem)
 
@@ -109,41 +105,10 @@ create bloomsize body =
       body mb
       unsafeFreeze mb
 
--- | Create an immutable Bloom filter from a mutable one.  The mutable
--- filter may be modified afterwards.
-freeze :: MBloom s a -> ST s (Bloom a)
-freeze MBloom { numBits, numHashes, bitArray } = do
-    bitArray' <- V.freeze bitArray
-    let !bf = Bloom {
-                numHashes,
-                numBits,
-                bitArray = bitArray'
-              }
-    assert (bloomInvariant bf) $ pure bf
-
--- | Create an immutable Bloom filter from a mutable one.  The mutable
--- filter /must not/ be modified afterwards, or a runtime crash may
--- occur.  For a safer creation interface, use 'freeze' or 'create'.
-unsafeFreeze :: MBloom s a -> ST s (Bloom a)
-unsafeFreeze MBloom { numBits, numHashes, bitArray } = do
-    bitArray' <- V.unsafeFreeze bitArray
-    let !bf = Bloom {
-                numHashes,
-                numBits,
-                bitArray = bitArray'
-              }
-    assert (bloomInvariant bf) $ pure bf
-
--- | Copy an immutable Bloom filter to create a mutable one.  There is
--- no non-copying equivalent.
-thaw :: Bloom a -> ST s (MBloom s a)
-thaw Bloom { numBits, numHashes, bitArray } = do
-    bitArray' <- V.thaw bitArray
-    pure MBloom {
-      numBits,
-      numHashes,
-      bitArray = bitArray'
-    }
+-- | Insert a value into a mutable Bloom filter.  Afterwards, a
+-- membership query for the same value is guaranteed to return @True@.
+insert :: Hashable a => MBloom s a -> a -> ST s ()
+insert !mb !x = insertHashes mb (makeHashes x)
 
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
@@ -151,42 +116,11 @@ thaw Bloom { numBits, numHashes, bitArray } = do
 elem :: Hashable a => a -> Bloom a -> Bool
 elem elt ub = elemHashes (makeHashes elt) ub
 
--- | Query an immutable Bloom filter for membership using already constructed 'Hashes' value.
-elemHashes :: CheapHashes a -> Bloom a -> Bool
-elemHashes !ch Bloom { numBits, numHashes, bitArray } =
-    go 0
-  where
-    go :: Int -> Bool
-    go !i | i >= numHashes
-          = True
-    go !i = let idx' :: Word64
-                !idx' = evalHashes ch i in
-            let idx :: Int
-                !idx = fromIntegral (idx' `V.unsafeRemWord64` fromIntegral numBits) in
-            -- While the idx' can cover the full Word64 range,
-            -- after taking the remainder, it now must fit in
-            -- and Int because it's less than the filter size.
-            if V.unsafeIndex bitArray idx
-              then go (i + 1)
-              else False
-
 -- | Query an immutable Bloom filter for non-membership.  If the value
 -- /is/ present, return @False@.  If the value is not present, there
 -- is /still/ some possibility that @False@ will be returned.
 notElem :: Hashable a => a -> Bloom a -> Bool
-notElem elt ub = notElemHashes (makeHashes elt) ub
-
--- | Query an immutable Bloom filter for non-membership using already constructed 'Hashes' value.
-notElemHashes :: CheapHashes a -> Bloom a -> Bool
-notElemHashes !ch !ub = not (elemHashes ch ub)
-
--- | Return the size of the Bloom filter.
-size :: Bloom a -> BloomSize
-size Bloom { numBits, numHashes } =
-    BloomSize {
-      sizeBits   = numBits,
-      sizeHashes = numHashes
-    }
+notElem = \elt ub -> not (elem elt ub)
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
 -- function populates the filter as follows.
@@ -225,12 +159,6 @@ fromList policy xs =
   where
     bsize = sizeForPolicy policy (length xs)
 
-serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
-serialise b@Bloom{bitArray} =
-    (size b, ba, off, len)
-  where
-    (ba, off, len) = V.serialise bitArray
-
 {-# SPECIALISE deserialise :: BloomSize
                            -> (MutableByteArray RealWorld -> Int -> Int -> IO ())
                            -> IO (Bloom a) #-}
@@ -240,7 +168,7 @@ deserialise :: PrimMonad m
             -> m (Bloom a)
 deserialise bloomsize fill = do
     mbloom <- stToPrim $ new bloomsize
-    MB.deserialise mbloom fill
+    Internal.deserialise mbloom fill
     stToPrim $ unsafeFreeze mbloom
 
 -- $overview
