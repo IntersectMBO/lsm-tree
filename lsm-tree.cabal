@@ -511,7 +511,6 @@ library extras
     , io-classes:strict-mvar
     , io-classes:strict-stm
     , lsm-tree
-    , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:kmerge
     , lsm-tree:prototypes

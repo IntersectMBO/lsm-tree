@@ -36,14 +36,14 @@ import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Control.RefCount
-import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef hiding (mkRawBlobRef,
                      mkWeakBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
-import           Database.LSMTree.Internal.BloomFilter (bloomFilterFromFile)
+import           Database.LSMTree.Internal.BloomFilter (Bloom,
+                     bloomFilterFromFile)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexType (..))

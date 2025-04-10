@@ -1,6 +1,8 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.BloomFilter (
+  BF.Bloom,
+  BF.MBloom,
   bloomFilterVersion,
   bloomFilterToLBS,
   bloomFilterFromFile,

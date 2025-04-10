@@ -24,13 +24,12 @@ module Database.LSMTree.Internal.ChecksumHandle
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Primitive
-import           Data.BloomFilter (Bloom)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), RawBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
-import           Database.LSMTree.Internal.BloomFilter (bloomFilterToLBS)
+import           Database.LSMTree.Internal.BloomFilter (Bloom, bloomFilterToLBS)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
