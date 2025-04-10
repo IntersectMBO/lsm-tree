@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE MagicHash     #-}
 {-# OPTIONS_HADDOCK not-home #-}
 -- | This module defines the 'Bloom' and 'MBloom' types and all the functions
 -- that need direct knowledge of and access to the representation. This forms
@@ -24,16 +26,23 @@ module Data.BloomFilter.Classic.Internal (
 
 import           Control.Exception (assert)
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad.Primitive (PrimState)
+import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Control.Monad.ST (ST)
 import           Data.Bits
-import qualified Data.BloomFilter.Classic.BitVec64 as V
 import           Data.Kind (Type)
-import           Data.Primitive.ByteArray (ByteArray, MutableByteArray,
-                     sizeofByteArray)
-import qualified Data.Vector.Primitive as P
+import           Data.Primitive.ByteArray
+import           Data.Primitive.PrimArray
 import           Data.Word (Word64)
 
+#if MIN_VERSION_base(4,17,0)
+import           GHC.Exts (remWord64#)
+#else
+import           GHC.Exts (remWord#)
+#endif
+import           GHC.Word (Word64 (W64#))
+
+import           Data.BloomFilter.Classic.BitArray (BitArray, MBitArray)
+import qualified Data.BloomFilter.Classic.BitArray as BitArray
 import           Data.BloomFilter.Classic.Calc
 import           Data.BloomFilter.Hash
 
@@ -46,12 +55,15 @@ type MBloom :: Type -> Type -> Type
 data MBloom s a = MBloom {
       mbNumBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
     , mbNumHashes :: {-# UNPACK #-} !Int
-    , mbBitArray  :: {-# UNPACK #-} !(V.MBitVec64 s)
+    , mbBitArray  :: {-# UNPACK #-} !(MBitArray s)
     }
 type role MBloom nominal nominal
 
 instance Show (MBloom s a) where
     show mb = "MBloom { " ++ show (mbNumBits mb) ++ " bits } "
+
+instance NFData (MBloom s a) where
+    rnf !_ = ()
 
 -- | Create a new mutable Bloom filter.
 --
@@ -60,7 +72,7 @@ instance Show (MBloom s a) where
 new :: BloomSize -> ST s (MBloom s a)
 new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
     let !mbNumBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
-    mbBitArray <- V.new (fromIntegral mbNumBits)
+    mbBitArray <- BitArray.new (fromIntegral mbNumBits)
     pure MBloom {
       mbNumBits,
       mbNumHashes,
@@ -68,21 +80,28 @@ new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
     }
 
 insertHashes :: MBloom s a -> CheapHashes a -> ST s ()
-insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } !h =
+insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = a } !ch =
     go 0
   where
     go !i | i >= k = return ()
-          | otherwise = let !idx = evalHashes h i `rem` fromIntegral m
-                        in V.unsafeWrite v idx True >> go (i + 1)
+    go !i = let idx' :: Word64
+                !idx' = evalHashes ch i in
+            let idx :: Int
+                !idx = fromIntegral (idx' `unsafeRemWord64` fromIntegral m) in
+            -- While the idx' can cover the full Word64 range,
+            -- after taking the remainder, it now must fit in
+            -- and Int because it's less than the filter size.
+            BitArray.unsafeSet a idx >> go (i + 1)
 
 -- | Modify the filter's bit array. The callback is expected to read (exactly)
 -- the given number of bytes into the given byte array buffer.
 --
-deserialise :: MBloom (PrimState m) a
+deserialise :: PrimMonad m
+            => MBloom (PrimState m) a
             -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
             -> m ()
 deserialise MBloom {mbBitArray} fill =
-    V.deserialise mbBitArray fill
+    BitArray.deserialise mbBitArray fill
 
 
 -------------------------------------------------------------------------------
@@ -94,38 +113,18 @@ type Bloom :: Type -> Type
 data Bloom a = Bloom {
       numBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
     , numHashes :: {-# UNPACK #-} !Int
-    , bitArray  :: {-# UNPACK #-} !V.BitVec64
+    , bitArray  :: {-# UNPACK #-} !BitArray
     }
+  deriving Eq
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
-bloomInvariant Bloom { numBits = s, bitArray = V.BV64 (P.Vector off len ba) } =
+bloomInvariant Bloom { numBits = s, bitArray = BitArray.BitArray ba } =
        s > 0
     && s <= 2^(48 :: Int)
-    && off >= 0
-    && ceilDiv64 s == fromIntegral len
-    && (off + len) * 8 <= sizeofByteArray ba
+    && ceilDiv64 s == sizeofPrimArray ba
   where
     ceilDiv64 x = unsafeShiftR (x + 63) 6
-
-instance Eq (Bloom a) where
-    -- We support arbitrary sized bitvectors,
-    -- therefore an equality is a bit involved:
-    -- we need to be careful when comparing the last bits of bitArray.
-    (==) Bloom { numBits = n,  numHashes = k,  bitArray = V.BV64 v  }
-         Bloom { numBits = n', numHashes = k', bitArray = V.BV64 v' } =
-        k == k' &&
-        n == n' &&
-        P.take w v == P.take w v' && -- compare full words
-        if l == 0 then True else unsafeShiftL x s == unsafeShiftL x' s -- compare last words
-      where
-        !w = fromIntegral (unsafeShiftR n 6) :: Int  -- n `div` 64
-        !l = fromIntegral (n .&. 63) :: Int          -- n `mod` 64
-        !s = 64 - l
-
-        -- last words
-        x = P.unsafeIndex v w
-        x' = P.unsafeIndex v' w
 
 instance Show (Bloom a) where
     show mb = "Bloom { " ++ show (numBits mb) ++ " bits } "
@@ -152,11 +151,11 @@ elemHashes !ch Bloom { numBits, numHashes, bitArray } =
     go !i = let idx' :: Word64
                 !idx' = evalHashes ch i in
             let idx :: Int
-                !idx = fromIntegral (idx' `V.unsafeRemWord64` fromIntegral numBits) in
+                !idx = fromIntegral (idx' `unsafeRemWord64` fromIntegral numBits) in
             -- While the idx' can cover the full Word64 range,
             -- after taking the remainder, it now must fit in
             -- and Int because it's less than the filter size.
-            if V.unsafeIndex bitArray idx
+            if BitArray.unsafeIndex bitArray idx
               then go (i + 1)
               else False
 
@@ -164,7 +163,7 @@ serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
     (size b, ba, off, len)
   where
-    (ba, off, len) = V.serialise bitArray
+    (ba, off, len) = BitArray.serialise bitArray
 
 
 -------------------------------------------------------------------------------
@@ -175,7 +174,7 @@ serialise b@Bloom{bitArray} =
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
 freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
-    bitArray <- V.freeze mbBitArray
+    bitArray <- BitArray.freeze mbBitArray
     let !bf = Bloom {
                 numBits   = mbNumBits,
                 numHashes = mbNumHashes,
@@ -188,7 +187,7 @@ freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
 -- interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
 unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
-    bitArray <- V.unsafeFreeze mbBitArray
+    bitArray <- BitArray.unsafeFreeze mbBitArray
     let !bf = Bloom {
                 numBits   = mbNumBits,
                 numHashes = mbNumHashes,
@@ -200,9 +199,21 @@ unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
 thaw Bloom { numBits, numHashes, bitArray } = do
-    mbBitArray <- V.thaw bitArray
+    mbBitArray <- BitArray.thaw bitArray
     pure MBloom {
       mbNumBits   = numBits,
       mbNumHashes = numHashes,
       mbBitArray
     }
+
+-------------------------------------------------------------------------------
+-- Low level utils
+--
+
+-- | Like 'rem' but does not check for division by 0.
+unsafeRemWord64 :: Word64 -> Word64 -> Word64
+#if MIN_VERSION_base(4,17,0)
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
+#else
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
+#endif

@@ -247,20 +247,17 @@ library bloomfilter
   hs-source-dirs:  bloomfilter/src
   build-depends:
     , base             >=4.5       && <5
-    , bitvec           ^>=1.1.5.0
     , bytestring       >=0.9
-    , data-array-byte
     , deepseq
     , lsm-tree:xxhash
     , primitive
-    , vector           ^>=0.13.0.0
 
   exposed-modules:
     Data.BloomFilter
     Data.BloomFilter.Classic
     Data.BloomFilter.Hash
   other-modules:
-    Data.BloomFilter.Classic.BitVec64
+    Data.BloomFilter.Classic.BitArray
     Data.BloomFilter.Classic.Calc
     Data.BloomFilter.Classic.Internal
 
@@ -275,7 +272,6 @@ test-suite bloomfilter-tests
     , base
     , bytestring
     , lsm-tree:bloomfilter
-    , primitive
     , quickcheck-instances
     , tasty
     , tasty-quickcheck

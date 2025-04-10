@@ -3,12 +3,10 @@ module Main (main) where
 import qualified Data.BloomFilter.Classic as B
 import           Data.BloomFilter.Hash (Hashable (..), hash64)
 
-import           Control.Monad.ST (runST)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Int (Int64)
-import qualified Data.Primitive.ByteArray as P
 import           Data.Word (Word32, Word64)
 
 import           Test.Tasty
@@ -42,24 +40,7 @@ tests = testGroup "bloomfilter"
         , testProperty "prop_list_ex" $
           hash64 [[],[],[BS.empty]] =/= hash64 [[],[BS.empty],[]]
         ]
-    , testGroup "equality"
-        [ testProperty "doesn't care about leftover bits a" $
-          mkBloomRawWord64 48 0xffff_0000_1234_5678 ===
-          mkBloomRawWord64 48 0xeeee_0000_1234_5678
-
-        , testProperty "doesn't care about leftover bits b" $
-          mkBloomRawWord64 49 0xffff_0000_1234_5678 =/=
-          mkBloomRawWord64 49 0xeeee_0000_1234_5678
-        ]
     ]
-
--- | Make a small bloom filter with its bit array taken from a 'Word64'.
-mkBloomRawWord64 :: Int -> Word64 -> B.Bloom a
-mkBloomRawWord64 bits w64 =
-    runST $
-    B.deserialise
-      B.BloomSize { sizeBits = bits, sizeHashes = 1 }
-      (\mba _ _ -> P.writeByteArray mba 0 w64)
 
 -------------------------------------------------------------------------------
 -- Element is in a Bloom filter
