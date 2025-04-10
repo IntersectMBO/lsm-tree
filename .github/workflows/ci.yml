@@ -22,7 +22,7 @@ defaults:
 # Set the default GHC and Cabal versions.
 env:
   DEFAULT_GHC_VERSION: "9.6"
-  DEFAULT_CABAL_VERSION: "3.10"
+  DEFAULT_CABAL_VERSION: "3.12"
   DEFAULT_CABAL_PROJECT_FILE: "cabal.project.debug"
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
   ################################################################################
   build:
     name: |
-      ${{ matrix.name 
+      ${{ matrix.name
        || format(
             'Build on {0}{1}{2}',
             startsWith(matrix.os, 'ubuntu-') && 'Linux' || startsWith(matrix.os, 'macOS-') && 'macOS' || startsWith(matrix.os, 'windows-') && 'Windows',
@@ -159,13 +159,13 @@ jobs:
       matrix:
         os: ["ubuntu-latest", "macOS-latest", "windows-latest"]
         ghc-version: ["8.10", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
-        cabal-version: ["3.10"]
+        cabal-version: ["3.12"]
         # The inclusion of these default keys in the matrix ensures that any
         # entry under include that assigns these keys creates a new matrix entry
         cabal-flags: [""]
         cabal-project-file: [""]
         cabal-documentation: [false]
-      
+
         exclude:
           # GHC 8.10 is not supported on macOS wit ARM CPU
           - ghc-version: "8.10"
@@ -188,7 +188,7 @@ jobs:
             cabal-skip-tests: true
             cabal-skip-benchmarks: true
             cabal-documentation: true
-  
+
   ################################################################################
   # Lint with actionlint
   ################################################################################
@@ -230,7 +230,7 @@ jobs:
 
     - name: 🎗️ Lint with cabal-fmt
       run: ./scripts/format-cabal-fmt.sh && git diff --exit-code
-  
+
   ################################################################################
   # Lint with cabal
   ################################################################################
@@ -298,7 +298,7 @@ jobs:
 
     - name: 🎗️ Lint with generate-readme
       run: git diff --exit-code
-  
+
   ################################################################################
   # Lint with HLint
   ################################################################################
@@ -317,7 +317,7 @@ jobs:
 
     - name: 🎗️ Lint with HLint
       run: ./scripts/lint-hlint.sh
-  
+
   ################################################################################
   # Publish documentation
   ################################################################################
