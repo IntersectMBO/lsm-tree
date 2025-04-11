@@ -347,6 +347,7 @@ Throws the following exceptions:
     If the session directory is malformed.
 -}
 withSession ::
+    forall a.
     -- | The session directory.
     FilePath ->
     (Session -> IO a) ->
@@ -404,7 +405,9 @@ Otherwise, the disk I\/O cost operation is \(O(1)\).
 Closing is idempotent, i.e., closing a closed session does nothing.
 All other operations on a closed session will throw an exception.
 -}
-closeSession :: Session -> IO ()
+closeSession ::
+    Session ->
+    IO ()
 closeSession = Internal.closeSession . unSession
 
 --------------------------------------------------------------------------------
@@ -437,6 +440,7 @@ Throws the following exceptions:
     If the session is closed.
 -}
 withTable ::
+    forall k v a.
     Session ->
     (Table k v -> IO a) ->
     IO a
@@ -445,6 +449,7 @@ withTable session =
 
 -- | Variant of 'withTable' that accepts [table configuration](#g:table_configuration).
 withTableWith ::
+    forall k v a.
     TableConfig ->
     Session ->
     (Table k v -> IO a) ->
@@ -465,6 +470,7 @@ Throws the following exceptions:
     If the session is closed.
 -}
 newTable ::
+    forall k v.
     Session ->
     IO (Table k v)
 newTable session =
@@ -474,6 +480,7 @@ newTable session =
 Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
 -}
 newTableWith ::
+    forall k v.
     TableConfig ->
     Session ->
     IO (Table k v)
@@ -490,7 +497,10 @@ All other operations on a closed table will throw an exception.
 
 __Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
 -}
-closeTable :: Table k v -> IO ()
+closeTable ::
+    forall k v.
+    Table k v ->
+    IO ()
 closeTable (Table table) =
     Internal.close table
 
@@ -518,6 +528,7 @@ Throws the following exceptions:
     If the table data is corrupted.
 -}
 member ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
@@ -540,6 +551,7 @@ The following property holds in the absence of races:
 prop> members table keys = traverse (member table) keys
 -}
 members ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector k ->
@@ -566,6 +578,7 @@ Throws the following exceptions:
     If the table data is corrupted.
 -}
 lookup ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
@@ -591,6 +604,7 @@ The following property holds in the absence of races:
 prop> lookups table keys = traverse (lookup table) keys
 -}
 lookups ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector k ->
@@ -626,6 +640,7 @@ Throws the following exceptions:
 -- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
 -- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 rangeLookup ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Range k ->
@@ -656,6 +671,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 insert ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
@@ -679,6 +695,7 @@ The following property holds in the absence of races:
 prop> inserts table entries = traverse_ (uncurry $ insert table) entries
 -}
 inserts ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector (k, v) ->
@@ -703,6 +720,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 delete ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
@@ -725,6 +743,7 @@ The following property holds in the absence of races:
 prop> deletes table keys = traverse_ (delete table) keys
 -}
 deletes ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector k ->
@@ -751,6 +770,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 update ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
@@ -774,6 +794,7 @@ The following property holds in the absence of races:
 prop> updates table entries = traverse_ (uncurry $ update table) entries
 -}
 updates ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector (k, Maybe v) ->
@@ -809,6 +830,7 @@ Throws the following exceptions:
 -}
 -- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 withDuplicate ::
+    forall k v a.
     Table k v ->
     (Table k v -> IO a) ->
     IO a
@@ -834,6 +856,7 @@ Throws the following exceptions:
 -}
 -- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 duplicate ::
+    forall k v.
     Table k v ->
     IO (Table k v)
 duplicate (Table table) =
@@ -867,6 +890,7 @@ Throws the following exceptions:
     If both tables are not from the same 'Session'.
 -}
 withUnion ::
+    forall k v a.
     Table k v ->
     Table k v ->
     (Table k v -> IO a) ->
@@ -878,6 +902,7 @@ withUnion table1 table2 =
 Variant of 'withUnions' that takes any number of tables.
 -}
 withUnions ::
+    forall k v a.
     NonEmpty (Table k v) ->
     (Table k v -> IO a) ->
     IO a
@@ -906,6 +931,7 @@ Throws the following exceptions:
     If both tables are not from the same 'Session'.
 -}
 union ::
+    forall k v.
     Table k v ->
     Table k v ->
     IO (Table k v)
@@ -916,6 +942,7 @@ union table1 table2 =
 Variant of 'union' that takes any number of tables.
 -}
 unions ::
+    forall k v.
     NonEmpty (Table k v) ->
     IO (Table k v)
 unions tables = do
@@ -951,6 +978,7 @@ Throws the following exceptions:
 -}
 -- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 withIncrementalUnion ::
+    forall k v a.
     Table k v ->
     Table k v ->
     (Table k v -> IO a) ->
@@ -966,6 +994,7 @@ where the variable \(b\) refers to the number of input tables.
 -}
 -- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
 withIncrementalUnions ::
+    forall k v a.
     NonEmpty (Table k v) ->
     (Table k v -> IO a) ->
     IO a
@@ -996,6 +1025,7 @@ Throws the following exceptions:
 -}
 -- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 incrementalUnion ::
+    forall k v.
     Table k v ->
     Table k v ->
     IO (Table k v)
@@ -1010,6 +1040,7 @@ where the variable \(b\) refers to the number of input tables.
 -}
 -- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 incrementalUnions ::
+    forall k v.
     NonEmpty (Table k v) ->
     IO (Table k v)
 incrementalUnions (Table table :| tables) = do
@@ -1022,6 +1053,7 @@ This includes the union debt of any table that was part of the union's input.
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 -}
 remainingUnionDebt ::
+    forall k v.
     Table k v ->
     IO UnionDebt
 remainingUnionDebt (Table table) =
@@ -1041,6 +1073,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 supplyUnionCredits ::
+    forall k v.
     Table k v ->
     UnionCredits ->
     IO UnionCredits
@@ -1073,6 +1106,7 @@ Throws the following exceptions:
     If a snapshot with the same name already exists.
 -}
 saveSnapshot ::
+    forall k v.
     SnapshotName ->
     SnapshotLabel ->
     Table k v ->
@@ -1104,6 +1138,7 @@ Throws the following exceptions:
     If the snapshot has a different label or is a different table type.
 -}
 withTableFromSnapshot ::
+    forall k v a.
     Session ->
     SnapshotName ->
     SnapshotLabel ->
@@ -1116,6 +1151,7 @@ withTableFromSnapshot session snapName snapLabel =
 Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
 -}
 withTableFromSnapshotWith ::
+    forall k v a.
     OverrideDiskCachePolicy ->
     Session ->
     SnapshotName ->
@@ -1146,6 +1182,7 @@ Throws the following exceptions:
     If the snapshot has a different label or is a different table type.
 -}
 openTableFromSnapshot ::
+    forall k v.
     Session ->
     SnapshotName ->
     SnapshotLabel ->
@@ -1157,6 +1194,7 @@ openTableFromSnapshot session snapName snapLabel =
 Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
 -}
 openTableFromSnapshotWith ::
+    forall k v.
     Session ->
     OverrideDiskCachePolicy ->
     SnapshotName ->
@@ -1254,6 +1292,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 withCursor ::
+    forall k v a.
     Table k v ->
     (Cursor k v -> IO a) ->
     IO a
@@ -1264,6 +1303,7 @@ withCursor (Table table) action =
 Variant of 'withCursor' that starts at a given key.
 -}
 withCursorAtOffset ::
+    forall k v a.
     (SerialiseKey k) =>
     Table k v ->
     k ->
@@ -1287,6 +1327,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 newCursor ::
+    forall k v.
     Table k v ->
     IO (Cursor k v)
 newCursor (Table table) =
@@ -1296,6 +1337,7 @@ newCursor (Table table) =
 Variant of 'newCursor' that starts at a given key.
 -}
 newCursorAtOffset ::
+    forall k v.
     (SerialiseKey k) =>
     Table k v ->
     k ->
@@ -1312,6 +1354,7 @@ Closing is idempotent, i.e., closing a closed cursor does nothing.
 All other operations on a closed cursor will throw an exception.
 -}
 closeCursor ::
+    forall k v.
     Cursor k v ->
     IO ()
 closeCursor = Internal.closeCursor . unCursor
@@ -1332,6 +1375,7 @@ Throws the following exceptions:
 -- The amortised time complexity is \(\Theta(\logT \log_T \frac{n}{B})\).
 -- TODO: implement this function in terms of 'readEntry'
 next ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Cursor k v ->
     IO (Maybe (k, v))
@@ -1362,6 +1406,7 @@ Throws the following exceptions:
 -- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
 -- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 take ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Int ->
     Cursor k v ->
@@ -1396,6 +1441,7 @@ Throws the following exceptions:
 -- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 -- TODO: implement this function using a variant of 'readCursorWhile' that does not take the maximum batch size
 takeWhile ::
+    forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Int ->
     (k -> Bool) ->
@@ -1433,7 +1479,11 @@ data SessionDirCorruptedError
 *   t'Internal.SessionDirLockedError'       to t'SessionDirLockedError'; and
 *   t'Internal.SessionDirCorruptedError'    to t'SessionDirCorruptedError'.
 -}
-_convertSessionDirErrors :: FilePath -> IO a -> IO a
+_convertSessionDirErrors ::
+    forall a.
+    FilePath ->
+    IO a ->
+    IO a
 _convertSessionDirErrors sessionDir =
     mapExceptionWithActionRegistry (\(Internal.ErrSessionDirDoesNotExist _fsErrorPath) -> SomeException $ ErrSessionDirDoesNotExist sessionDir)
         . mapExceptionWithActionRegistry (\(Internal.ErrSessionDirLocked _fsErrorPath) -> SomeException $ ErrSessionDirLocked sessionDir)
@@ -1472,7 +1522,11 @@ data TableUnionNotCompatibleError
 *   t'Internal.SessionDirLockedError'       to t'SessionDirLockedError'; and
 *   t'Internal.SessionDirCorruptedError'    to t'SessionDirCorruptedError'.
 -}
-_convertTableUnionNotCompatibleError :: (Int -> FilePath) -> IO a -> IO a
+_convertTableUnionNotCompatibleError ::
+    forall a.
+    (Int -> FilePath) ->
+    IO a ->
+    IO a
 _convertTableUnionNotCompatibleError sessionDirFor =
     mapExceptionWithActionRegistry $ \case
         Internal.ErrTableUnionHandleTypeMismatch i1 typeRep1 i2 typeRep2 ->
