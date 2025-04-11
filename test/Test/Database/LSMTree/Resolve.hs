@@ -16,25 +16,25 @@ tests = testGroup "Test.Database.LSMTree.Resolve"
     ]
 
 allProperties ::
-     forall v. (Show v, Arbitrary v, NFData v, SerialiseValue v, ResolveValue v)
+     forall v. (Show v, Arbitrary v, NFData v, ResolveValue v)
   => [TestTree]
 allProperties =
-    [ testProperty "prop_resolveValueValidOutput" $ withMaxSuccess 1000 $
-        prop_resolveValueValidOutput @v
-    , testProperty "prop_resolveValueAssociativity" $ withMaxSuccess 1000 $
-        prop_resolveValueAssociativity @v
+    [ testProperty "prop_resolveValidOutput" $ withMaxSuccess 1000 $
+        prop_resolveValidOutput @v
+    , testProperty "prop_resolveAssociativity" $ withMaxSuccess 1000 $
+        prop_resolveAssociativity @v
     ]
 
-prop_resolveValueValidOutput ::
-     forall v. (Show v, NFData v, SerialiseValue v, ResolveValue v)
+prop_resolveValidOutput ::
+     forall v. (Show v, NFData v, ResolveValue v)
   => v -> v -> Property
-prop_resolveValueValidOutput x y =
+prop_resolveValidOutput x y =
     counterexample ("inputs: " <> show (x, y)) $
-      resolveValueValidOutput x y
+      resolveValidOutput x y
 
-prop_resolveValueAssociativity ::
-     forall v. (Show v, SerialiseValue v, ResolveValue v)
+prop_resolveAssociativity ::
+     forall v. (Show v, ResolveValue v)
   => v -> v -> v -> Property
-prop_resolveValueAssociativity x y z =
+prop_resolveAssociativity x y z =
     counterexample ("inputs: " <> show (x, y)) $
-      resolveValueAssociativity x y z
+      resolveAssociativity x y z

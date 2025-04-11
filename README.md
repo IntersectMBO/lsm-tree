@@ -114,7 +114,8 @@ constants:
   describe the complexity of an operation that involves multiple tables,
   it refers to the sum of all table entries.
 
-- The variable *t* refers to the number of open tables in the session.
+- The variable *o* refers to the number of open tables and cursors in
+  the session.
 
 - The variable *s* refers to the number of snapshots in the session.
 
@@ -157,7 +158,7 @@ Otherwise, the merge policy is listed as N/A.
 <td></td>
 <td>Close</td>
 <td><code>MergePolicyLazyLevelling</code></td>
-<td><span class="math inline">$O(t \: T \: \log_T
+<td><span class="math inline">$O(o \: T \: \log_T
 \frac{n}{B})$</span></td>
 </tr>
 <tr>

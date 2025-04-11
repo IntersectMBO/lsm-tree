@@ -19,6 +19,7 @@ module Database.LSMTree.Internal.Serialise.Class (
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as B
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
 import           Data.Monoid (Sum (..))
@@ -149,6 +150,20 @@ instance SerialiseValue Word64 where
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ indexWord8ArrayAsWord64 ba off
+
+{-------------------------------------------------------------------------------
+  String
+-------------------------------------------------------------------------------}
+
+-- | Placeholder instance, not optimised
+instance SerialiseKey String where
+  serialiseKey = serialiseKey . BSC.pack
+  deserialiseKey = BSC.unpack . deserialiseKey
+
+-- | Placeholder instance, not optimised
+instance SerialiseValue String where
+  serialiseValue = serialiseValue . BSC.pack
+  deserialiseValue = BSC.unpack . deserialiseValue
 
 {-------------------------------------------------------------------------------
   ByteString

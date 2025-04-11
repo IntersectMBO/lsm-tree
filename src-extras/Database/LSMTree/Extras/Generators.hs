@@ -50,7 +50,6 @@ import qualified Data.Primitive.ByteArray as BA
 import qualified Data.Vector.Primitive as VP
 import           Data.Word
 import qualified Database.LSMTree as Full
-import           Database.LSMTree.Common (Range (..))
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Index (Append (..))
 import           Database.LSMTree.Extras.Orphans ()
@@ -58,6 +57,7 @@ import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Page (PageNo (..))
+import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes (RawBytes))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Serialise

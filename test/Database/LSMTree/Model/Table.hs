@@ -17,7 +17,7 @@ module Database.LSMTree.Model.Table (
   , Range (..)
   , LookupResult (..)
   , lookups
-  , QueryResult (..)
+  , Entry (..)
   , rangeLookup
     -- ** Cursor
   , Cursor
@@ -53,19 +53,18 @@ import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (Proxy))
 import           Data.Semigroup (First (..))
 import qualified Data.Vector as V
-import           Database.LSMTree (LookupResult (..), QueryResult (..),
-                     ResolveValue (..), Update (..))
-import           Database.LSMTree.Common (Range (..), SerialiseKey (..),
-                     SerialiseValue (..))
+import           Database.LSMTree (Entry (..), LookupResult (..), Range (..),
+                     ResolveValue (..), SerialiseKey (..), SerialiseValue (..),
+                     Update (..))
 import qualified Database.LSMTree.Internal.Map.Range as Map.R
 import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import           GHC.Exts (IsList (..))
 
 newtype ResolveSerialisedValue v =
-    Resolve { resolveSerialised :: RawBytes -> RawBytes -> RawBytes }
+    Resolve { resolveSerialisedValue :: RawBytes -> RawBytes -> RawBytes }
 
 getResolve :: forall v. ResolveValue v => ResolveSerialisedValue v
-getResolve = Resolve (resolveValue (Proxy @v))
+getResolve = Resolve (resolveSerialised (Proxy @v))
 
 noResolve :: ResolveSerialisedValue v
 noResolve = Resolve const
@@ -76,7 +75,7 @@ resolveValueAndBlob ::
   -> (RawBytes, Maybe b)
   -> (RawBytes, Maybe b)
 resolveValueAndBlob r (v1, bMay1) (v2, bMay2) =
-      (resolveSerialised r v1 v2, getFirst (First bMay1 <> First bMay2))
+      (resolveSerialisedValue r v1 v2, getFirst (First bMay1 <> First bMay2))
 
 {-------------------------------------------------------------------------------
   Tables
@@ -143,11 +142,11 @@ rangeLookup :: forall k v b.
      (SerialiseKey k, SerialiseValue v)
   => Range k
   -> Table k v b
-  -> V.Vector (QueryResult k v (BlobRef b))
+  -> V.Vector (Entry k v (BlobRef b))
 rangeLookup r tbl = V.fromList
     [ case v of
-        (v', Nothing) -> FoundInQuery (deserialiseKey k) (deserialiseValue v')
-        (v', Just br) -> FoundInQueryWithBlob (deserialiseKey k) (deserialiseValue v') br
+        (v', Nothing) -> Entry (deserialiseKey k) (deserialiseValue v')
+        (v', Just br) -> EntryWithBlob (deserialiseKey k) (deserialiseValue v') br
     | let (lb, ub) = convertRange r
     , (k, v) <- Map.R.rangeLookup lb ub (values tbl)
     ]
@@ -291,12 +290,12 @@ readCursor ::
      (SerialiseKey k, SerialiseValue v)
   => Int
   -> Cursor k v b
-  -> (V.Vector (QueryResult k v (BlobRef b)), Cursor k v b)
+  -> (V.Vector (Entry k v (BlobRef b)), Cursor k v b)
 readCursor n c =
     ( V.fromList
         [ case v of
-            (v', Nothing) -> FoundInQuery (deserialiseKey k) (deserialiseValue v')
-            (v', Just br) -> FoundInQueryWithBlob (deserialiseKey k) (deserialiseValue v') br
+            (v', Nothing) -> Entry (deserialiseKey k) (deserialiseValue v')
+            (v', Just br) -> EntryWithBlob (deserialiseKey k) (deserialiseValue v') br
         | (k, v) <- take n (_cursorValues c)
         ]
     , Cursor $ drop n (_cursorValues c)

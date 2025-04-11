@@ -14,14 +14,12 @@ import qualified Data.Vector as V
 import           Data.Void
 import           Data.Word
 import           Database.LSMTree hiding (withTable)
-import qualified Database.LSMTree.Common as Common
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import qualified Database.LSMTree.Internal.RawBytes as RB
-import           Database.LSMTree.Internal.Serialise.Class
 import           GHC.Generics (Generic)
-import           Prelude hiding (getContents)
+import           Prelude hiding (getContents, take)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
@@ -75,17 +73,13 @@ newtype V3 = V3 Word64
 
 type B3 = Void
 
--- Simple addition
-resolve :: V3 -> V3 -> V3
-resolve = (+)
-
 instance ResolveValue V3 where
-  resolveValue = resolveDeserialised resolve
+  resolve = (+)
 
-benchConfig :: Common.TableConfig
-benchConfig = Common.defaultTableConfig {
-      Common.confWriteBufferAlloc  = Common.AllocNumEntries (Common.NumEntries 20000)
-    , Common.confFencePointerIndex = Common.CompactIndex
+benchConfig :: TableConfig
+benchConfig = defaultTableConfig
+    { confWriteBufferAlloc  = AllocNumEntries (NumEntries 20000)
+    , confFencePointerIndex = CompactIndex
     }
 
 {-------------------------------------------------------------------------------
@@ -142,12 +136,12 @@ benchLargeValueVsSmallValueBlob =
       initialise inss = do
           (tmpDir, hfs, hbio) <- mkFiles
           s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-          t <- new s benchConfig
+          t <- newTableWith benchConfig s
           V.mapM_ (inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
-          close t
+          closeTable t
           closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
 
@@ -172,11 +166,11 @@ benchCursorScanVsRangeLookupScan =
           bgroup "cursor-scan-vs-range-lookup-scan" [
               bench "cursor-scan-full" $ whnfIO $ do
                 withCursor t $ \c -> do
-                  readCursor initialSize c
+                  take initialSize c
             , bench "cursor-scan-chunked" $ whnfIO $ do
                 withCursor t $ \c -> do
                   forM_ ([1 .. numChunks] :: [Int]) $ \_ -> do
-                    readCursor readSize c
+                    take readSize c
             , bench "range-scan-full" $ whnfIO $ do
                 rangeLookup t (FromToIncluding (K minBound) (K maxBound))
             , bench "range-scan-chunked" $ whnfIO $ do
@@ -227,12 +221,12 @@ benchCursorScanVsRangeLookupScan =
       initialise inss = do
           (tmpDir, hfs, hbio) <- mkFiles
           s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-          t <- new s benchConfig
+          t <- newTableWith benchConfig s
           V.mapM_ (inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
-          close t
+          closeTable t
           closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
 
@@ -251,9 +245,9 @@ benchInsertBatches =
       !initialSize = 100_000
       !batchSize = 256
 
-      _benchConfig :: Common.TableConfig
+      _benchConfig :: TableConfig
       _benchConfig = benchConfig {
-          Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 1000)
+          confWriteBufferAlloc = AllocNumEntries (NumEntries 1000)
         }
 
       randomInserts :: Int -> V.Vector (K, V2, Maybe Void)
@@ -272,11 +266,11 @@ benchInsertBatches =
       initialise = do
           (tmpDir, hfs, hbio) <- mkFiles
           s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-          t <- new s _benchConfig
+          t <- newTableWith _benchConfig s
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
-          close t
+          closeTable t
           closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
 
@@ -458,7 +452,7 @@ mkTable ::
         )
 mkTable hfs hbio conf = do
     sesh <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-    t <- new sesh conf
+    t <- newTableWith conf sesh
     pure (sesh, t)
 
 cleanupTable ::
@@ -467,5 +461,5 @@ cleanupTable ::
      )
   -> IO ()
 cleanupTable (s, t) = do
-    close t
+    closeTable t
     closeSession s

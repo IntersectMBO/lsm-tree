@@ -19,9 +19,10 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
-import           Database.LSMTree (Cursor, LookupResult, QueryResult, Table)
-import           Database.LSMTree.Common (BlobRef, SerialiseValue)
-import           Database.LSMTree.Internal.Serialise (SerialiseKey)
+import           Database.LSMTree (Cursor, Entry, LookupResult, Table)
+import           Database.LSMTree.Internal.Serialise (SerialiseKey,
+                     SerialiseValue)
+import           Database.LSMTree.Internal.Types (BlobRef)
 import           Test.QuickCheck.Modifiers (Small (..))
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
@@ -39,23 +40,23 @@ type instance Realized (IOSim s) a = RealizeIOSim s a
 type RealizeIOSim :: Type -> Type -> Type
 type family RealizeIOSim s a where
   -- io-classes
-  RealizeIOSim s (Real.TVar a)  = TVar (IOSim s) a
+  RealizeIOSim s (Real.TVar a) = TVar (IOSim s) a
   RealizeIOSim s (Real.TMVar a) = TMVar (IOSim s) a
-  RealizeIOSim s (Real.MVar a)  = MVar (IOSim s) a
+  RealizeIOSim s (Real.MVar a) = MVar (IOSim s) a
   -- lsm-tree
-  RealizeIOSim s (Table IO k v b)    = Table (IOSim s) k v b
-  RealizeIOSim s (LookupResult v b)  = LookupResult v (RealizeIOSim s b)
-  RealizeIOSim s (QueryResult k v b) = QueryResult k v (RealizeIOSim s b)
-  RealizeIOSim s (Cursor IO k v b)   = Table (IOSim s) k v b
-  RealizeIOSim s (BlobRef IO b)      = BlobRef (IOSim s) b
+  RealizeIOSim s (Table IO k v b) = Table (IOSim s) k v b
+  RealizeIOSim s (LookupResult v b) = LookupResult v (RealizeIOSim s b)
+  RealizeIOSim s (Entry k v b) = Entry k v (RealizeIOSim s b)
+  RealizeIOSim s (Cursor IO k v b) = Table (IOSim s) k v b
+  RealizeIOSim s (BlobRef IO b) = BlobRef (IOSim s) b
   -- Type family wrappers
-  RealizeIOSim s (WrapTable h IO k v b)  = WrapTable h (IOSim s) k v b
+  RealizeIOSim s (WrapTable h IO k v b) = WrapTable h (IOSim s) k v b
   RealizeIOSim s (WrapCursor h IO k v b) = WrapCursor h (IOSim s) k v b
-  RealizeIOSim s (WrapBlobRef h IO b)    = WrapBlobRef h (IOSim s) b
-  RealizeIOSim s (WrapBlob b)            = WrapBlob b
+  RealizeIOSim s (WrapBlobRef h IO b) = WrapBlobRef h (IOSim s) b
+  RealizeIOSim s (WrapBlob b) = WrapBlob b
   -- Congruence
   RealizeIOSim s (f a b) = f (RealizeIOSim s a) (RealizeIOSim s b)
-  RealizeIOSim s (f a)   = f (RealizeIOSim s a)
+  RealizeIOSim s (f a) = f (RealizeIOSim s a)
   -- Default
   RealizeIOSim s a = a
 

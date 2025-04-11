@@ -1,711 +1,2272 @@
-{-# LANGUAGE MagicHash #-}
-
--- | This module is experimental. It is mainly used for testing purposes.
---
--- See the 'Normal' and 'Monoidal' modules for documentation.
---
--- TODO: we have to decide whether we want to duplicate haddocks across public API
--- modules, or if we want to pick a single source of reference for haddocks.
--- Until then, the documentation on definitions in this module is omitted.
+{- |
+Module      : Database.LSMTree
+Copyright   : (c) 2023, Input Output Global, Inc. (IOG)
+              (c) 2023-2025, INTERSECT
+License     : Apache-2.0
+Stability   : experimental
+Portability : portable
+-}
 module Database.LSMTree (
-    -- * Exceptions
-    Common.SessionDirDoesNotExistError (..)
-  , Common.SessionDirLockedError (..)
-  , Common.SessionDirCorruptedError (..)
-  , Common.SessionClosedError (..)
-  , Common.TableClosedError (..)
-  , Common.TableCorruptedError (..)
-  , Common.TableTooLargeError (..)
-  , Common.TableUnionNotCompatibleError (..)
-  , Common.SnapshotExistsError (..)
-  , Common.SnapshotDoesNotExistError (..)
-  , Common.SnapshotCorruptedError (..)
-  , Common.SnapshotNotCompatibleError (..)
-  , Common.BlobRefInvalidError (..)
-  , Common.CursorClosedError (..)
-  , Common.FileFormat (..)
-  , Common.FileCorruptedError (..)
-  , Common.InvalidSnapshotNameError (..)
+  -- * Usage Notes
+  -- $usage_notes
 
-    -- * Tracing
-  , Common.LSMTreeTrace (..)
-  , Common.TableTrace (..)
-  , Common.MergeTrace (..)
+  -- ** Real and Simulated IO
+  -- $real_and_simulated_io
+  IOLike,
 
-    -- * Table sessions
-  , Session
-  , withSession
-  , openSession
-  , closeSession
+  -- * Examples
+  -- $setup
 
-    -- * Table
-  , Table
-  , Common.TableConfig (..)
-  , Common.defaultTableConfig
-  , Common.SizeRatio (..)
-  , Common.MergePolicy (..)
-  , Common.WriteBufferAlloc (..)
-  , Common.NumEntries (..)
-  , Common.BloomFilterAlloc (..)
-  , Common.defaultBloomFilterAlloc
-  , Common.FencePointerIndexType (..)
-  , Common.DiskCachePolicy (..)
-  , Common.MergeSchedule (..)
-  , Common.defaultMergeSchedule
-  , withTable
-  , new
-  , close
+  -- * Sessions
+  Session,
+  withSession,
+  withSessionIO,
+  openSession,
+  openSessionIO,
+  closeSession,
 
-    -- * Table queries and updates
-    -- ** Queries
-  , lookups
-  , LookupResult (..)
-  , rangeLookup
-  , Range (..)
-  , QueryResult (..)
-    -- ** Cursor
-  , Cursor
-  , withCursor
-  , withCursorAtOffset
-  , newCursor
-  , newCursorAtOffset
-  , closeCursor
-  , readCursor
-    -- ** Updates
-  , inserts
-  , deletes
-  , mupserts
-  , updates
-  , Update (..)
-    -- ** Blobs
-  , BlobRef
-  , retrieveBlobs
+  -- * Tables
+  Table,
+  withTable,
+  withTableWith,
+  newTable,
+  newTableWith,
+  closeTable,
 
-    -- * Durability (snapshots)
-  , Common.SnapshotName
-  , Common.isValidSnapshotName
-  , Common.toSnapshotName
-  , Common.SnapshotLabel (..)
-  , createSnapshot
-  , openSnapshot
-  , Common.OverrideDiskCachePolicy (..)
-  , deleteSnapshot
-  , listSnapshots
+  -- ** Table Lookups #table_lookups#
+  member,
+  members,
+  LookupResult (..),
+  getValue,
+  getBlob,
+  lookup,
+  lookups,
+  Entry (..),
+  rangeLookup,
 
-    -- * Persistence
-  , duplicate
+  -- ** Table Updates #table_updates#
+  insert,
+  inserts,
+  mupsert,
+  mupserts,
+  delete,
+  deletes,
+  Update (..),
+  update,
+  updates,
 
-    -- * Table union
-  , union
-  , unions
-  , UnionDebt (..)
-  , remainingUnionDebt
-  , UnionCredits (..)
-  , supplyUnionCredits
+  -- ** Table Duplication #table_duplication#
+  withDuplicate,
+  duplicate,
 
-    -- * Serialisation
-  , SerialiseKey
-  , SerialiseValue
+  -- ** Table Unions #table_unions#
+  withUnion,
+  withUnions,
+  union,
+  unions,
+  withIncrementalUnion,
+  withIncrementalUnions,
+  incrementalUnion,
+  incrementalUnions,
+  remainingUnionDebt,
+  supplyUnionCredits,
 
-    -- * Monoidal value resolution
-  , ResolveValue (..)
-  , resolveDeserialised
-    -- ** Properties
-  , resolveValueValidOutput
-  , resolveValueAssociativity
-    -- ** DerivingVia wrappers
-  , ResolveAsFirst (..)
+  -- * Blob References #blob_references#
+  BlobRef,
+  retrieveBlob,
+  retrieveBlobs,
 
-    -- * Utility types
-  , IOLike
-  ) where
+  -- * Cursors #cursor#
+  Cursor,
+  withCursor,
+  withCursorAtOffset,
+  newCursor,
+  newCursorAtOffset,
+  closeCursor,
+  next,
+  take,
+  takeWhile,
 
-import           Control.DeepSeq
-import           Control.Monad
-import           Control.Monad.Class.MonadThrow
+  -- * Snapshots #snapshots#
+  saveSnapshot,
+  withTableFromSnapshot,
+  withTableFromSnapshotWith,
+  openTableFromSnapshot,
+  openTableFromSnapshotWith,
+  doesSnapshotExist,
+  deleteSnapshot,
+  listSnapshots,
+  SnapshotName,
+  isValidSnapshotName,
+  toSnapshotName,
+  SnapshotLabel (..),
+
+  -- * Table Configuration #table_configuration#
+  TableConfig (..),
+  defaultTableConfig,
+  MergePolicy (MergePolicyLazyLevelling),
+  SizeRatio (Four),
+  WriteBufferAlloc (AllocNumEntries),
+  NumEntries (..),
+  BloomFilterAlloc (AllocFixed, AllocRequestFPR),
+  defaultBloomFilterAlloc,
+  FencePointerIndexType (OrdinaryIndex, CompactIndex),
+  DiskCachePolicy (..),
+  MergeSchedule (..),
+
+  -- ** Table Configuration Overrides #table_configuration_overrides#
+  OverrideDiskCachePolicy (..),
+
+  -- * Ranges #ranges#
+  Range (..),
+
+  -- * Union Credit and Debt
+  UnionCredits (..),
+  UnionDebt (..),
+
+  -- * Key\/Value Serialisation #key_value_serialisation#
+  RawBytes (RawBytes),
+  SerialiseKey (serialiseKey, deserialiseKey),
+  SerialiseValue (serialiseValue, deserialiseValue),
+
+  -- ** Key\/Value Serialisation Property Tests #key_value_serialisation_property_tests#
+  serialiseKeyIdentity,
+  serialiseKeyIdentityUpToSlicing,
+  serialiseKeyMinimalSize,
+  serialiseValueIdentity,
+  serialiseValueIdentityUpToSlicing,
+
+  -- * Monoidal Value Resolution #monoidal_value_resolution#
+  ResolveValue (..),
+  ResolveViaSemigroup (..),
+  ResolveAsFirst (..),
+
+  -- ** Monoidal Value Resolution Property Tests #monoidal_value_resolution_property_tests#
+  resolveCompatibility,
+  resolveValidOutput,
+  resolveAssociativity,
+
+  -- * Tracer
+  Tracer,
+  LSMTreeTrace (..),
+  TableTrace (..),
+  CursorTrace (..),
+
+  -- * Errors #errors#
+  SessionDirDoesNotExistError (..),
+  SessionDirLockedError (..),
+  SessionDirCorruptedError (..),
+  SessionClosedError (..),
+  TableClosedError (..),
+  TableCorruptedError (..),
+  TableTooLargeError (..),
+  TableUnionNotCompatibleError (..),
+  SnapshotExistsError (..),
+  SnapshotDoesNotExistError (..),
+  SnapshotCorruptedError (..),
+  SnapshotNotCompatibleError (..),
+  BlobRefInvalidError (..),
+  CursorClosedError (..),
+  InvalidSnapshotNameError (..),
+) where
+
+import           Control.Concurrent.Class.MonadMVar.Strict (MonadMVar)
+import           Control.Concurrent.Class.MonadSTM (MonadSTM (STM))
+import           Control.DeepSeq (NFData (..))
+import           Control.Exception.Base (assert)
+import           Control.Monad.Class.MonadAsync (MonadAsync)
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadMask,
+                     MonadThrow (..))
+import           Control.Monad.Primitive (PrimMonad)
+import           Control.Tracer (Tracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
-import           Data.Kind (Type)
+import           Data.Kind (Constraint, Type)
 import           Data.List.NonEmpty (NonEmpty (..))
-import           Data.Monoid (Sum (..))
+import           Data.Maybe (fromMaybe, isJust)
 import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl),
                      typeRep)
+import           Data.Vector (Vector)
 import qualified Data.Vector as V
-import           Database.LSMTree.Common (BlobRef (BlobRef), IOLike, Range (..),
-                     SerialiseKey, SerialiseValue, Session, UnionCredits (..),
-                     UnionDebt (..), closeSession, deleteSnapshot,
-                     deserialiseValue, listSnapshots, openSession,
-                     serialiseValue, withSession)
-import qualified Database.LSMTree.Common as Common
-import qualified Database.LSMTree.Internal as Internal
 import qualified Database.LSMTree.Internal.BlobRef as Internal
+import           Database.LSMTree.Internal.Config
+                     (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
+                     DiskCachePolicy (..), FencePointerIndexType (..),
+                     MergePolicy (..), MergeSchedule (..), SizeRatio (..),
+                     TableConfig (..), WriteBufferAlloc (..),
+                     defaultBloomFilterAlloc, defaultTableConfig)
+import           Database.LSMTree.Internal.Config.Override
+                     (OverrideDiskCachePolicy (..))
+import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
-import qualified Database.LSMTree.Internal.RawBytes as RB
+import           Database.LSMTree.Internal.Paths (SnapshotName,
+                     isValidSnapshotName, toSnapshotName)
+import           Database.LSMTree.Internal.Range (Range (..))
+import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.Serialise as Internal
+import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
+                     SerialiseValue (..), serialiseKeyIdentity,
+                     serialiseKeyIdentityUpToSlicing, serialiseKeyMinimalSize,
+                     serialiseValueIdentity, serialiseValueIdentityUpToSlicing)
+import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import qualified Database.LSMTree.Internal.Snapshot as Internal
-import qualified Database.LSMTree.Internal.Vector as V
-import           GHC.Exts (Proxy#, proxy#)
+import           Database.LSMTree.Internal.Types (BlobRef (..), Cursor (..),
+                     ResolveAsFirst (..), ResolveValue (..),
+                     ResolveViaSemigroup (..), Session (..), Table (..),
+                     resolveAssociativity, resolveCompatibility,
+                     resolveValidOutput)
+import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
+                     CursorClosedError (..), CursorTrace,
+                     InvalidSnapshotNameError (..), LSMTreeTrace (..),
+                     ResolveSerialisedValue, SessionClosedError (..),
+                     SessionDirCorruptedError (..),
+                     SessionDirDoesNotExistError (..),
+                     SessionDirLockedError (..), SnapshotCorruptedError (..),
+                     SnapshotDoesNotExistError (..), SnapshotExistsError (..),
+                     SnapshotNotCompatibleError (..), TableClosedError (..),
+                     TableCorruptedError (..), TableTooLargeError (..),
+                     TableTrace, TableUnionNotCompatibleError (..),
+                     UnionCredits (..), UnionDebt (..))
+import qualified Database.LSMTree.Internal.Unsafe as Internal
+import           Prelude hiding (lookup, take, takeWhile)
+import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
+import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
+import           System.FS.BlockIO.IO (ioHasBlockIO, withIOHasBlockIO)
+import           System.FS.IO (HandleIO, ioHasFS)
 
-{-------------------------------------------------------------------------------
-  Tables
--------------------------------------------------------------------------------}
+--------------------------------------------------------------------------------
+-- Usage Notes
+--------------------------------------------------------------------------------
 
-type Table = Internal.Table'
+{- $usage_notes
+This section focuses on the differences between the full API as defined in this module and the simple API as defined in "Database.LSMTree.Simple".
+It assumes that the reader is familiar with [Usage Notes for the simple API]("Database.LSMTree.Simple#g:usage_notes"), which discusses crucial topics such as [Resource Management]("Database.LSMTree.Simple#g:resource_management"), [Concurrency]("Database.LSMTree.Simple#g:concurrency"), and [Sharing]("Database.LSMTree.Simple#g:sharing").
+-}
 
-{-# SPECIALISE withTable ::
-     Session IO
-  -> Common.TableConfig
-  -> (Table IO k v b -> IO a)
-  -> IO a #-}
+{- $real_and_simulated_io
+-}
+
+type IOLike :: (Type -> Type) -> Constraint
+type IOLike m =
+  ( MonadAsync m
+  , MonadMVar m
+  , MonadThrow m
+  , MonadThrow (STM m)
+  , MonadCatch m
+  , MonadMask m
+  , PrimMonad m
+  , MonadST m
+  )
+
+--------------------------------------------------------------------------------
+-- Example
+--------------------------------------------------------------------------------
+
+{- $setup
+
+The examples in this module use the preamble described in this section, which does three things:
+
+1.  It imports this module qualified, as intended, as well as any other relevant modules.
+2.  It defines types for keys, values, and BLOBs.
+3.  It defines a helper function that runs examples with access to an open session and fresh table.
+
+=== Importing "Database.LSMTree"
+
+This module is intended to be imported qualified, to avoid name clashes with Prelude functions.
+
+>>> :{
+import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..),
+                     SerialiseKey (..), SerialiseValue (..), Session, Table)
+import qualified Database.LSMTree as LSMT
+:}
+
+=== Defining key, value, and BLOB types
+
+The examples in this module use the types @Key@, @Value@, and @Blob@ for keys, values and BLOBs.
+
+>>> :{
+import Control.Exception (bracket)
+import Data.ByteString (ByteString)
+import Data.ByteString.Short (ShortByteString)
+import Data.Proxy (Proxy)
+import Data.String (IsString)
+import Data.Word (Word64)
+:}
+
+The type @Key@ is a newtype wrapper around 'Data.Word.Word64'.
+The required instance of 'SerialiseKey' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.Word.Word64'.
+
+>>> :{
+newtype Key = Key Word64
+  deriving stock (Eq, Show)
+  deriving newtype (Num, SerialiseKey)
+:}
+
+The type @Value@ is a newtype wrapper around 'Data.ByteString.Short.ShortByteString'.
+The required instance of 'SerialiseValue' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.ByteString.Short.ShortByteString'.
+
+>>> :{
+newtype Value = Value ShortByteString
+  deriving stock (Eq, Show)
+  deriving newtype (IsString, SerialiseValue)
+:}
+
+The type @Value@ has an instance of @ResolveValue@ which appends the new value to the old value separated by a space.
+It is sufficient to define either 'resolve' or 'resolveSerialised',
+as each can be defined in terms of the other and 'serialiseValue'\/'deserialiseValue'.
+For optimal performance, you should /always/ define 'resolveSerialised' manually.
+
+__NOTE__:
+The /first/ argument of 'resolve' and 'resolveSerialised' is the /new/ value and the /second/ argument is the /old/ value.
+
+>>> :{
+instance ResolveValue Value where
+  resolve :: Value -> Value -> Value
+  resolve (Value new) (Value old) = Value (old <> " " <> new)
+  resolveSerialised :: Proxy Value -> RawBytes -> RawBytes -> RawBytes
+  resolveSerialised _ new old = old <> " " <> new
+:}
+
+The type @Blob@ is a newtype wrapper around 'Data.ByteString.ByteString',
+The required instance of 'SerialiseValue' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.ByteString.ByteString'.
+
+>>> :{
+newtype Blob = Blob ByteString
+  deriving stock (Eq, Show)
+  deriving newtype (IsString, SerialiseValue)
+:}
+
+=== Defining a helper function to run examples
+
+The examples in this module are wrapped in a call to @runExample@,
+which creates a temporary session directory and
+runs the example with access to an open 'Session' and a fresh 'Table'.
+
+>>> :{
+import qualified System.Directory as Dir
+import           System.FilePath ((</>))
+:}
+
+>>> :{
+runExample :: (Session IO -> Table IO Key Value Blob -> IO a) -> IO a
+runExample action = do
+  tmpDir <- Dir.getTemporaryDirectory
+  let sessionDir = tmpDir </> "doctest_Database_LSMTree"
+  Dir.createDirectoryIfMissing True sessionDir
+  LSMT.withSessionIO mempty sessionDir $ \session ->
+    LSMT.withTable session $ \table ->
+      action session table
+:}
+-}
+
+--------------------------------------------------------------------------------
+-- Sessions
+--------------------------------------------------------------------------------
+
+-- NOTE: 'Session' is defined in 'Database.LSMTree.Internal.Types'
+
+{- |
+Run an action with access to a session opened from a session directory.
+
+If the session directory is empty, a new session is created.
+Otherwise, the session directory is opened as an existing session.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(o \: T \log_T \frac{n}{B})\).
+
+The variable \(o\) refers to the number of open tables and cursors in the session.
+
+If the session has any open tables, then 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+Otherwise, the disk I\/O cost operation is \(O(1)\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'openSession' and 'closeSession'.
+
+Throws the following exceptions:
+
+['SessionDirDoesNotExistError']:
+    If the session directory does not exist.
+['SessionDirLockedError']:
+    If the session directory is locked by another process.
+['SessionDirCorruptedError']:
+    If the session directory is malformed.
+-}
+{-# SPECIALISE
+  withSession ::
+    Tracer IO LSMTreeTrace ->
+    HasFS IO HandleIO ->
+    HasBlockIO IO HandleIO ->
+    FsPath ->
+    (Session IO -> IO a) ->
+    IO a
+  #-}
+withSession ::
+  forall m h a.
+  (IOLike m, Typeable h) =>
+  Tracer m LSMTreeTrace ->
+  HasFS m h ->
+  HasBlockIO m h ->
+  -- | The session directory.
+  FsPath ->
+  (Session m -> m a) ->
+  m a
+withSession tracer hasFS hasBlockIO sessionDir action = do
+  Internal.withSession tracer hasFS hasBlockIO sessionDir (action . Session)
+
+-- | Variant of 'withSession' that is specialised to 'IO' using the real filesystem.
+withSessionIO ::
+  Tracer IO LSMTreeTrace ->
+  FilePath ->
+  (Session IO -> IO a) ->
+  IO a
+withSessionIO tracer sessionDir action = do
+  let mountPoint = MountPoint sessionDir
+  let sessionDirFsPath = mkFsPath []
+  let hasFS = ioHasFS mountPoint
+  withIOHasBlockIO hasFS defaultIOCtxParams $ \hasBlockIO ->
+    withSession tracer hasFS hasBlockIO sessionDirFsPath action
+
+{- |
+Open a session from a session directory.
+
+If the session directory is empty, a new session is created.
+Otherwise, the session directory is opened as an existing session.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+
+Throws the following exceptions:
+
+['SessionDirDoesNotExistError']:
+    If the session directory does not exist.
+['SessionDirLockedError']:
+    If the session directory is locked by another process.
+['SessionDirCorruptedError']:
+    If the session directory is malformed.
+-}
+{-# SPECIALISE
+  openSession ::
+    Tracer IO LSMTreeTrace ->
+    HasFS IO HandleIO ->
+    HasBlockIO IO HandleIO ->
+    -- \| The session directory.
+    FsPath ->
+    IO (Session IO)
+  #-}
+openSession ::
+  forall m h.
+  (IOLike m, Typeable h) =>
+  Tracer m LSMTreeTrace ->
+  HasFS m h ->
+  HasBlockIO m h ->
+  -- | The session directory.
+  FsPath ->
+  m (Session m)
+openSession tracer hasFS hasBlockIO sessionDir =
+  Session <$> Internal.openSession tracer hasFS hasBlockIO sessionDir
+
+-- | Variant of 'openSession' that is specialised to 'IO' using the real filesystem.
+openSessionIO ::
+  Tracer IO LSMTreeTrace ->
+  -- \| The session directory.
+  FilePath ->
+  IO (Session IO)
+openSessionIO tracer sessionDir = do
+  let mountPoint = MountPoint sessionDir
+  let sessionDirFsPath = mkFsPath []
+  let hasFS = ioHasFS mountPoint
+  let acquireHasBlockIO = ioHasBlockIO hasFS defaultIOCtxParams
+  let releaseHasBlockIO HasBlockIO{close} = close
+  bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
+    openSession tracer hasFS hasBlockIO sessionDirFsPath
+
+{- |
+Close a session.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(o \: T \log_T \frac{n}{B})\).
+
+The variable \(o\) refers to the number of open tables and cursors in the session.
+
+If the session has any open tables, then 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+Otherwise, this operation takes constant time.
+
+Closing is idempotent, i.e., closing a closed session does nothing.
+All other operations on a closed session will throw an exception.
+-}
+{-# SPECIALISE
+  closeSession ::
+    Session IO ->
+    IO ()
+  #-}
+closeSession ::
+  forall m.
+  (IOLike m) =>
+  Session m ->
+  m ()
+closeSession (Session session) =
+  Internal.closeSession session
+
+--------------------------------------------------------------------------------
+-- Tables
+--------------------------------------------------------------------------------
+
+-- NOTE: 'Table' is defined in 'Database.LSMTree.Internal.Types'
+
+{- |
+Run an action with access to an empty table.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'newTable' and 'closeTable'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+-}
+{-# SPECIALISE
+  withTable ::
+    Session IO ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
 withTable ::
-     IOLike m
-  => Session m
-  -> Common.TableConfig
-  -> (Table m k v b -> m a)
-  -> m a
-withTable (Internal.Session' sesh) conf action =
-    Internal.withTable sesh conf (action . Internal.Table')
+  forall m k v b a.
+  (IOLike m) =>
+  Session m ->
+  (Table m k v b -> m a) ->
+  m a
+withTable session =
+  withTableWith defaultTableConfig session
 
-{-# SPECIALISE new ::
-     Session IO
-  -> Common.TableConfig
-  -> IO (Table IO k v b) #-}
-new ::
-     IOLike m
-  => Session m
-  -> Common.TableConfig
-  -> m (Table m k v b)
-new (Internal.Session' sesh) conf = Internal.Table' <$> Internal.new sesh conf
+-- | Variant of 'withTable' that accepts [table configuration](#g:table_configuration).
+{-# SPECIALISE
+  withTableWith ::
+    TableConfig ->
+    Session IO ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withTableWith ::
+  forall m k v b a.
+  (IOLike m) =>
+  TableConfig ->
+  Session m ->
+  (Table m k v b -> m a) ->
+  m a
+withTableWith tableConfig (Session session) action =
+  Internal.withTable session tableConfig (action . Table)
 
-{-# SPECIALISE close ::
-     Table IO k v b
-  -> IO () #-}
-close ::
-     IOLike m
-  => Table m k v b
-  -> m ()
-close (Internal.Table' t) = Internal.close t
+{- |
+Create an empty table.
 
-{-------------------------------------------------------------------------------
-  Table queries
--------------------------------------------------------------------------------}
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
--- | Result of a single point lookup.
-data LookupResult v b =
-    NotFound
-  | Found         !v
+__Warning:__ Tables hold open resources and must be closed using 'closeTable'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+-}
+{-# SPECIALISE
+  newTable ::
+    Session IO ->
+    IO (Table IO k v b)
+  #-}
+newTable ::
+  forall m k v b.
+  (IOLike m) =>
+  Session m ->
+  m (Table m k v b)
+newTable session =
+  newTableWith defaultTableConfig session
+
+{- |
+Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
+-}
+{-# SPECIALISE
+  newTableWith ::
+    TableConfig ->
+    Session IO ->
+    IO (Table IO k v b)
+  #-}
+newTableWith ::
+  forall m k v b.
+  (IOLike m) =>
+  TableConfig ->
+  Session m ->
+  m (Table m k v b)
+newTableWith tableConfig (Session session) =
+  Table <$> Internal.new session tableConfig
+
+{- |
+Close a table.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+Closing is idempotent, i.e., closing a closed table does nothing.
+All other operations on a closed table will throw an exception.
+
+__Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
+-}
+{-# SPECIALISE
+  closeTable ::
+    Table IO k v b ->
+    IO ()
+  #-}
+closeTable ::
+  forall m k v b.
+  (IOLike m) =>
+  Table m k v b ->
+  m ()
+closeTable (Table table) =
+  Internal.close table
+
+--------------------------------------------------------------------------------
+-- Lookups
+--------------------------------------------------------------------------------
+
+{- |
+Check if the key is a member of the table.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  print =<< LSMT.member table 0
+:}
+True
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
+
+Membership tests can be performed concurrently from multiple Haskell threads.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableCorruptedError']:
+    If the table data is corrupted.
+-}
+{-# SPECIALISE
+  member ::
+    (SerialiseKey k, ResolveValue v) =>
+    Table IO k v b ->
+    k ->
+    IO Bool
+  #-}
+member ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Table m k v b ->
+  k ->
+  m Bool
+member = (fmap (isJust . getValue) .) . lookup
+
+{- |
+Variant of 'member' for batch membership tests.
+The batch of keys corresponds in-order to the batch of results.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
+
+The variable \(b\) refers to the length of the input vector.
+
+The following property holds in the absence of races:
+
+prop> members table keys = traverse (member table) keys
+-}
+{-# SPECIALISE
+  members ::
+    (SerialiseKey k, ResolveValue v) =>
+    Table IO k v b ->
+    Vector k ->
+    IO (Vector Bool)
+  #-}
+members ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Table m k v b ->
+  Vector k ->
+  m (Vector Bool)
+members = (fmap (fmap (isJust . getValue)) .) . lookups
+
+data LookupResult v b
+  = NotFound
+  | Found !v
   | FoundWithBlob !v !b
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
+{- |
+Get the field of type @v@ from a @'LookupResult' v b@, if any.
+-}
+getValue :: LookupResult v b -> Maybe v
+getValue = \case
+  NotFound -> Nothing
+  Found !v -> Just v
+  FoundWithBlob !v !_b -> Just v
+
+{- |
+Get the field of type @b@ from a @'LookupResult' v b@, if any.
+
+The following property holds:
+
+prop> isJust (getBlob result) <= isJust (getValue result)
+-}
+getBlob :: LookupResult v b -> Maybe b
+getBlob = \case
+  NotFound -> Nothing
+  Found !_v -> Nothing
+  FoundWithBlob !_v !b -> Just b
+
+instance (NFData v, NFData b) => NFData (LookupResult v b) where
+  rnf :: LookupResult v b -> ()
+  rnf = \case
+    NotFound -> ()
+    Found v -> rnf v
+    FoundWithBlob v b -> rnf v `seq` rnf b
+
 instance Bifunctor LookupResult where
-  first f = \case
-      NotFound          -> NotFound
-      Found v           -> Found (f v)
-      FoundWithBlob v b -> FoundWithBlob (f v) b
+  bimap :: (v -> v') -> (b -> b') -> LookupResult v b -> LookupResult v' b'
+  bimap f g = \case
+    NotFound -> NotFound
+    Found v -> Found (f v)
+    FoundWithBlob v b -> FoundWithBlob (f v) (g b)
 
-  second g = \case
-      NotFound          -> NotFound
-      Found v           -> Found v
-      FoundWithBlob v b -> FoundWithBlob v (g b)
+{- |
+Look up the value associated with a key.
 
-{-# SPECIALISE lookups ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => Table IO k v b
-  -> V.Vector k
-  -> IO (V.Vector (LookupResult v (BlobRef IO b))) #-}
-{-# INLINEABLE lookups #-}
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  print =<< LSMT.lookup table 0
+:}
+Found (Value "Hello")
+
+If the key is not associated with any value, 'lookup' returns 'NotFound'.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.lookup table 0
+:}
+NotFound
+
+If the key has an associated BLOB, the result contains a 'BlobRef'.
+The full BLOB can be retrieved by passing that 'BlobRef' to 'retrieveBlob'.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" (Just "World")
+  print
+    =<< traverse (LSMT.retrieveBlob session)
+    =<< LSMT.lookup table 0
+:}
+FoundWithBlob (Value "Hello") (Blob "World")
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
+
+Lookups can be performed concurrently from multiple Haskell threads.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableCorruptedError']:
+    If the table data is corrupted.
+-}
+{-# SPECIALISE
+  lookup ::
+    (SerialiseKey k, ResolveValue v) =>
+    Table IO k v b ->
+    k ->
+    IO (LookupResult v (BlobRef IO b))
+  #-}
+lookup ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Table m k v b ->
+  k ->
+  m (LookupResult v (BlobRef m b))
+lookup table k = do
+  mvs <- lookups table (V.singleton k)
+  let mmv = fst <$> V.uncons mvs
+  pure $ fromMaybe NotFound mmv
+
+{- |
+Variant of 'lookup' for batch lookups.
+The batch of keys corresponds in-order to the batch of results.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
+
+The variable \(b\) refers to the length of the input vector.
+
+The following property holds in the absence of races:
+
+prop> lookups table keys = traverse (lookup table) keys
+-}
+{-# SPECIALISE
+  lookups ::
+    (SerialiseKey k, ResolveValue v) =>
+    Table IO k v b ->
+    Vector k ->
+    IO (Vector (LookupResult v (BlobRef IO b)))
+  #-}
 lookups ::
-     forall m k v b. (
-       IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , ResolveValue v
-     )
-  => Table m k v b
-  -> V.Vector k
-  -> m (V.Vector (LookupResult v (BlobRef m b)))
-lookups (Internal.Table' t) ks =
-    V.map toLookupResult <$>
-    Internal.lookups (resolve @v Proxy) (V.map Internal.serialiseKey ks) t
-  where
-    toLookupResult (Just e) = case e of
-      Entry.Insert v            -> Found (Internal.deserialiseValue v)
-      Entry.InsertWithBlob v br -> FoundWithBlob (Internal.deserialiseValue v)
-                                                 (BlobRef br)
-      Entry.Mupdate v           -> Found (Internal.deserialiseValue v)
-      Entry.Delete              -> NotFound
-    toLookupResult Nothing = NotFound
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Table m k v b ->
+  Vector k ->
+  m (Vector (LookupResult v (BlobRef m b)))
+lookups (Table table :: Table m k v b) keys = do
+  maybeEntries <- Internal.lookups (_getResolveSerialisedValue (Proxy @v)) (fmap Internal.serialiseKey keys) table
+  pure $ maybe NotFound entryToLookupResult <$> maybeEntries
+ where
+  entryToLookupResult = \case
+    Entry.Insert !v -> Found (Internal.deserialiseValue v)
+    Entry.InsertWithBlob !v !b -> FoundWithBlob (Internal.deserialiseValue v) (BlobRef b)
+    Entry.Mupdate !v -> Found (Internal.deserialiseValue v)
+    Entry.Delete -> NotFound
 
-data QueryResult k v b =
-    FoundInQuery         !k !v
-  | FoundInQueryWithBlob !k !v !b
+data Entry k v b
+  = Entry !k !v
+  | EntryWithBlob !k !v !b
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
-instance Bifunctor (QueryResult k) where
+instance (NFData k, NFData v, NFData b) => NFData (Entry k v b) where
+  rnf :: Entry k v b -> ()
+  rnf = \case
+    Entry k v -> rnf k `seq` rnf v
+    EntryWithBlob k v b -> rnf k `seq` rnf v `seq` rnf b
+
+instance Bifunctor (Entry k) where
+  bimap :: (v -> v') -> (b -> b') -> Entry k v b -> Entry k v' b'
   bimap f g = \case
-      FoundInQuery k v           -> FoundInQuery k (f v)
-      FoundInQueryWithBlob k v b -> FoundInQueryWithBlob k (f v) (g b)
+    Entry k v -> Entry k (f v)
+    EntryWithBlob k v b -> EntryWithBlob k (f v) (g b)
 
-{-# SPECIALISE rangeLookup ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => Table IO k v b
-  -> Range k
-  -> IO (V.Vector (QueryResult k v (BlobRef IO b))) #-}
+{- |
+Look up a batch of values associated with keys in the given range.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B} + b)\),
+where the variable \(b\) refers to the length of the /output/ vector.
+
+Range lookups can be performed concurrently from multiple Haskell threads.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableCorruptedError']:
+    If the table data is corrupted.
+-}
+{-# SPECIALISE
+  rangeLookup ::
+    (SerialiseKey k, ResolveValue v) =>
+    Table IO k v b ->
+    Range k ->
+    IO (Vector (Entry k v (BlobRef IO b)))
+  #-}
 rangeLookup ::
-     forall m k v b. (
-       IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , ResolveValue v
-     )
-  => Table m k v b
-  -> Range k
-  -> m (V.Vector (QueryResult k v (BlobRef m b)))
-rangeLookup (Internal.Table' t) range =
-    Internal.rangeLookup (resolve @v Proxy) (Internal.serialiseKey <$> range) t $ \k v mblob ->
-      toQueryResult
-        (Internal.deserialiseKey k)
-        (Internal.deserialiseValue v)
-        (BlobRef <$> mblob)
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Table m k v b ->
+  Range k ->
+  m (Vector (Entry k v (BlobRef m b)))
+rangeLookup (Table table :: Table m k v b) range =
+  Internal.rangeLookup (_getResolveSerialisedValue (Proxy @v)) (Internal.serialiseKey <$> range) table $ \ !k !v -> \case
+    Just !b -> EntryWithBlob (Internal.deserialiseKey k) (Internal.deserialiseValue v) (BlobRef b)
+    Nothing -> Entry (Internal.deserialiseKey k) (Internal.deserialiseValue v)
 
-{-------------------------------------------------------------------------------
-  Cursor
--------------------------------------------------------------------------------}
+--------------------------------------------------------------------------------
+-- Updates
+--------------------------------------------------------------------------------
 
-type Cursor :: (Type -> Type) -> Type -> Type -> Type -> Type
-type Cursor = Internal.Cursor'
+{- |
+Insert associates the given value and BLOB with the given key in the table.
 
-{-# SPECIALISE withCursor ::
-     ResolveValue v
-  => Table IO k v b
-  -> (Cursor IO k v b -> IO a)
-  -> IO a #-}
-withCursor ::
-     forall m k v b a.
-     (IOLike m, ResolveValue v)
-  => Table m k v b
-  -> (Cursor m k v b -> m a)
-  -> m a
-withCursor (Internal.Table' t) action =
-    Internal.withCursor (resolve (Proxy @v)) Internal.NoOffsetKey t (action . Internal.Cursor')
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  print =<< LSMT.lookup table 0
+:}
+Found (Value "Hello")
 
-{-# SPECIALISE withCursorAtOffset ::
-     (SerialiseKey k, ResolveValue v)
-  => k
-  -> Table IO k v b
-  -> (Cursor IO k v b -> IO a)
-  -> IO a #-}
-withCursorAtOffset ::
-     forall m k v b a.
-     ( IOLike m
-     , SerialiseKey k
-     , ResolveValue v
-     )
-  => k
-  -> Table m k v b
-  -> (Cursor m k v b -> m a)
-  -> m a
-withCursorAtOffset offset (Internal.Table' t) action =
-    Internal.withCursor (resolve (Proxy @v)) (Internal.OffsetKey (Internal.serialiseKey offset)) t $
-      action . Internal.Cursor'
+Insert may optionally associate a BLOB value with the given key.
 
-{-# SPECIALISE newCursor ::
-     ResolveValue v
-  => Table IO k v b
-  -> IO (Cursor IO k v b) #-}
-newCursor ::
-     forall m k v b.
-     (IOLike m, ResolveValue v)
-  => Table m k v b
-  -> m (Cursor m k v b)
-newCursor (Internal.Table' t) =
-    Internal.Cursor' <$!> Internal.newCursor (resolve (Proxy @v)) Internal.NoOffsetKey t
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" (Just "World")
+  print
+    =<< traverse (retrieveBlob session)
+    =<< LSMT.lookup table 0
+:}
+FoundWithBlob (Value "Hello") (Blob "World")
 
-{-# SPECIALISE newCursorAtOffset ::
-     (SerialiseKey k, ResolveValue v)
-  => k
-  -> Table IO k v b
-  -> IO (Cursor IO k v b) #-}
-newCursorAtOffset ::
-     forall m k v b.
-     ( IOLike m
-     , SerialiseKey k
-     , ResolveValue v
-     )
-  => k
-  -> Table m k v b
-  -> m (Cursor m k v b)
-newCursorAtOffset offset (Internal.Table' t) =
-    Internal.Cursor' <$!>
-      Internal.newCursor (resolve (Proxy @v)) (Internal.OffsetKey (Internal.serialiseKey offset)) t
+Insert overwrites any value and BLOB previously associated with the given key,
+even if the given BLOB is 'Nothing'.
 
-{-# SPECIALISE closeCursor ::
-     Cursor IO k v b
-  -> IO () #-}
-closeCursor ::
-     IOLike m
-  => Cursor m k v b
-  -> m ()
-closeCursor (Internal.Cursor' c) = Internal.closeCursor c
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" (Just "World")
+  LSMT.insert table 0 "Goodbye" Nothing
+  print
+    =<< traverse (retrieveBlob session)
+    =<< LSMT.lookup table 0
+:}
+Found (Value "Goodbye")
 
-{-# SPECIALISE readCursor ::
-     (SerialiseKey k, SerialiseValue v, ResolveValue v)
-  => Int
-  -> Cursor IO k v b
-  -> IO (V.Vector (QueryResult k v (BlobRef IO b))) #-}
-readCursor ::
-     forall m k v b. (
-       IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , ResolveValue v
-     )
-  => Int
-  -> Cursor m k v b
-  -> m (V.Vector (QueryResult k v (BlobRef m b)))
-readCursor n (Internal.Cursor' c) =
-    Internal.readCursor (resolve (Proxy @v)) n c $ \k v mblob ->
-      toQueryResult
-        (Internal.deserialiseKey k)
-        (Internal.deserialiseValue v)
-        (BlobRef <$> mblob)
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-toQueryResult :: k -> v -> Maybe b -> QueryResult k v b
-toQueryResult k v = \case
-    Nothing    -> FoundInQuery k v
-    Just b  -> FoundInQueryWithBlob k v b
+['MergePolicyLazyLevelling']:
+    \(O(\log_T \frac{n}{B})\).
 
-{-------------------------------------------------------------------------------
-  Table updates
--------------------------------------------------------------------------------}
+Throws the following exceptions:
 
-data Update v b =
-    Insert !v !(Maybe b)
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+{-# SPECIALISE
+  insert ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    k ->
+    v ->
+    Maybe b ->
+    IO ()
+  #-}
+insert ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  k ->
+  v ->
+  Maybe b ->
+  m ()
+insert table k v b =
+  inserts table (V.singleton (k, v, b))
+
+{- |
+Variant of 'insert' for batch insertions.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \: \log_T \frac{n}{B})\).
+
+The variable \(b\) refers to the length of the input vector.
+
+The following property holds in the absence of races:
+
+prop> inserts table entries = traverse_ (uncurry $ insert table) entries
+-}
+{-# SPECIALISE
+  inserts ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    Vector (k, v, Maybe b) ->
+    IO ()
+  #-}
+inserts ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  Vector (k, v, Maybe b) ->
+  m ()
+inserts table entries =
+  updates table (fmap (\(k, v, mb) -> (k, Insert v mb)) entries)
+
+{- |
+If the given key is not a member of the table, 'upsert' associates the given value with the given key in the table.
+Otherwise, 'upsert' updates the value associated with the given key by combining it with the given value using 'resolve'.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.upsert table 0 "Hello"
+  LSMT.upsert table 0 "World"
+  print =<< LSMT.lookup table 0
+:}
+Found (Value "Hello World")
+
+__Warning:__
+Upsert deletes any BLOB previously associated with the given key.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" (Just "World")
+  LSMT.upsert table 0 "Goodbye"
+  print
+    =<< traverse (LSMT.retrieveBlob session)
+    =<< LSMT.lookup table 0
+:}
+Found (Value "Hello Goodbye")
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+
+The following property holds in the absence of races:
+
+@
+upsert table k v = do
+  r <- lookup table k
+  let v' = maybe v (resolve v) (getValue r)
+  insert table k v' Nothing
+@
+-}
+{-# SPECIALISE
+  mupsert ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    k ->
+    v ->
+    IO ()
+  #-}
+mupsert ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  k ->
+  v ->
+  m ()
+mupsert table k v =
+  mupserts table (V.singleton (k, v))
+
+{- |
+Variant of 'mupsert' for batch insertions.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \: \log_T \frac{n}{B})\).
+
+The variable \(b\) refers to the length of the input vector.
+
+The following property holds in the absence of races:
+
+prop> mupserts table entries = traverse_ (uncurry $ mupsert table) entries
+-}
+{-# SPECIALISE
+  mupserts ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    Vector (k, v) ->
+    IO ()
+  #-}
+mupserts ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  Vector (k, v) ->
+  m ()
+mupserts table entries =
+  updates table (second Mupsert <$> entries)
+
+{- |
+Delete a key from the table.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.delete table 0
+  print =<< LSMT.lookup table 0
+:}
+NotFound
+
+If the key is not a member of the table, the table is left unchanged.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.delete table 1
+  print =<< LSMT.lookup table 0
+:}
+Found (Value "Hello")
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+{-# SPECIALISE
+  delete ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    k ->
+    IO ()
+  #-}
+delete ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  k ->
+  m ()
+delete table k =
+  deletes table (V.singleton k)
+
+{- |
+Variant of 'delete' for batch deletions.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \: \log_T \frac{n}{B})\).
+
+The variable \(b\) refers to the length of the input vector.
+
+The following property holds in the absence of races:
+
+prop> deletes table keys = traverse_ (delete table) keys
+-}
+{-# SPECIALISE
+  deletes ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    Vector k ->
+    IO ()
+  #-}
+deletes ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  Vector k ->
+  m ()
+deletes table entries =
+  updates table (fmap (,Delete) entries)
+
+type Update :: Type -> Type -> Type
+data Update v b
+  = Insert !v !(Maybe b)
   | Delete
   | Mupsert !v
   deriving stock (Show, Eq)
 
 instance (NFData v, NFData b) => NFData (Update v b) where
-  rnf Delete       = ()
-  rnf (Insert v b) = rnf v `seq` rnf b
-  rnf (Mupsert v)  = rnf v
+  rnf :: Update v b -> ()
+  rnf = \case
+    Insert v mb -> rnf v `seq` rnf mb
+    Delete -> ()
+    Mupsert v -> rnf v
 
-{-# SPECIALISE updates ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue b, ResolveValue v)
-  => Table IO k v b
-  -> V.Vector (k, Update v b)
-  -> IO () #-}
+{- |
+Update generalises 'insert', 'delete', and 'upsert'.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(\log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+
+The following properties hold:
+
+prop> update table k (Insert v mb) = insert table k v mb
+prop> update table k Delete = delete table k
+prop> update table k (Upsert v) = upsert table k v
+-}
+{-# SPECIALISE
+  update ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    k ->
+    Update v b ->
+    IO ()
+  #-}
+update ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  k ->
+  Update v b ->
+  m ()
+update table k mv =
+  updates table (V.singleton (k, mv))
+
+{- |
+Variant of 'update' for batch updates.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(b \: \log_T \frac{n}{B})\).
+
+The variable \(b\) refers to the length of the input vector.
+
+The following property holds in the absence of races:
+
+prop> updates table entries = traverse_ (uncurry $ update table) entries
+-}
+{-# SPECIALISE
+  updates ::
+    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    Table IO k v b ->
+    Vector (k, Update v b) ->
+    IO ()
+  #-}
 updates ::
-     forall m k v b. (
-       IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
-     )
-  => Table m k v b
-  -> V.Vector (k, Update v b)
-  -> m ()
-updates (Internal.Table' t) es = do
-    Internal.updates (resolve @v Proxy) (V.mapStrict serialiseEntry es) t
-  where
-    serialiseEntry = bimap Internal.serialiseKey serialiseOp
-    serialiseOp = bimap Internal.serialiseValue Internal.serialiseBlob
-                . updateToEntry
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  Table m k v b ->
+  Vector (k, Update v b) ->
+  m ()
+updates (Table table :: Table m k v b) entries =
+  Internal.updates (_getResolveSerialisedValue (Proxy @v)) (serialiseEntry <$> entries) table
+ where
+  serialiseEntry (k, u) = (Internal.serialiseKey k, serialiseUpdate u)
+  serialiseUpdate = \case
+    Insert v (Just b) -> Entry.InsertWithBlob (Internal.serialiseValue v) (Internal.serialiseBlob b)
+    Insert v Nothing -> Entry.Insert (Internal.serialiseValue v)
+    Delete -> Entry.Delete
+    Mupsert v -> Entry.Mupdate (Internal.serialiseValue v)
 
-    updateToEntry :: Update v b -> Entry.Entry v b
-    updateToEntry = \case
-        Insert v Nothing  -> Entry.Insert v
-        Insert v (Just b) -> Entry.InsertWithBlob v b
-        Delete            -> Entry.Delete
-        Mupsert v         -> Entry.Mupdate v
+--------------------------------------------------------------------------------
+-- Duplication
+--------------------------------------------------------------------------------
 
-{-# SPECIALISE inserts ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue b, ResolveValue v)
-  => Table IO k v b
-  -> V.Vector (k, v, Maybe b)
-  -> IO () #-}
-inserts ::
-     ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
-     )
-  => Table m k v b
-  -> V.Vector (k, v, Maybe b)
-  -> m ()
-inserts t = updates t . fmap (\(k, v, b) -> (k, Insert v b))
+{- |
+Run an action with access to the duplicate of a table.
 
-{-# SPECIALISE deletes ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue b, ResolveValue v)
-  => Table IO k v b
-  -> V.Vector k
-  -> IO () #-}
-deletes ::
-     ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
-     )
-  => Table m k v b
-  -> V.Vector k
-  -> m ()
-deletes t = updates t . fmap (,Delete)
+The duplicate is an independent copy of the given table.
+Subsequent updates to the original table do not affect the duplicate, and vice versa.
 
-{-# SPECIALISE mupserts ::
-     (SerialiseKey k, SerialiseValue v, SerialiseValue b, ResolveValue v)
-  => Table IO k v b
-  -> V.Vector (k, v)
-  -> IO () #-}
-mupserts ::
-     ( IOLike m
-     , SerialiseKey k
-     , SerialiseValue v
-     , SerialiseValue b
-     , ResolveValue v
-     )
-  => Table m k v b
-  -> V.Vector (k, v)
-  -> m ()
-mupserts t = updates t . fmap (second Mupsert)
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.withDuplicate table $ \table' -> do
+    print =<< LSMT.lookup table' 0
+    LSMT.insert table' 0 "Goodbye" Nothing
+    print =<< LSMT.lookup table' 0
+  LSMT.lookup table 0
+  print =<< LSMT.lookup table 0
+:}
+Found (Value "Hello")
+Found (Value "Goodbye")
+Found (Value "Hello")
 
-{-# SPECIALISE retrieveBlobs ::
-     SerialiseValue b
-  => Session IO
-  -> V.Vector (BlobRef IO b)
-  -> IO (V.Vector b) #-}
-retrieveBlobs ::
-     ( IOLike m
-     , SerialiseValue b
-     )
-  => Session m
-  -> V.Vector (BlobRef m b)
-  -> m (V.Vector b)
-retrieveBlobs (Internal.Session' (sesh :: Internal.Session m h)) refs =
-    V.map Internal.deserialiseBlob <$>
-      (Internal.retrieveBlobs sesh =<< V.imapM checkBlobRefType refs)
-  where
-    checkBlobRefType _ (BlobRef (ref :: Internal.WeakBlobRef m h'))
-      | Just Refl <- eqT @h @h' = pure ref
-    checkBlobRefType i _ = throwIO (Internal.ErrBlobRefInvalid i)
+The worst-case disk I\/O complexity of this operation is \(O(0)\).
 
-{-------------------------------------------------------------------------------
-  Snapshots
--------------------------------------------------------------------------------}
+This function is exception-safe for both synchronous and asynchronous exceptions.
 
-{-# SPECIALISE createSnapshot ::
-     Common.SnapshotLabel
-  -> Common.SnapshotName
-  -> Table IO k v b
-  -> IO () #-}
-createSnapshot :: forall m k v b.
-     IOLike m
-  => Common.SnapshotLabel
-  -> Common.SnapshotName
-  -> Table m k v b
-  -> m ()
-createSnapshot label snap (Internal.Table' t) =
-    void $ Internal.createSnapshot snap label Internal.SnapFullTable t
+It is recommended to use this function instead of 'duplicate' and 'closeTable'.
 
-{-# SPECIALISE openSnapshot ::
-     ResolveValue v
-  => Session IO
-  -> Common.OverrideDiskCachePolicy
-  -> Common.SnapshotLabel
-  -> Common.SnapshotName
-  -> IO (Table IO k v b ) #-}
-openSnapshot :: forall m k v b.
-     ( IOLike m
-     , ResolveValue v
-     )
-  => Session m
-  -> Common.OverrideDiskCachePolicy
-  -> Common.SnapshotLabel
-  -> Common.SnapshotName
-  -> m (Table m k v b)
-openSnapshot (Internal.Session' sesh) policyOveride label snap =
-    Internal.Table' <$!>
-      Internal.openSnapshot
-        sesh
-        policyOveride
-        label
-        Internal.SnapFullTable
-        snap
-        (resolve (Proxy @v))
+Throws the following exceptions:
 
-{-------------------------------------------------------------------------------
-  Mutiple writable tables
--------------------------------------------------------------------------------}
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+{-# SPECIALISE
+  withDuplicate ::
+    Table IO k v b ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withDuplicate ::
+  forall m k v b a.
+  (IOLike m) =>
+  Table m k v b ->
+  (Table m k v b -> m a) ->
+  m a
+withDuplicate table =
+  bracket (duplicate table) closeTable
 
-{-# SPECIALISE duplicate ::
-     Table IO k v b
-  -> IO (Table IO k v b) #-}
+{- |
+Duplicate a table.
+
+The duplicate is an independent copy of the given table.
+Subsequent updates to the original table do not affect the duplicate, and vice versa.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  bracket (LSMT.duplicate table) LSMT.closeTable $ \table' -> do
+    print =<< LSMT.lookup table' 0
+    LSMT.insert table' 0 "Goodbye" Nothing
+    print =<< LSMT.lookup table' 0
+  LSMT.lookup table 0
+  print =<< LSMT.lookup table 0
+:}
+Found (Value "Hello")
+Found (Value "Goodbye")
+Found (Value "Hello")
+
+The worst-case disk I\/O complexity of this operation is \(O(0)\).
+
+__Warning:__ The duplicate must be independently closed using 'closeTable'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+{-# SPECIALISE
+  duplicate ::
+    Table IO k v b ->
+    IO (Table IO k v b)
+  #-}
 duplicate ::
-     IOLike m
-  => Table m k v b
-  -> m (Table m k v b)
-duplicate (Internal.Table' t) = Internal.Table' <$!> Internal.duplicate t
+  forall m k v b.
+  (IOLike m) =>
+  Table m k v b ->
+  m (Table m k v b)
+duplicate (Table table) =
+  Table <$> Internal.duplicate table
 
-{-------------------------------------------------------------------------------
-  Table union
--------------------------------------------------------------------------------}
+--------------------------------------------------------------------------------
+-- Union
+--------------------------------------------------------------------------------
 
-{-# SPECIALISE union ::
-     Table IO k v b
-  -> Table IO k v b
-  -> IO (Table IO k v b) #-}
-union :: forall m k v b.
-     IOLike m
-  => Table m k v b
-  -> Table m k v b
-  -> m (Table m k v b)
-union t1 t2 = unions $ t1 :| [t2]
+{- |
+Run an action with access to a table that contains the union of the entries of the given tables.
 
-{-# SPECIALISE unions ::
-     NonEmpty (Table IO k v b)
-  -> IO (Table IO k v b) #-}
-unions :: forall m k v b.
-     IOLike m
-  => NonEmpty (Table m k v b)
-  -> m (Table m k v b)
-unions (t :| ts) =
-    case t of
-      Internal.Table' (t' :: Internal.Table m h) -> do
-        ts' <- zipWithM (checkTableType (proxy# @h)) [1..] ts
-        Internal.Table' <$> Internal.unions (t' :| ts')
-  where
-    checkTableType ::
-         forall h. Typeable h
-      => Proxy# h
-      -> Int
-      -> Table m k v b
-      -> m (Internal.Table m h)
-    checkTableType _ i (Internal.Table' (t' :: Internal.Table m h'))
-      | Just Refl <- eqT @h @h' = pure t'
-      | otherwise = throwIO $ Common.ErrTableUnionHandleTypeMismatch 0 (typeRep $ Proxy @h) i (typeRep $ Proxy @h')
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
-{-# SPECIALISE remainingUnionDebt :: Table IO k v b -> IO UnionDebt #-}
-remainingUnionDebt :: IOLike m => Table m k v b -> m UnionDebt
-remainingUnionDebt (Internal.Table' t) =
-    (\(Internal.UnionDebt x) -> UnionDebt x) <$>
-      Internal.remainingUnionDebt t
+This function is exception-safe for both synchronous and asynchronous exceptions.
 
-{-# SPECIALISE supplyUnionCredits ::
-     ResolveValue v => Table IO k v b -> UnionCredits -> IO UnionCredits #-}
+It is recommended to use this function instead of 'union' and 'closeTable'.
+
+__Warning:__ Both input tables must be from the same 'Session'.
+
+__Warning:__ This is a relatively expensive operation that may take some time to complete.
+See 'incrementalUnion' for an incremental alternative.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableUnionNotCompatibleError']:
+    If both tables are not from the same 'Session'.
+-}
+{-# SPECIALISE
+  withUnion ::
+    (ResolveValue v) =>
+    Table IO k v b ->
+    Table IO k v b ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withUnion ::
+  forall m k v b a.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  Table m k v b ->
+  Table m k v b ->
+  (Table m k v b -> m a) ->
+  m a
+withUnion table1 table2 =
+  bracket (table1 `union` table2) closeTable
+
+{- |
+Variant of 'withUnions' that takes any number of tables.
+-}
+{-# SPECIALISE
+  withUnions ::
+    (ResolveValue v) =>
+    NonEmpty (Table IO k v b) ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withUnions ::
+  forall m k v b a.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  NonEmpty (Table m k v b) ->
+  (Table m k v b -> m a) ->
+  m a
+withUnions tables =
+  bracket (unions tables) closeTable
+
+{- |
+Create a table that contains the left-biased union of the entries of the given tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
+
+__Warning:__ The new table must be independently closed using 'closeTable'.
+
+__Warning:__ Both input tables must be from the same 'Session'.
+
+__Warning:__ This is a relatively expensive operation that may take some time to complete.
+See 'incrementalUnion' for an incremental alternative.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableUnionNotCompatibleError']:
+    If both tables are not from the same 'Session'.
+-}
+{-# SPECIALISE
+  union ::
+    (ResolveValue v) =>
+    Table IO k v b ->
+    Table IO k v b ->
+    IO (Table IO k v b)
+  #-}
+union ::
+  forall m k v b.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  Table m k v b ->
+  Table m k v b ->
+  m (Table m k v b)
+union table1 table2 =
+  unions (table1 :| table2 : [])
+
+{- |
+Variant of 'union' that takes any number of tables.
+-}
+{-# SPECIALISE
+  unions ::
+    (ResolveValue v) =>
+    NonEmpty (Table IO k v b) ->
+    IO (Table IO k v b)
+  #-}
+unions ::
+  forall m k v b.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  NonEmpty (Table m k v b) ->
+  m (Table m k v b)
+unions tables = do
+  bracketOnError (incrementalUnions tables) closeTable $ \table -> do
+    UnionDebt debt <- remainingUnionDebt table
+    UnionCredits leftovers <- supplyUnionCredits table (UnionCredits debt)
+    assert (leftovers >= 0) $ pure ()
+    pure table
+
+{- |
+Run an action with access to a table that incrementally computes the union of the given tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'incrementalUnion' and 'closeTable'.
+
+The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
+The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
+While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
+
+__Warning:__ Both input tables must be from the same 'Session'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableUnionNotCompatibleError']:
+    If both tables are not from the same 'Session'.
+-}
+{-# SPECIALISE
+  withIncrementalUnion ::
+    Table IO k v b ->
+    Table IO k v b ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withIncrementalUnion ::
+  forall m k v b a.
+  (IOLike m) =>
+  Table m k v b ->
+  Table m k v b ->
+  (Table m k v b -> m a) ->
+  m a
+withIncrementalUnion table1 table2 =
+  bracket (incrementalUnion table1 table2) closeTable
+
+{- |
+Variant of 'withIncrementalUnion' that takes any number of tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the number of input tables.
+-}
+{-# SPECIALISE
+  withIncrementalUnions ::
+    NonEmpty (Table IO k v b) ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withIncrementalUnions ::
+  forall m k v b a.
+  (IOLike m) =>
+  NonEmpty (Table m k v b) ->
+  (Table m k v b -> m a) ->
+  m a
+withIncrementalUnions tables =
+  bracket (incrementalUnions tables) closeTable
+
+{- |
+Create a table that incrementally computes the union of the given tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
+The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
+While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
+
+__Warning:__ The new table must be independently closed using 'closeTable'.
+
+__Warning:__ Both input tables must be from the same 'Session'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['TableUnionNotCompatibleError']:
+    If both tables are not from the same 'Session'.
+-}
+{-# SPECIALISE
+  incrementalUnion ::
+    Table IO k v b ->
+    Table IO k v b ->
+    IO (Table IO k v b)
+  #-}
+incrementalUnion ::
+  forall m k v b.
+  (IOLike m) =>
+  Table m k v b ->
+  Table m k v b ->
+  m (Table m k v b)
+incrementalUnion table1 table2 = do
+  incrementalUnions (table1 :| table2 : [])
+
+{- |
+Variant of 'incrementalUnion' for any number of tables.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the number of input tables.
+-}
+{-# SPECIALISE
+  incrementalUnions ::
+    NonEmpty (Table IO k v b) ->
+    IO (Table IO k v b)
+  #-}
+incrementalUnions ::
+  forall m k v b.
+  (IOLike m) =>
+  NonEmpty (Table m k v b) ->
+  m (Table m k v b)
+incrementalUnions tables@(Table _ :| _) =
+  _withInternalTables tables (fmap Table . Internal.unions)
+
+-- | Internal helper. Run an action with access to the underlying tables.
+{-# SPECIALISE
+  _withInternalTables ::
+    NonEmpty (Table IO k v b) ->
+    (forall h. (Typeable h) => NonEmpty (Internal.Table IO h) -> IO a) ->
+    IO a
+  #-}
+_withInternalTables ::
+  forall m k v b a.
+  (IOLike m) =>
+  NonEmpty (Table m k v b) ->
+  (forall h. (Typeable h) => NonEmpty (Internal.Table m h) -> m a) ->
+  m a
+_withInternalTables (Table (table :: Internal.Table m h) :| tables) action =
+  action . (table :|) =<< traverse assertTableType (zip [1 ..] tables)
+ where
+  assertTableType :: (Int, Table m k v b) -> m (Internal.Table m h)
+  assertTableType (i, Table (table' :: Internal.Table m h'))
+    | Just Refl <- eqT @h @h' = pure table'
+    | otherwise = throwIO $ ErrTableUnionHandleTypeMismatch 0 (typeRep $ Proxy @h) i (typeRep $ Proxy @h')
+
+{- |
+Get the amount of remaining union debt.
+This includes the union debt of any table that was part of the union's input.
+
+The worst-case disk I\/O complexity of this operation is \(O\(1)\).
+-}
+{-# SPECIALISE
+  remainingUnionDebt ::
+    Table IO k v b ->
+    IO UnionDebt
+  #-}
+remainingUnionDebt ::
+  forall m k v b.
+  (IOLike m) =>
+  Table m k v b ->
+  m UnionDebt
+remainingUnionDebt (Table table) =
+  Internal.remainingUnionDebt table
+
+{- |
+Supply the given amount of union credits.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the amount of credits supplied.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+{-# SPECIALISE
+  supplyUnionCredits ::
+    (ResolveValue v) =>
+    Table IO k v b ->
+    UnionCredits ->
+    IO UnionCredits
+  #-}
 supplyUnionCredits ::
-     forall m k v b. (IOLike m, ResolveValue v)
-  => Table m k v b
-  -> UnionCredits
-  -> m UnionCredits
-supplyUnionCredits (Internal.Table' t) (UnionCredits credits) =
-    (\(Internal.UnionCredits x) -> UnionCredits x) <$>
-      Internal.supplyUnionCredits
-        (resolve (Proxy @v))
-        t
-        (Internal.UnionCredits credits)
+  forall m k v b.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  Table m k v b ->
+  UnionCredits ->
+  m UnionCredits
+supplyUnionCredits (Table table :: Table m k v b) credits =
+  Internal.supplyUnionCredits (_getResolveSerialisedValue (Proxy @v)) table credits
 
-{-------------------------------------------------------------------------------
-  Monoidal value resolution
--------------------------------------------------------------------------------}
+--------------------------------------------------------------------------------
+-- Blob References
+--------------------------------------------------------------------------------
 
--- | A class to specify how to resolve/merge values when using monoidal updates
--- ('Mupsert'). This is required for merging entries during compaction and also
--- for doing lookups, resolving multiple entries of the same key on the fly.
--- The class has some laws, which should be tested (e.g. with QuickCheck).
---
--- It is okay to assume that the input bytes can be deserialised using
--- 'deserialiseValue', as they are produced by either 'serialiseValue' or
--- 'resolveValue' itself, which are required to produce deserialisable output.
---
--- Prerequisites:
---
--- * [Valid Output] The result of resolution should always be deserialisable.
---   See 'resolveValueValidOutput'.
--- * [Associativity] Resolving values should be associative.
---   See 'resolveValueAssociativity'.
---
--- Future opportunities for optimisations:
---
--- * Include a function that determines whether it is safe to remove an 'Update'
---   from the last level of an LSM tree.
---
--- * Include a function @v -> RawBytes -> RawBytes@, which can then be used when
---   inserting into the write buffer. Currently, using 'resolveDeserialised'
---   means that the inserted value is serialised and (if there is another value
---   with the same key in the write buffer) immediately deserialised again.
---
--- TODO: The laws depend on 'SerialiseValue', should we make it a superclass?
--- TODO: should we additionally require Totality (for any input 'RawBytes',
---       resolution should successfully provide a result)? This could reduce the
---       risk of encountering errors during a run merge.
-class ResolveValue v where
-  resolveValue :: Proxy v -> RB.RawBytes -> RB.RawBytes -> RB.RawBytes
+-- NOTE: 'BlobRef' is defined in 'Database.LSMTree.Internal.Types'
 
--- | Test the __Valid Output__ law for the 'ResolveValue' class
-resolveValueValidOutput :: forall v.
-     (SerialiseValue v, ResolveValue v, NFData v)
-  => v -> v -> Bool
-resolveValueValidOutput (serialiseValue -> x) (serialiseValue -> y) =
-    (deserialiseValue (resolveValue (Proxy @v) x y) :: v) `deepseq` True
+{- |
+Retrieve the blob value from a blob reference.
 
--- | Test the __Associativity__ law for the 'ResolveValue' class
-resolveValueAssociativity :: forall v.
-     (SerialiseValue v, ResolveValue v)
-  => v -> v -> v -> Bool
-resolveValueAssociativity (serialiseValue -> x) (serialiseValue -> y) (serialiseValue -> z) =
-    x <+> (y <+> z) == (x <+> y) <+> z
-  where
-    (<+>) = resolveValue (Proxy @v)
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
--- | A helper function to implement 'resolveValue' by operating on the
--- deserialised representation. Note that especially for simple types it
--- should be possible to provide a more efficient implementation by directly
--- operating on the 'RawBytes'.
---
--- This function could potentially be used to provide a default implementation
--- for 'resolveValue', but it's probably best to be explicit about instances.
---
--- To satisfy the prerequisites of 'ResolveValue', the function provided to
--- 'resolveDeserialised' should itself satisfy some properties:
---
--- * [Associativity] The provided function should be associative.
--- * [Totality] The provided function should be total.
-resolveDeserialised :: forall v.
-     SerialiseValue v
-  => (v -> v -> v) -> Proxy v -> RB.RawBytes -> RB.RawBytes -> RB.RawBytes
-resolveDeserialised f _ x y =
-    serialiseValue (f (deserialiseValue x) (deserialiseValue y))
+__Warning:__ A blob reference is /not stable/. Any operation that modifies the table,
+cursor, or session that corresponds to a blob reference may cause it to be invalidated.
 
-resolve ::  forall v. ResolveValue v => Proxy v -> Internal.ResolveSerialisedValue
-resolve = coerce . resolveValue
+Throws the following exceptions:
 
--- | Mostly to give an example instance (plus the property tests for it).
--- Additionally, this instance for 'Sum' provides a nice monoidal, numerical
--- aggregator.
-instance (Num a, SerialiseValue a) => ResolveValue (Sum a) where
-  resolveValue = resolveDeserialised (+)
+['SessionClosedError']:
+    If the session is closed.
+['BlobRefInvalidError']:
+    If the blob reference has been invalidated.
+-}
+{-# SPECIALISE
+  retrieveBlob ::
+    (SerialiseValue b) =>
+    Session IO ->
+    BlobRef IO b ->
+    IO b
+  #-}
+retrieveBlob ::
+  forall m b.
+  (IOLike m, SerialiseValue b) =>
+  Session m ->
+  BlobRef m b ->
+  m b
+retrieveBlob session blobRef = do
+  blobs <- retrieveBlobs session (V.singleton blobRef)
+  pure $ V.head blobs
 
--- | Newtype wrapper for values, so that 'Mupsert's behave like 'Insert's.
---
--- If there is no intent to use 'Mupsert's, then the user still has to define a
--- 'ResolveValue' instance for their values, unless they use this newtype, which
--- provides a sensible default instance.
+{- |
+Variant of 'retrieveBlob' for batch retrieval.
+The batch of blob references corresponds in-order to the batch of results.
 
--- This wrapper can be used to give values a 'ResolveValue' instance that
--- resolves values as a 'Data.Semigroup.First' semigroup. 'ResolveValue' can be
--- used in conjunction with @deriving via@ to give the values an instance
--- directly, or the newtype can be used in the table/cursor type like @'Table' k
--- (ResolveAsFirst v) b@.
-newtype ResolveAsFirst v = ResolveAsFirst v
-  deriving stock (Show, Eq, Ord)
-  deriving newtype SerialiseValue
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the length of the input vector.
 
-instance ResolveValue (ResolveAsFirst v) where
-  resolveValue ::
-       Proxy (ResolveAsFirst v)
-    -> RB.RawBytes
-    -> RB.RawBytes
-    -> RB.RawBytes
-  resolveValue _ x _ = x
+The following property holds in the absence of races:
+
+prop> retrieveBlobs session blobRefs = traverse (retrieveBlob session) blobRefs
+-}
+{-# SPECIALISE
+  retrieveBlobs ::
+    (SerialiseValue b) =>
+    Session IO ->
+    Vector (BlobRef IO b) ->
+    IO (Vector b)
+  #-}
+retrieveBlobs ::
+  forall m b.
+  (IOLike m, SerialiseValue b) =>
+  Session m ->
+  Vector (BlobRef m b) ->
+  m (Vector b)
+retrieveBlobs (Session (session :: Internal.Session m h)) blobRefs = do
+  let numBlobRefs = V.length blobRefs
+  let blobRefNums = V.enumFromTo 0 (numBlobRefs - 1)
+  weakBlobRefs <- traverse assertBlobRefHandleType (V.zip blobRefNums blobRefs)
+  serialisedBlobs <- Internal.retrieveBlobs session weakBlobRefs
+  pure $ Internal.deserialiseBlob <$> serialisedBlobs
+ where
+  assertBlobRefHandleType :: (Int, BlobRef m b) -> m (Internal.WeakBlobRef m h)
+  assertBlobRefHandleType (i, BlobRef (weakBlobRef :: Internal.WeakBlobRef m h'))
+    | Just Refl <- eqT @h @h' = pure weakBlobRef
+    | otherwise = throwIO $ ErrBlobRefInvalid i
+
+--------------------------------------------------------------------------------
+-- Cursors
+--------------------------------------------------------------------------------
+
+-- NOTE: 'Cursor' is defined in 'Database.LSMTree.Internal.Types'
+
+{- |
+Run an action with access to a cursor.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'newCursor' and 'closeCursor'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+{-# SPECIALISE
+  withCursor ::
+    (ResolveValue v) =>
+    Table IO k v b ->
+    (Cursor IO k v b -> IO a) ->
+    IO a
+  #-}
+withCursor ::
+  forall m k v b a.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  Table m k v b ->
+  (Cursor m k v b -> m a) ->
+  m a
+withCursor (Table table) action =
+  Internal.withCursor (_getResolveSerialisedValue (Proxy @v)) Internal.NoOffsetKey table (action . Cursor)
+
+{- |
+Variant of 'withCursor' that starts at a given key.
+-}
+{-# SPECIALISE
+  withCursorAtOffset ::
+    (SerialiseKey k, ResolveValue v) =>
+    Table IO k v b ->
+    k ->
+    (Cursor IO k v b -> IO a) ->
+    IO a
+  #-}
+withCursorAtOffset ::
+  forall m k v b a.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Table m k v b ->
+  k ->
+  (Cursor m k v b -> m a) ->
+  m a
+withCursorAtOffset (Table table) offsetKey action =
+  Internal.withCursor (_getResolveSerialisedValue (Proxy @v)) (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table (action . Cursor)
+
+{- |
+Create a cursor for the given table.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+__Warning:__ Cursors hold open resources and must be closed using 'closeCursor'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+-}
+{-# SPECIALISE
+  newCursor ::
+    (ResolveValue v) =>
+    Table IO k v b ->
+    IO (Cursor IO k v b)
+  #-}
+newCursor ::
+  forall m k v b.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  Table m k v b ->
+  m (Cursor m k v b)
+newCursor (Table table) =
+  Cursor <$> Internal.newCursor (_getResolveSerialisedValue (Proxy @v)) Internal.NoOffsetKey table
+
+{- |
+Variant of 'newCursor' that starts at a given key.
+-}
+{-# SPECIALISE
+  newCursorAtOffset ::
+    (SerialiseKey k, ResolveValue v) =>
+    Table IO k v b ->
+    k ->
+    IO (Cursor IO k v b)
+  #-}
+newCursorAtOffset ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Table m k v b ->
+  k ->
+  m (Cursor m k v b)
+newCursorAtOffset (Table table) offsetKey =
+  Cursor <$> Internal.newCursor (_getResolveSerialisedValue (Proxy @v)) (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table
+
+{- |
+Close a cursor.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+Closing is idempotent, i.e., closing a closed cursor does nothing.
+All other operations on a closed cursor will throw an exception.
+-}
+{-# SPECIALISE
+  closeCursor ::
+    Cursor IO k v b ->
+    IO ()
+  #-}
+closeCursor ::
+  forall m k v b.
+  (IOLike m) =>
+  Cursor m k v b ->
+  m ()
+closeCursor (Cursor cursor) =
+  Internal.closeCursor cursor
+
+{- |
+Read the next table entry from the cursor.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['CursorClosedError']:
+    If the cursor is closed.
+-}
+{-# SPECIALISE
+  next ::
+    (SerialiseKey k, ResolveValue v) =>
+    Cursor IO k v b ->
+    IO (Maybe (Entry k v (BlobRef IO b)))
+  #-}
+next ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Cursor m k v b ->
+  m (Maybe (Entry k v (BlobRef m b)))
+next iterator = do
+  -- TODO: implement this function in terms of 'readEntry'
+  entries <- take 1 iterator
+  pure $ fst <$> V.uncons entries
+
+{- |
+Read the next batch of table entries from the cursor.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the length of the /output/ vector,
+which is /at most/ equal to the given number.
+In practice, the length of the output vector is only less than the given number
+once the cursor reaches the end of the table.
+
+The following property holds:
+
+prop> take n cursor = catMaybes <$> replicateM n (next cursor)
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['CursorClosedError']:
+    If the cursor is closed.
+-}
+{-# SPECIALISE
+  take ::
+    (SerialiseKey k, ResolveValue v) =>
+    Int ->
+    Cursor IO k v b ->
+    IO (Vector (Entry k v (BlobRef IO b)))
+  #-}
+take ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Int ->
+  Cursor m k v b ->
+  m (Vector (Entry k v (BlobRef m b)))
+take n (Cursor cursor :: Cursor m k v b) =
+  Internal.readCursor (_getResolveSerialisedValue (Proxy @v)) n cursor $ \ !k !v -> \case
+    Just !b -> EntryWithBlob (Internal.deserialiseKey k) (Internal.deserialiseValue v) (BlobRef b)
+    Nothing -> Entry (Internal.deserialiseKey k) (Internal.deserialiseValue v)
+
+{- |
+Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
+
+The worst-case disk I\/O complexity of this operation is \(O(b)\),
+where the variable \(b\) refers to the length of the /output/ vector,
+which is /at most/ equal to the given number.
+In practice, the length of the output vector is only less than the given number
+when the predicate returns false or the cursor reaches the end of the table.
+
+The following properties hold:
+
+prop> takeWhile n (const True) cursor = take n cursor
+prop> takeWhile n (const False) cursor = pure empty
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['CursorClosedError']:
+    If the cursor is closed.
+-}
+{-# SPECIALISE
+  takeWhile ::
+    (SerialiseKey k, ResolveValue v) =>
+    Int ->
+    (k -> Bool) ->
+    Cursor IO k v b ->
+    IO (Vector (Entry k v (BlobRef IO b)))
+  #-}
+takeWhile ::
+  forall m k v b.
+  (IOLike m) =>
+  (SerialiseKey k, ResolveValue v) =>
+  Int ->
+  (k -> Bool) ->
+  Cursor m k v b ->
+  m (Vector (Entry k v (BlobRef m b)))
+takeWhile n p (Cursor cursor :: Cursor m k v b) =
+  -- TODO: implement this function using a variant of 'readCursorWhile' that does not take the maximum batch size
+  Internal.readCursorWhile (_getResolveSerialisedValue (Proxy @v)) (p . Internal.deserialiseKey) n cursor $  \ !k !v -> \case
+    Just !b -> EntryWithBlob (Internal.deserialiseKey k) (Internal.deserialiseValue v) (BlobRef b)
+    Nothing -> Entry (Internal.deserialiseKey k) (Internal.deserialiseValue v)
+
+--------------------------------------------------------------------------------
+-- Snapshots
+--------------------------------------------------------------------------------
+
+{- |
+Save the current state of the table to disk as a snapshot under the given
+snapshot name. This is the /only/ mechanism that persists a table. Each snapshot
+must have a unique name, which may be used to restore the table from that snapshot
+using 'openTableFromSnapshot'.
+Saving a snapshot /does not/ close the table.
+
+Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
+However, it is not so cheap that one should use it after every operation.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['SnapshotExistsError']:
+    If a snapshot with the same name already exists.
+-}
+{-# SPECIALISE
+  saveSnapshot ::
+    SnapshotName ->
+    SnapshotLabel ->
+    Table IO k v b ->
+    IO ()
+  #-}
+saveSnapshot ::
+  forall m k v b.
+  (IOLike m) =>
+  SnapshotName ->
+  SnapshotLabel ->
+  Table m k v b ->
+  m ()
+saveSnapshot snapName snapLabel (Table table) =
+  -- TODO: remove SnapshotTableType
+  Internal.createSnapshot snapName snapLabel Internal.SnapFullTable table
+
+{- |
+Run an action with access to a table from a snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'openTableFromSnapshot' and 'closeTable'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['SnapshotDoesNotExistError']
+    If no snapshot with the given name exists.
+['SnapshotCorruptedError']:
+    If the snapshot data is corrupted.
+['SnapshotNotCompatibleError']:
+    If the snapshot has a different label or is a different table type.
+-}
+{-# SPECIALISE
+  withTableFromSnapshot ::
+    (ResolveValue v) =>
+    Session IO ->
+    SnapshotName ->
+    SnapshotLabel ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withTableFromSnapshot ::
+  forall m k v b a.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  Session m ->
+  SnapshotName ->
+  SnapshotLabel ->
+  (Table m k v b -> m a) ->
+  m a
+withTableFromSnapshot session snapName snapLabel =
+  bracket (openTableFromSnapshot session snapName snapLabel) closeTable
+
+{- |
+Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+-}
+{-# SPECIALISE
+  withTableFromSnapshotWith ::
+    forall k v b a.
+    (ResolveValue v) =>
+    OverrideDiskCachePolicy ->
+    Session IO ->
+    SnapshotName ->
+    SnapshotLabel ->
+    (Table IO k v b -> IO a) ->
+    IO a
+  #-}
+withTableFromSnapshotWith ::
+  forall m k v b a.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  OverrideDiskCachePolicy ->
+  Session m ->
+  SnapshotName ->
+  SnapshotLabel ->
+  (Table m k v b -> m a) ->
+  m a
+withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
+  bracket (openTableFromSnapshotWith tableConfigOverride session snapName snapLabel) closeTable
+
+{- |
+Open a table from a named snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
+
+__Warning:__ The new table must be independently closed using 'closeTable'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['SnapshotDoesNotExistError']
+    If no snapshot with the given name exists.
+['SnapshotCorruptedError']:
+    If the snapshot data is corrupted.
+['SnapshotNotCompatibleError']:
+    If the snapshot has a different label or is a different table type.
+-}
+{-# SPECIALISE
+  openTableFromSnapshot ::
+    forall k v b.
+    (ResolveValue v) =>
+    Session IO ->
+    SnapshotName ->
+    SnapshotLabel ->
+    IO (Table IO k v b)
+  #-}
+openTableFromSnapshot ::
+  forall m k v b.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  Session m ->
+  SnapshotName ->
+  SnapshotLabel ->
+  m (Table m k v b)
+openTableFromSnapshot session snapName snapLabel =
+  openTableFromSnapshotWith NoOverrideDiskCachePolicy session snapName snapLabel
+
+{- |
+Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+-}
+{-# SPECIALISE
+  openTableFromSnapshotWith ::
+    forall k v b.
+    (ResolveValue v) =>
+    OverrideDiskCachePolicy ->
+    Session IO ->
+    SnapshotName ->
+    SnapshotLabel ->
+    IO (Table IO k v b)
+  #-}
+openTableFromSnapshotWith ::
+  forall m k v b.
+  (IOLike m) =>
+  (ResolveValue v) =>
+  OverrideDiskCachePolicy ->
+  Session m ->
+  SnapshotName ->
+  SnapshotLabel ->
+  m (Table m k v b)
+openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
+  Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapFullTable snapName (_getResolveSerialisedValue (Proxy @v))
+
+{- |
+Delete the named snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['SnapshotDoesNotExistError']:
+    If no snapshot with the given name exists.
+-}
+{-# SPECIALISE
+  deleteSnapshot ::
+    Session IO ->
+    SnapshotName ->
+    IO ()
+  #-}
+deleteSnapshot ::
+  forall m.
+  (IOLike m) =>
+  Session m ->
+  SnapshotName ->
+  m ()
+deleteSnapshot (Session session) =
+  Internal.deleteSnapshot session
+
+{- |
+Check if the named snapshot exists.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+-}
+{-# SPECIALISE
+  doesSnapshotExist ::
+    Session IO ->
+    SnapshotName ->
+    IO Bool
+  #-}
+doesSnapshotExist ::
+  forall m.
+  (IOLike m) =>
+  Session m ->
+  SnapshotName ->
+  m Bool
+doesSnapshotExist (Session session) =
+  Internal.doesSnapshotExist session
+
+{- |
+List the names of all snapshots.
+
+The worst-case disk I\/O complexity of this operation is \(O(s)\),
+where \(s\) refers to the number of snapshots in the session.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+-}
+{-# SPECIALISE
+  listSnapshots ::
+    Session IO ->
+    IO [SnapshotName]
+  #-}
+listSnapshots ::
+  forall m.
+  (IOLike m) =>
+  Session m ->
+  m [SnapshotName]
+listSnapshots (Session session) =
+  Internal.listSnapshots session
+
+-- | Internal helper. Get 'resolveSerialised' at type 'ResolveSerialisedValue'.
+_getResolveSerialisedValue ::
+  forall v.
+  (ResolveValue v) =>
+  Proxy v ->
+  ResolveSerialisedValue
+_getResolveSerialisedValue = coerce . resolveSerialised

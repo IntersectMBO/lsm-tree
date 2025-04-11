@@ -67,7 +67,7 @@ description:
   *   The variable \(n\) refers to the number of /physical/ table entries.
       A /physical/ table entry is any key–operation pair, e.g., @Insert k v@ or @Delete k@, whereas a /logical/ table entry is determined by all physical entries with the same key.
       If the variable \(n\) is used to describe the complexity of an operation that involves multiple tables, it refers to the sum of all table entries.
-  *   The variable \(t\) refers to the number of open tables in the session.
+  *   The variable \(o\) refers to the number of open tables and cursors in the session.
   *   The variable \(s\) refers to the number of snapshots in the session.
   *   The variable \(b\) usually refers to the size of a batch of inputs\/outputs.
       Its precise meaning is explained for each occurrence.
@@ -87,7 +87,7 @@ description:
   +==========+========================+============================+================================================+
   | Session  | Create\/Open           | N\/A                       | \(O(1)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Close                  | @MergePolicyLazyLevelling@ | \(O(t \: T \: \log_T \frac{n}{B})\)            |
+  |          | Close                  | @MergePolicyLazyLevelling@ | \(O(o \: T \: \log_T \frac{n}{B})\)            |
   +----------+------------------------+----------------------------+------------------------------------------------+
   | Table    | Create                 | N\/A                       | \(O(1)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
@@ -314,8 +314,6 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Database.LSMTree
-    Database.LSMTree.Common
-    Database.LSMTree.Internal
     Database.LSMTree.Internal.Arena
     Database.LSMTree.Internal.Assertions
     Database.LSMTree.Internal.BitMath
@@ -363,7 +361,9 @@ library
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Snapshot
     Database.LSMTree.Internal.Snapshot.Codec
+    Database.LSMTree.Internal.Types
     Database.LSMTree.Internal.UniqCounter
+    Database.LSMTree.Internal.Unsafe
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.Vector.Growing

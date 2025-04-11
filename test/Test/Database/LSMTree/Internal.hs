@@ -17,11 +17,11 @@ import           Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.BlobRef
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Unsafe
 import qualified System.FS.API as FS
 import           Test.QuickCheck
 import           Test.Tasty
