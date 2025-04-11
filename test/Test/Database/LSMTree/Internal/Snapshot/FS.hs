@@ -221,6 +221,6 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
         saveSnapshot snapName snapLabel SnapFullTable t
 
     openSnap s =
-        openSnapshot s NoOverrideDiskCachePolicy snapLabel SnapFullTable snapName resolve
+        openTableFromSnapshot NoOverrideDiskCachePolicy s snapName snapLabel SnapFullTable resolve
 
     getConstructorName e = takeWhile (/= ' ') (show e)

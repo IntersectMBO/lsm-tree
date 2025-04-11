@@ -66,7 +66,7 @@ module Database.LSMTree.Internal.Unsafe (
     -- * Snapshots
   , SnapshotLabel
   , saveSnapshot
-  , openSnapshot
+  , openTableFromSnapshot
   , deleteSnapshot
   , doesSnapshotExist
   , listSnapshots
@@ -240,7 +240,7 @@ data SessionEnv m h = SessionEnv {
     --
     -- Tables are assigned unique identifiers using 'sessionUniqCounter' to
     -- ensure that modifications to the set of known tables are independent.
-    -- Each identifier is added only once in 'new', 'openSnapshot', 'duplicate',
+    -- Each identifier is added only once in 'new', 'openTableFromSnapshot', 'duplicate',
     -- 'union', or 'unions', and is deleted only once in 'close' or
     -- 'closeSession'.
     --
@@ -1286,25 +1286,25 @@ data SnapshotNotCompatibleError
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# SPECIALISE openSnapshot ::
-     Session IO h
-  -> OverrideDiskCachePolicy
+{-# SPECIALISE openTableFromSnapshot ::
+     OverrideDiskCachePolicy
+  -> Session IO h
+  -> SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
-  -> SnapshotName
   -> ResolveSerialisedValue
   -> IO (Table IO h) #-}
--- |  See 'Database.LSMTree.openSnapshot'.
-openSnapshot ::
+-- |  See 'Database.LSMTree.openTableFromSnapshot'.
+openTableFromSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => Session m h
-  -> OverrideDiskCachePolicy
+  => OverrideDiskCachePolicy
+  -> Session m h
+  -> SnapshotName
   -> SnapshotLabel -- ^ Expected label
   -> SnapshotTableType -- ^ Expected table type
-  -> SnapshotName
   -> ResolveSerialisedValue
   -> m (Table m h)
-openSnapshot sesh policyOveride label tableType snap resolve =
+openTableFromSnapshot policyOveride sesh snap label tableType resolve =
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
     traceWith (sessionTracer sesh) $ TraceOpenTableFromSnapshot snap policyOveride
     withOpenSession sesh $ \seshEnv -> do

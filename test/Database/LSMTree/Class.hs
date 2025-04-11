@@ -154,13 +154,13 @@ class (IsSession (Session h)) => IsTable h where
         -> h m k v b
         -> m ()
 
-    openSnapshot ::
+    openTableFromSnapshot ::
            ( IOLike m
            , C k v b
            )
         => Session h m
-        -> SnapshotLabel
         -> SnapshotName
+        -> SnapshotLabel
         -> m (h m k v b)
 
     duplicate ::
@@ -215,7 +215,7 @@ withTableFromSnapshot :: forall h m k v b a.
   -> SnapshotName
   -> (h m k v b -> m a)
   -> m a
-withTableFromSnapshot sesh label snap = bracket (openSnapshot sesh label snap) close
+withTableFromSnapshot sesh label snap = bracket (openTableFromSnapshot sesh snap label) close
 
 withTableDuplicate :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
@@ -289,7 +289,7 @@ instance IsTable R.Table where
 
     saveSnapshot = R.saveSnapshot
     corruptSnapshot = rCorruptSnapshot
-    openSnapshot sesh = flip (R.openTableFromSnapshot sesh)
+    openTableFromSnapshot = R.openTableFromSnapshot
 
     duplicate = R.duplicate
 

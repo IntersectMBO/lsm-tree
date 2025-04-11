@@ -1439,7 +1439,7 @@ openTableFromSnapshotWith ::
     SnapshotLabel ->
     IO (Table k v)
 openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
-    Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapSimpleTable snapName const
+    Table <$> Internal.openTableFromSnapshot tableConfigOverride session snapName snapLabel Internal.SnapSimpleTable const
 
 {- |
 Delete the named snapshot.

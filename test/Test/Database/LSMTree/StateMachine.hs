@@ -1419,7 +1419,7 @@ runModel lookUp (Action merrs action') = case action' of
     OpenTableFromSnapshot _ name label ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
-          (Model.openSnapshot name label)
+          (Model.openTableFromSnapshot name label)
           (pure ())
     DeleteSnapshot name ->
       wrap MUnit
@@ -1563,7 +1563,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
-            (WrapTable <$> Class.openSnapshot session label name)
+            (WrapTable <$> Class.openTableFromSnapshot session name label)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs
@@ -1674,7 +1674,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
-            (WrapTable <$> Class.openSnapshot session label name)
+            (WrapTable <$> Class.openTableFromSnapshot session name label)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs

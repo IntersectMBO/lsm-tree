@@ -69,7 +69,7 @@ module Database.LSMTree.Model.Session (
     -- * Snapshots
   , SnapshotName
   , saveSnapshot
-  , openSnapshot
+  , openTableFromSnapshot
   , corruptSnapshot
   , deleteSnapshot
   , listSnapshots
@@ -598,7 +598,7 @@ saveSnapshot name label t@Table{..} = do
         snapshots = Map.insert name snap (snapshots m)
       })
 
-openSnapshot ::
+openTableFromSnapshot ::
      forall k v b m.(
        MonadState Model m
      , MonadError Err m
@@ -607,7 +607,7 @@ openSnapshot ::
   => SnapshotName
   -> SnapshotLabel
   -> m (Table k v b)
-openSnapshot name label = do
+openTableFromSnapshot name label = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->
@@ -625,7 +625,7 @@ openSnapshot name label = do
             -- errors. The model simply does not allow this to occur: if we fail
             -- to cast modelled tables, then we consider it to be a bug in the
             -- test setup, and so we use @error@ instead of @throwError@.
-            error "openSnapshot: snapshot opened at wrong type"
+            error "openTableFromSnapshot: snapshot opened at wrong type"
           Just table' ->
             newTableWith conf snapshotIsUnion table'
 

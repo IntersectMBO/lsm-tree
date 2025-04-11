@@ -2185,7 +2185,7 @@ openTableFromSnapshotWith ::
   SnapshotLabel ->
   m (Table m k v b)
 openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
-  Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapFullTable snapName (_getResolveSerialisedValue (Proxy @v))
+  Table <$> Internal.openTableFromSnapshot tableConfigOverride session snapName snapLabel Internal.SnapFullTable (_getResolveSerialisedValue (Proxy @v))
 
 {- |
 Delete the named snapshot.
