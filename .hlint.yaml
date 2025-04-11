@@ -38,6 +38,8 @@
 - ignore: {name: "Use /="}
 - ignore: {name: "Use unless"}
 - ignore: {name: "Use notElem"}
+- ignore: {name: "Use elem"}
+- ignore: {name: "Use infix"}
 
 # Specify additional command line arguments
 #
