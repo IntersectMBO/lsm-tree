@@ -1081,182 +1081,6 @@ supplyUnionCredits (Table table) credits =
     Internal.supplyUnionCredits const table credits
 
 --------------------------------------------------------------------------------
--- Snapshots
---------------------------------------------------------------------------------
-
-{- |
-Save the current state of the table to disk as a snapshot under the given
-snapshot name. This is the /only/ mechanism that persists a table. Each snapshot
-must have a unique name, which may be used to restore the table from that snapshot
-using 'openTableFromSnapshot'.
-Saving a snapshot /does not/ close the table.
-
-Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
-However, it is not so cheap that one should use it after every operation.
-
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['SnapshotExistsError']:
-    If a snapshot with the same name already exists.
--}
-saveSnapshot ::
-    forall k v.
-    SnapshotName ->
-    SnapshotLabel ->
-    Table k v ->
-    IO ()
-saveSnapshot snapName snapLabel (Table table) =
-    -- TODO: remove SnapshotTableType
-    Internal.createSnapshot snapName snapLabel Internal.SnapSimpleTable table
-
-{- |
-Run an action with access to a table from a snapshot.
-
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'openTableFromSnapshot' and 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['SnapshotDoesNotExistError']
-    If no snapshot with the given name exists.
-['SnapshotCorruptedError']:
-    If the snapshot data is corrupted.
-['SnapshotNotCompatibleError']:
-    If the snapshot has a different label or is a different table type.
--}
-withTableFromSnapshot ::
-    forall k v a.
-    Session ->
-    SnapshotName ->
-    SnapshotLabel ->
-    (Table k v -> IO a) ->
-    IO a
-withTableFromSnapshot session snapName snapLabel =
-    bracket (openTableFromSnapshot session snapName snapLabel) closeTable
-
-{- |
-Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
--}
-withTableFromSnapshotWith ::
-    forall k v a.
-    OverrideDiskCachePolicy ->
-    Session ->
-    SnapshotName ->
-    SnapshotLabel ->
-    (Table k v -> IO a) ->
-    IO a
-withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
-    bracket (openTableFromSnapshotWith session tableConfigOverride snapName snapLabel) closeTable
-
-{- |
-Open a table from a named snapshot.
-
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
-
-__Warning:__ The new table must be independently closed using 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['SnapshotDoesNotExistError']
-    If no snapshot with the given name exists.
-['SnapshotCorruptedError']:
-    If the snapshot data is corrupted.
-['SnapshotNotCompatibleError']:
-    If the snapshot has a different label or is a different table type.
--}
-openTableFromSnapshot ::
-    forall k v.
-    Session ->
-    SnapshotName ->
-    SnapshotLabel ->
-    IO (Table k v)
-openTableFromSnapshot session snapName snapLabel =
-    openTableFromSnapshotWith session NoOverrideDiskCachePolicy snapName snapLabel
-
-{- |
-Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
--}
-openTableFromSnapshotWith ::
-    forall k v.
-    Session ->
-    OverrideDiskCachePolicy ->
-    SnapshotName ->
-    SnapshotLabel ->
-    IO (Table k v)
-openTableFromSnapshotWith (Session session) tableConfigOverride snapName snapLabel =
-    Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapSimpleTable snapName const
-
-{- |
-Delete the named snapshot.
-
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['SnapshotDoesNotExistError']:
-    If no snapshot with the given name exists.
--}
-deleteSnapshot ::
-    Session ->
-    SnapshotName ->
-    IO ()
-deleteSnapshot (Session session) =
-    Internal.deleteSnapshot session
-
-{- |
-Check if the named snapshot exists.
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
--}
-doesSnapshotExist ::
-    Session ->
-    SnapshotName ->
-    IO Bool
-doesSnapshotExist (Session session) =
-    Internal.doesSnapshotExist session
-
-{- |
-List the names of all snapshots.
-
-The worst-case disk I\/O complexity of this operation is \(O(s)\),
-where the variable \(s\) refers to the number of snapshots in the session.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
--}
-listSnapshots ::
-    Session ->
-    IO [SnapshotName]
-listSnapshots (Session session) =
-    Internal.listSnapshots session
-
---------------------------------------------------------------------------------
 -- Cursors
 --------------------------------------------------------------------------------
 
@@ -1450,6 +1274,182 @@ takeWhile ::
 takeWhile n p (Cursor cursor) =
     Internal.readCursorWhile const (p . Internal.deserialiseKey) n cursor $ \ !k !v !_b ->
         (Internal.deserialiseKey k, Internal.deserialiseValue v)
+
+--------------------------------------------------------------------------------
+-- Snapshots
+--------------------------------------------------------------------------------
+
+{- |
+Save the current state of the table to disk as a snapshot under the given
+snapshot name. This is the /only/ mechanism that persists a table. Each snapshot
+must have a unique name, which may be used to restore the table from that snapshot
+using 'openTableFromSnapshot'.
+Saving a snapshot /does not/ close the table.
+
+Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
+However, it is not so cheap that one should use it after every operation.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['SnapshotExistsError']:
+    If a snapshot with the same name already exists.
+-}
+saveSnapshot ::
+    forall k v.
+    SnapshotName ->
+    SnapshotLabel ->
+    Table k v ->
+    IO ()
+saveSnapshot snapName snapLabel (Table table) =
+    -- TODO: remove SnapshotTableType
+    Internal.createSnapshot snapName snapLabel Internal.SnapSimpleTable table
+
+{- |
+Run an action with access to a table from a snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'openTableFromSnapshot' and 'closeTable'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['SnapshotDoesNotExistError']
+    If no snapshot with the given name exists.
+['SnapshotCorruptedError']:
+    If the snapshot data is corrupted.
+['SnapshotNotCompatibleError']:
+    If the snapshot has a different label or is a different table type.
+-}
+withTableFromSnapshot ::
+    forall k v a.
+    Session ->
+    SnapshotName ->
+    SnapshotLabel ->
+    (Table k v -> IO a) ->
+    IO a
+withTableFromSnapshot session snapName snapLabel =
+    bracket (openTableFromSnapshot session snapName snapLabel) closeTable
+
+{- |
+Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+-}
+withTableFromSnapshotWith ::
+    forall k v a.
+    OverrideDiskCachePolicy ->
+    Session ->
+    SnapshotName ->
+    SnapshotLabel ->
+    (Table k v -> IO a) ->
+    IO a
+withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
+    bracket (openTableFromSnapshotWith session tableConfigOverride snapName snapLabel) closeTable
+
+{- |
+Open a table from a named snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(n)\).
+
+__Warning:__ The new table must be independently closed using 'closeTable'.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
+['SnapshotDoesNotExistError']
+    If no snapshot with the given name exists.
+['SnapshotCorruptedError']:
+    If the snapshot data is corrupted.
+['SnapshotNotCompatibleError']:
+    If the snapshot has a different label or is a different table type.
+-}
+openTableFromSnapshot ::
+    forall k v.
+    Session ->
+    SnapshotName ->
+    SnapshotLabel ->
+    IO (Table k v)
+openTableFromSnapshot session snapName snapLabel =
+    openTableFromSnapshotWith session NoOverrideDiskCachePolicy snapName snapLabel
+
+{- |
+Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+-}
+openTableFromSnapshotWith ::
+    forall k v.
+    Session ->
+    OverrideDiskCachePolicy ->
+    SnapshotName ->
+    SnapshotLabel ->
+    IO (Table k v)
+openTableFromSnapshotWith (Session session) tableConfigOverride snapName snapLabel =
+    Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapSimpleTable snapName const
+
+{- |
+Delete the named snapshot.
+
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['SnapshotDoesNotExistError']:
+    If no snapshot with the given name exists.
+-}
+deleteSnapshot ::
+    Session ->
+    SnapshotName ->
+    IO ()
+deleteSnapshot (Session session) =
+    Internal.deleteSnapshot session
+
+{- |
+Check if the named snapshot exists.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+-}
+doesSnapshotExist ::
+    Session ->
+    SnapshotName ->
+    IO Bool
+doesSnapshotExist (Session session) =
+    Internal.doesSnapshotExist session
+
+{- |
+List the names of all snapshots.
+
+The worst-case disk I\/O complexity of this operation is \(O(s)\),
+where the variable \(s\) refers to the number of snapshots in the session.
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+-}
+listSnapshots ::
+    Session ->
+    IO [SnapshotName]
+listSnapshots (Session session) =
+    Internal.listSnapshots session
 
 --------------------------------------------------------------------------------
 -- Errors
