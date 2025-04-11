@@ -650,7 +650,7 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
       let name = R.toSnapshotName "foo"
 
-      createSnapshot label name tbl1
+      saveSnapshot name label tbl1
       updates tbl1 (V.fromList ups')
 
       withTableFromSnapshot @h ses label name$ \tbl2 -> do
@@ -668,7 +668,7 @@ prop_snapshotNoChanges2 :: forall h.
 prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
     withSessionAndTableNew h ups $ \sess tbl0 -> do
       let name = R.toSnapshotName "foo"
-      createSnapshot label name tbl0
+      saveSnapshot name label tbl0
 
       withTableFromSnapshot @h sess label name $ \tbl1 ->
         withTableFromSnapshot @h sess label name $ \tbl2 -> do

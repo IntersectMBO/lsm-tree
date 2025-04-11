@@ -218,7 +218,7 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     snapLabel = SnapshotLabel "label"
 
     createSnap t =
-        createSnapshot snapName snapLabel SnapFullTable t
+        saveSnapshot snapName snapLabel SnapFullTable t
 
     openSnap s =
         openSnapshot s NoOverrideDiskCachePolicy snapLabel SnapFullTable snapName resolve

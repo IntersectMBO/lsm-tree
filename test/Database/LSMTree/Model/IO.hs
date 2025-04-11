@@ -84,7 +84,7 @@ instance Class.IsTable Table where
     readCursor _ x1 (Cursor s c) = fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.readCursor x1 c)
 
-    createSnapshot x1 x2 (Table s t) = runInOpenSession s (Model.createSnapshot x2 x1 t)
+    saveSnapshot x1 x2 (Table s t) = runInOpenSession s (Model.saveSnapshot x1 x2 t)
     corruptSnapshot _ x (Table s _t) = runInOpenSession s (Model.corruptSnapshot x)
     openSnapshot s x1 x2 = Table s <$> runInOpenSession s (Model.openSnapshot x2 x1)
 

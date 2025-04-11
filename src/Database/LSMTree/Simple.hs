@@ -1351,8 +1351,7 @@ saveSnapshot ::
     Table k v ->
     IO ()
 saveSnapshot snapName snapLabel (Table table) =
-    -- TODO: remove SnapshotTableType
-    Internal.createSnapshot snapName snapLabel Internal.SnapSimpleTable table
+    Internal.saveSnapshot snapName snapLabel Internal.SnapSimpleTable table
 
 {- |
 Run an action with access to a table from a snapshot.

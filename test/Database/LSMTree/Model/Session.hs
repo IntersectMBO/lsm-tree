@@ -68,7 +68,7 @@ module Database.LSMTree.Model.Session (
   , invalidateBlobRefs
     -- * Snapshots
   , SnapshotName
-  , createSnapshot
+  , saveSnapshot
   , openSnapshot
   , corruptSnapshot
   , deleteSnapshot
@@ -575,7 +575,7 @@ data Snapshot = Snapshot
   }
   deriving stock Show
 
-createSnapshot ::
+saveSnapshot ::
      ( MonadState Model m
      , MonadError Err m
      , C k v b
@@ -584,7 +584,7 @@ createSnapshot ::
   -> SnapshotLabel
   -> Table k v b
   -> m ()
-createSnapshot name label t@Table{..} = do
+saveSnapshot name label t@Table{..} = do
     (_updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
     when (Map.member name snaps) $

@@ -1412,7 +1412,7 @@ runModel lookUp (Action merrs action') = case action' of
     SaveSnapshot mcorr name label tableVar ->
       wrap MUnit
         . Model.runModelMWithInjectedErrors merrs
-            (do Model.createSnapshot name label (getTable $ lookUp tableVar)
+            (do Model.saveSnapshot name label (getTable $ lookUp tableVar)
                 forM_ mcorr $ \_ -> Model.corruptSnapshot name)
             (pure ()) -- TODO(err)
     OpenSnapshot _ label name ->
@@ -1557,7 +1557,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
         SaveSnapshot mcorr name label tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "SaveSnapshot" env merrs
-            (do Class.createSnapshot label name table
+            (do Class.saveSnapshot name label table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenSnapshot _ label name ->
@@ -1668,7 +1668,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
         SaveSnapshot mcorr name label tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "SaveSnapshot" env merrs
-            (do Class.createSnapshot label name table
+            (do Class.saveSnapshot name label table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenSnapshot _ label name ->

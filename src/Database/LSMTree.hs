@@ -2050,7 +2050,7 @@ saveSnapshot ::
   m ()
 saveSnapshot snapName snapLabel (Table table) =
   -- TODO: remove SnapshotTableType
-  Internal.createSnapshot snapName snapLabel Internal.SnapFullTable table
+  Internal.saveSnapshot snapName snapLabel Internal.SnapFullTable table
 
 {- |
 Run an action with access to a table from a snapshot.

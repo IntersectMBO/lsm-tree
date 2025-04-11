@@ -65,7 +65,7 @@ module Database.LSMTree.Internal.Unsafe (
   , readCursorWhile
     -- * Snapshots
   , SnapshotLabel
-  , createSnapshot
+  , saveSnapshot
   , openSnapshot
   , deleteSnapshot
   , doesSnapshotExist
@@ -1173,21 +1173,21 @@ data SnapshotExistsError
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# SPECIALISE createSnapshot ::
+{-# SPECIALISE saveSnapshot ::
      SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table IO h
   -> IO () #-}
--- |  See 'Database.LSMTree.createSnapshot''.
-createSnapshot ::
+-- |  See 'Database.LSMTree.saveSnapshot'.
+saveSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table m h
   -> m ()
-createSnapshot snap label tableType t = do
+saveSnapshot snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     withOpenTable t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects

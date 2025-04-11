@@ -137,12 +137,12 @@ class (IsSession (Session h)) => IsTable h where
         -> V.Vector (k, v)
         -> m ()
 
-    createSnapshot ::
+    saveSnapshot ::
            ( IOLike m
            , C k v b
            )
-        => SnapshotLabel
-        -> SnapshotName
+        => SnapshotName
+        -> SnapshotLabel
         -> h m k v b
         -> m ()
 
@@ -287,7 +287,7 @@ instance IsTable R.Table where
     closeCursor _ = R.closeCursor
     readCursor _ = R.take
 
-    createSnapshot = flip R.saveSnapshot
+    saveSnapshot = R.saveSnapshot
     corruptSnapshot = rCorruptSnapshot
     openSnapshot sesh = flip (R.openTableFromSnapshot sesh)
 
