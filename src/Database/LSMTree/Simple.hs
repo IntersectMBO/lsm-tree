@@ -420,8 +420,7 @@ type role Table nominal nominal
 
 type Table :: Type -> Type -> Type
 data Table k v
-    = (SerialiseKey k, SerialiseValue v) =>
-    Table {unTable :: {-# UNPACK #-} !(Internal.Table IO HandleIO)}
+    = Table {unTable :: {-# UNPACK #-} !(Internal.Table IO HandleIO)}
 
 {- |
 Run an action with access to an empty table.
@@ -438,7 +437,6 @@ Throws the following exceptions:
     If the session is closed.
 -}
 withTable ::
-    (SerialiseKey k, SerialiseValue v) =>
     Session ->
     (Table k v -> IO a) ->
     IO a
@@ -447,7 +445,6 @@ withTable session =
 
 -- | Variant of 'withTable' that accepts [table configuration](#g:table_configuration).
 withTableWith ::
-    (SerialiseKey k, SerialiseValue v) =>
     TableConfig ->
     Session ->
     (Table k v -> IO a) ->
@@ -468,7 +465,6 @@ Throws the following exceptions:
     If the session is closed.
 -}
 newTable ::
-    (SerialiseKey k, SerialiseValue v) =>
     Session ->
     IO (Table k v)
 newTable session =
@@ -478,7 +474,6 @@ newTable session =
 Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
 -}
 newTableWith ::
-    (SerialiseKey k, SerialiseValue v) =>
     TableConfig ->
     Session ->
     IO (Table k v)
@@ -523,6 +518,7 @@ Throws the following exceptions:
     If the table data is corrupted.
 -}
 member ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
     IO Bool
@@ -544,6 +540,7 @@ The following property holds in the absence of races:
 prop> members table keys = traverse (member table) keys
 -}
 members ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector k ->
     IO (Vector Bool)
@@ -569,6 +566,7 @@ Throws the following exceptions:
     If the table data is corrupted.
 -}
 lookup ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
     IO (Maybe v)
@@ -593,6 +591,7 @@ The following property holds in the absence of races:
 prop> lookups table keys = traverse (lookup table) keys
 -}
 lookups ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector k ->
     IO (Vector (Maybe v))
@@ -627,6 +626,7 @@ Throws the following exceptions:
 -- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
 -- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 rangeLookup ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Range k ->
     IO (Vector (k, v))
@@ -656,6 +656,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 insert ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
     v ->
@@ -678,6 +679,7 @@ The following property holds in the absence of races:
 prop> inserts table entries = traverse_ (uncurry $ insert table) entries
 -}
 inserts ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector (k, v) ->
     IO ()
@@ -701,6 +703,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 delete ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
     IO ()
@@ -722,6 +725,7 @@ The following property holds in the absence of races:
 prop> deletes table keys = traverse_ (delete table) keys
 -}
 deletes ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector k ->
     IO ()
@@ -747,6 +751,7 @@ Throws the following exceptions:
     If the table is closed.
 -}
 update ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     k ->
     Maybe v ->
@@ -769,6 +774,7 @@ The following property holds in the absence of races:
 prop> updates table entries = traverse_ (uncurry $ update table) entries
 -}
 updates ::
+    (SerialiseKey k, SerialiseValue v) =>
     Table k v ->
     Vector (k, Maybe v) ->
     IO ()
@@ -1098,7 +1104,6 @@ Throws the following exceptions:
     If the snapshot has a different label or is a different table type.
 -}
 withTableFromSnapshot ::
-    (SerialiseKey k, SerialiseValue v) =>
     Session ->
     SnapshotName ->
     SnapshotLabel ->
@@ -1111,7 +1116,6 @@ withTableFromSnapshot session snapName snapLabel =
 Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
 -}
 withTableFromSnapshotWith ::
-    (SerialiseKey k, SerialiseValue v) =>
     OverrideDiskCachePolicy ->
     Session ->
     SnapshotName ->
@@ -1142,7 +1146,6 @@ Throws the following exceptions:
     If the snapshot has a different label or is a different table type.
 -}
 openTableFromSnapshot ::
-    (SerialiseKey k, SerialiseValue v) =>
     Session ->
     SnapshotName ->
     SnapshotLabel ->
@@ -1154,7 +1157,6 @@ openTableFromSnapshot session snapName snapLabel =
 Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
 -}
 openTableFromSnapshotWith ::
-    (SerialiseKey k, SerialiseValue v) =>
     Session ->
     OverrideDiskCachePolicy ->
     SnapshotName ->
@@ -1233,8 +1235,7 @@ type role Cursor nominal nominal
 
 type Cursor :: Type -> Type -> Type
 data Cursor k v
-    = (SerialiseKey k, SerialiseValue v) =>
-    Cursor {unCursor :: {-# UNPACK #-} !(Internal.Cursor IO HandleIO)}
+    = Cursor {unCursor :: {-# UNPACK #-} !(Internal.Cursor IO HandleIO)}
 
 {- |
 Run an action with access to a cursor.
@@ -1263,6 +1264,7 @@ withCursor (Table table) action =
 Variant of 'withCursor' that starts at a given key.
 -}
 withCursorAtOffset ::
+    (SerialiseKey k) =>
     Table k v ->
     k ->
     (Cursor k v -> IO a) ->
@@ -1294,6 +1296,7 @@ newCursor (Table table) =
 Variant of 'newCursor' that starts at a given key.
 -}
 newCursorAtOffset ::
+    (SerialiseKey k) =>
     Table k v ->
     k ->
     IO (Cursor k v)
@@ -1329,6 +1332,7 @@ Throws the following exceptions:
 -- The amortised time complexity is \(\Theta(\logT \log_T \frac{n}{B})\).
 -- TODO: implement this function in terms of 'readEntry'
 next ::
+    (SerialiseKey k, SerialiseValue v) =>
     Cursor k v ->
     IO (Maybe (k, v))
 next iterator = do
@@ -1358,6 +1362,7 @@ Throws the following exceptions:
 -- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
 -- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 take ::
+    (SerialiseKey k, SerialiseValue v) =>
     Int ->
     Cursor k v ->
     IO (Vector (k, v))
@@ -1391,6 +1396,7 @@ Throws the following exceptions:
 -- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 -- TODO: implement this function using a variant of 'readCursorWhile' that does not take the maximum batch size
 takeWhile ::
+    (SerialiseKey k, SerialiseValue v) =>
     Int ->
     (k -> Bool) ->
     Cursor k v ->
