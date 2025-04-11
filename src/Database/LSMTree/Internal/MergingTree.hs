@@ -37,7 +37,6 @@ import           Data.List (foldl')
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergeDebt (..),
                      MergingRun)
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -45,6 +44,7 @@ import           Database.LSMTree.Internal.Paths (SessionRoot)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)

@@ -48,7 +48,6 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Entry
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergeSchedule (addWriteBufferEntries)
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.Paths as Paths

@@ -2,8 +2,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.Lookup (
-    ResolveSerialisedValue
-  , LookupAcc
+    LookupAcc
   , lookupsIOWithWriteBuffer
   , lookupsIO
     -- * Errors
@@ -111,9 +110,6 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
               (getNumPages size * 4096)
   where
     !n = VP.length rkixs
-
--- | Value resolve function: what to do when resolving two @Mupdate@s
-type ResolveSerialisedValue = SerialisedValue -> SerialisedValue -> SerialisedValue
 
 type LookupAcc m h = V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
 

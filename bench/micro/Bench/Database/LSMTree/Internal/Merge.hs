@@ -76,7 +76,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         { name         = "word64-mupsert-x4"  -- basically no collisions
         , nentries     = totalEntries `splitInto` 4
         , fmupserts    = 1
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeResolve = Just (onDeserialisedValues ((+) @Word64))
         }
     , benchMerge configWord64
         { name         = "word64-mupsert-collisions-x4"
@@ -84,7 +84,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , fmupserts    = 1
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeResolve = Just (onDeserialisedValues ((+) @Word64))
         }
       -- different merge types
     , benchMerge configWord64
@@ -95,7 +95,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , fmupserts    = 1
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeResolve = Just (onDeserialisedValues ((+) @Word64))
         , mergeType    = MergeTypeMidLevel
         }
     , benchMerge configWord64
@@ -106,7 +106,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , fmupserts    = 1
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeResolve = Just (onDeserialisedValues ((+) @Word64))
         , mergeType    = MergeTypeLastLevel
         }
     , benchMerge configWord64
@@ -117,7 +117,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
         , fmupserts    = 1
         , randomKey    = -- each run uses half of the possible keys
                          randomWord64OutOf (totalEntries `div` 2)
-        , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+        , mergeResolve = Just (onDeserialisedValues ((+) @Word64))
         , mergeType    = MergeTypeUnion
         }
       -- not writing anything at all
@@ -271,7 +271,7 @@ merge ::
   -> InputRuns
   -> IO (Ref (Run IO FS.HandleIO))
 merge fs hbio Config {..} targetPaths runs = do
-    let f = fromMaybe const mergeMappend
+    let f = fromMaybe const mergeResolve
     m <- fromMaybe (error "empty inputs, no merge created") <$>
       Merge.new fs hbio runParams mergeType f targetPaths runs
     Merge.stepsToCompletion m stepSize
@@ -287,9 +287,8 @@ inputRunPathsCounter = newUniqCounter 1  -- 0 is for output
 
 type InputRuns = V.Vector (Ref (Run IO FS.HandleIO))
 
-type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
-
-onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> Mappend
+onDeserialisedValues ::
+     SerialiseValue v => (v -> v -> v) -> ResolveSerialisedValue
 onDeserialisedValues f x y =
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
 
@@ -316,7 +315,7 @@ data Config = Config {
   , randomBlob   :: Rnd SerialisedBlob
   , mergeType    :: !MergeType
     -- | Needs to be defined when generating mupserts.
-  , mergeMappend :: !(Maybe Mappend)
+  , mergeResolve :: !(Maybe ResolveSerialisedValue)
     -- | Merging is done in chunks of @stepSize@ entries.
   , stepSize     :: !Int
   }
@@ -335,7 +334,7 @@ defaultConfig = Config {
   , randomValue  = error "randomValue not implemented"
   , randomBlob   = error "randomBlob not implemented"
   , mergeType    = MergeTypeMidLevel
-  , mergeMappend = Nothing
+  , mergeResolve = Nothing
   , stepSize     = maxBound  -- by default, just do in one go
   }
 
@@ -357,7 +356,7 @@ configUTxOStaking = defaultConfig {
     fmupserts    = 1
   , randomKey    = first serialiseKey . uniform @_ @UTxOKey
   , randomValue  = first serialiseValue . uniform @_ @Word64
-  , mergeMappend = Just (onDeserialisedValues ((+) @Word64))
+  , mergeResolve = Just (onDeserialisedValues ((+) @Word64))
   }
 
 mergeEnv ::

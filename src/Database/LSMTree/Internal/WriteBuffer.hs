@@ -59,7 +59,7 @@ toMap = unWB
 
 -- | \( O(n \log n) \)
 fromList ::
-     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+     ResolveSerialisedValue  -- ^ merge function
   -> [(SerialisedKey, Entry SerialisedValue BlobSpan)]
   -> WriteBuffer
 fromList f es = WB $ Map.fromListWith (combine f) es
@@ -73,7 +73,7 @@ toList (WB m) = Map.assocs m
 -------------------------------------------------------------------------------}
 
 addEntry ::
-     (SerialisedValue -> SerialisedValue -> SerialisedValue) -- ^ merge function
+     ResolveSerialisedValue  -- ^ merge function
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
   -> WriteBuffer

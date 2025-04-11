@@ -24,7 +24,6 @@ import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.MergingRunData
 import           Database.LSMTree.Extras.RunData
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import qualified Database.LSMTree.Internal.MergingTree as MT

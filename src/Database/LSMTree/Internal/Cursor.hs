@@ -14,11 +14,10 @@ import           Database.LSMTree.Internal.BlobRef (RawBlobRef,
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Readers as Readers
 import qualified Database.LSMTree.Internal.RunReader as Reader
-import           Database.LSMTree.Internal.Serialise (SerialisedKey,
-                     SerialisedValue)
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue,
+                     SerialisedKey, SerialisedValue)
 import qualified Database.LSMTree.Internal.Vector as V
 
 {-# INLINE readEntriesWhile #-}

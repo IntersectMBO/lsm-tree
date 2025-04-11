@@ -1,4 +1,3 @@
-{-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 {-# OPTIONS_HADDOCK not-home #-}
 

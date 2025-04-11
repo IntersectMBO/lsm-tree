@@ -53,7 +53,6 @@ import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.IncomingRun
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -67,6 +66,7 @@ import           Database.LSMTree.Internal.Paths (ActiveDir (..), ForBlob (..),
 import           Database.LSMTree.Internal.Run (Run, RunParams)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter (UniqCounter,
                      incrUniqCounter, uniqueToInt, uniqueToRunNumber)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
