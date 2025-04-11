@@ -10,7 +10,6 @@ module Database.LSMTree.Internal.Merge (
   , IsMergeType (..)
   , LevelMergeType (..)
   , TreeMergeType (..)
-  , Mappend
   , MergeState (..)
   , RunParams (..)
   , new
@@ -60,7 +59,7 @@ data Merge t m h = Merge {
       -- interface.
     , mergeIsLastLevel :: !Bool
     , mergeIsUnion     :: !Bool
-    , mergeMappend     :: !Mappend
+    , mergeResolve     :: !ResolveSerialisedValue
     , mergeReaders     :: {-# UNPACK #-} !(Readers m h)
     , mergeBuilder     :: !(RunBuilder m h)
       -- | The result of the latest call to 'steps'. This is used to determine
@@ -150,15 +149,13 @@ instance IsMergeType TreeMergeType where
       MergeLevel -> False
       MergeUnion -> True
 
-type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
-
 {-# SPECIALISE new ::
      IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
   -> RunParams
   -> t
-  -> Mappend
+  -> ResolveSerialisedValue
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run IO h))
   -> IO (Maybe (Merge t IO h)) #-}
@@ -170,11 +167,11 @@ new ::
   -> HasBlockIO m h
   -> RunParams
   -> t
-  -> Mappend
+  -> ResolveSerialisedValue
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge t m h))
-new hfs hbio runParams mergeType mergeMappend targetPaths runs = do
+new hfs hbio runParams mergeType mergeResolve targetPaths runs = do
     -- no offset, no write buffer
     mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
     -- TODO: Exception safety! If Readers.new fails after already creating some
@@ -376,7 +373,7 @@ doStepsLevel m@Merge {..} requestedSteps = go 0
           else do
             (_, nextEntry, hasMore) <- Readers.pop mergeReaders
             -- for resolution, we need the full second value to be present
-            let resolved = combine mergeMappend
+            let resolved = combine mergeResolve
                              (Mupdate v)
                              (Reader.toFullEntry nextEntry)
             case hasMore of
@@ -423,7 +420,7 @@ doStepsUnion m@Merge {..} requestedSteps = go 0
     -- all entries monoidally, so there are no obsolete/overwritten entries
     -- that we could skip.
     --
-    -- TODO(optimisation): If mergeMappend is const, we could skip all remaining
+    -- TODO(optimisation): If mergeResolve is const, we could skip all remaining
     -- entries for the key. Unfortunately, we can't inspect the function. This
     -- would require encoding it as something like `Const | Resolve (_ -> _ ->
     -- _)`.
@@ -443,7 +440,7 @@ doStepsUnion m@Merge {..} requestedSteps = go 0
           else do
             (_, nextEntry, hasMore) <- Readers.pop mergeReaders
             -- for resolution, we need the full second value to be present
-            let resolved = combineUnion mergeMappend
+            let resolved = combineUnion mergeResolve
                              (Reader.toFullEntry entry)
                              (Reader.toFullEntry nextEntry)
             handleEntry (n + 1) key (Reader.Entry resolved) hasMore

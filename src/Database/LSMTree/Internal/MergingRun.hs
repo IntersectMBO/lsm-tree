@@ -66,7 +66,6 @@ import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Merge (IsMergeType (..),
                      LevelMergeType (..), Merge, RunParams (..),
                      StepResult (..), TreeMergeType (..))
@@ -74,6 +73,7 @@ import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Vector as V
 import           GHC.Stack (HasCallStack, callStack)
 import           System.FS.API (HasFS)

@@ -17,11 +17,11 @@ import           Control.Monad.Primitive
 import           Control.RefCount
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Lookup (LookupAcc,
-                     ResolveSerialisedValue)
+import           Database.LSMTree.Internal.Lookup (LookupAcc)
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import qualified Database.LSMTree.Internal.MergingTree as MT
 import           Database.LSMTree.Internal.Run (Run)
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue)
 import qualified Database.LSMTree.Internal.Vector as V
 
 -- | A simplified representation of the shape of a 'MT.MergingTree'.

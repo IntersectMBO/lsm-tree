@@ -171,7 +171,7 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
     wbs' = fmap serialiseRunData wbs
 
     makeInProgressMerge path runs =
-      Merge.new fs hbio runParams mergeType mappendValues
+      Merge.new fs hbio runParams mergeType resolveVal
                 path (V.fromList runs) >>= \case
         Nothing -> return Nothing  -- not in progress
         Just merge -> do
@@ -198,7 +198,7 @@ mergeRuns ::
      [Ref (Run.Run IO h)] ->
      IO (Int, Ref (Run.Run IO h))
 mergeRuns fs hbio mergeType (Positive stepSize) fsPath runs = do
-    Merge.new fs hbio runParams mergeType mappendValues
+    Merge.new fs hbio runParams mergeType resolveVal
               fsPath (V.fromList runs)
       >>= \case
         Just m  -> Merge.stepsToCompletionCounted m stepSize
@@ -211,17 +211,17 @@ mergeWriteBuffers :: MergeType
                   -> [Map SerialisedKey SerialisedEntry]
                   ->  Map SerialisedKey SerialisedEntry
 mergeWriteBuffers = \case
-    MergeTypeMidLevel  -> Map.unionsWith (Entry.combine mappendValues)
+    MergeTypeMidLevel  -> Map.unionsWith (Entry.combine resolveVal)
     MergeTypeLastLevel -> Map.filter (not . isDelete)
-                        . Map.unionsWith (Entry.combine mappendValues)
+                        . Map.unionsWith (Entry.combine resolveVal)
     MergeTypeUnion     -> Map.filter (not . isDelete)
-                        . Map.unionsWith (Entry.combineUnion mappendValues)
+                        . Map.unionsWith (Entry.combineUnion resolveVal)
   where
     isDelete Entry.Delete = True
     isDelete _            = False
 
-mappendValues :: SerialisedValue -> SerialisedValue -> SerialisedValue
-mappendValues (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
+resolveVal :: ResolveSerialisedValue
+resolveVal (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
 
 newtype SmallList a = SmallList { getSmallList :: [a] }
   deriving stock (Show, Eq)

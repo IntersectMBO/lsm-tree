@@ -118,9 +118,8 @@ import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
 import qualified Database.LSMTree.Internal.Cursor as Cursor
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..))
 import           Database.LSMTree.Internal.IncomingRun (IncomingRun (..))
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue,
-                     TableCorruptedError (..), lookupsIO,
-                     lookupsIOWithWriteBuffer)
+import           Database.LSMTree.Internal.Lookup (TableCorruptedError (..),
+                     lookupsIO, lookupsIOWithWriteBuffer)
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun (TableTooLargeError (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -137,8 +136,8 @@ import qualified Database.LSMTree.Internal.Readers as Readers
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob (..),
-                     SerialisedKey, SerialisedValue)
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue,
+                     SerialisedBlob (..), SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter

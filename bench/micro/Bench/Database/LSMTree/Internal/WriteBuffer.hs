@@ -41,7 +41,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.WriteBuffer" [
         , nentries     = 10_000
         , fmupserts    = 1
                          -- TODO: too few collisions to really measure resolution
-        , mappendVal   = Just (onDeserialisedValues ((+) @Word64))
+        , resolveVal   = Just (onDeserialisedValues ((+) @Word64))
         }
       -- different key and value sizes
     , benchWriteBuffer configWord64
@@ -108,17 +108,19 @@ benchWriteBuffer conf@Config{name} =
         ]
 
 insert :: InputKOps -> WriteBuffer
-insert (InputKOps kops mappendVal) =
-    Fold.foldl' (\wb (k, e) -> WB.addEntry mappendVal k e wb) WB.empty kops
+insert (InputKOps kops resolveVal) =
+    Fold.foldl' (\wb (k, e) -> WB.addEntry resolveVal k e wb) WB.empty kops
 
-data InputKOps = InputKOps [(SerialisedKey, Entry SerialisedValue BlobSpan)] Mappend
+data InputKOps =
+  InputKOps
+    [(SerialisedKey, Entry SerialisedValue BlobSpan)]
+    ResolveSerialisedValue
 
 instance NFData InputKOps where
-  rnf (InputKOps kops mappendVal) = rnf kops `seq` rwhnf mappendVal
+  rnf (InputKOps kops resolveVal) = rnf kops `seq` rwhnf resolveVal
 
-type Mappend = SerialisedValue -> SerialisedValue -> SerialisedValue
-
-onDeserialisedValues :: SerialiseValue v => (v -> v -> v) -> Mappend
+onDeserialisedValues ::
+     SerialiseValue v => (v -> v -> v) -> ResolveSerialisedValue
 onDeserialisedValues f x y =
     serialiseValue (f (deserialiseValue x) (deserialiseValue y))
 
@@ -146,7 +148,7 @@ data Config = Config {
   , randomKey    :: Rnd SerialisedKey
   , randomValue  :: Rnd SerialisedValue
     -- | Needs to be defined when generating mupserts.
-  , mappendVal   :: !(Maybe Mappend)
+  , resolveVal   :: !(Maybe ResolveSerialisedValue)
   }
 
 type Rnd a = StdGen -> (a, StdGen)
@@ -161,7 +163,7 @@ defaultConfig = Config {
   , fmupserts    = 0
   , randomKey    = error "randomKey not implemented"
   , randomValue  = error "randomValue not implemented"
-  , mappendVal   = Nothing
+  , resolveVal   = Nothing
   }
 
 configWord64 :: Config
@@ -179,7 +181,7 @@ configUTxO = defaultConfig {
 envInputKOps :: Config -> InputKOps
 envInputKOps config = do
     let kops = randomKOps config (mkStdGen 17)
-     in InputKOps kops (fromMaybe const (mappendVal config))
+     in InputKOps kops (fromMaybe const (resolveVal config))
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.
@@ -188,7 +190,7 @@ randomKOps ::
   -> StdGen -- ^ RNG
   -> [SerialisedKOp]
 randomKOps Config {..} = take nentries . List.unfoldr (Just . randomKOp) .
-    assert (if fmupserts > 0 then isJust mappendVal else isNothing mappendVal)
+    assert (if fmupserts > 0 then isJust resolveVal else isNothing resolveVal)
   where
     randomKOp :: Rnd SerialisedKOp
     randomKOp g = let (!k, !g')  = randomKey g

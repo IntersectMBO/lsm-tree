@@ -28,6 +28,7 @@ module Database.LSMTree.Internal.Serialise (
   , sizeofValue32
   , sizeofValue64
   , serialisedValue
+  , ResolveSerialisedValue
     -- * Blobs
   , SerialisedBlob (SerialisedBlob, SerialisedBlob')
   , serialiseBlob
@@ -144,6 +145,9 @@ sizeofValue64 = fromIntegral . sizeofValue
 {-# LANGUAGE serialisedValue #-}
 serialisedValue :: SerialisedValue -> BB.Builder
 serialisedValue (SerialisedValue rb) = RB.builder rb
+
+type ResolveSerialisedValue =
+  SerialisedValue -> SerialisedValue -> SerialisedValue
 
 {-------------------------------------------------------------------------------
   Blobs

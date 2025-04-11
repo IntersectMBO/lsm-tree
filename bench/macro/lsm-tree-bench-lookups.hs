@@ -36,8 +36,8 @@ import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunBuilder (RunParams (..))
 import qualified Database.LSMTree.Internal.RunBuilder as RunBuilder
 import           Database.LSMTree.Internal.RunNumber
-import           Database.LSMTree.Internal.Serialise (SerialisedKey,
-                     serialiseKey, serialiseValue)
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue,
+                     SerialisedKey, serialiseKey, serialiseValue)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           Debug.Trace (traceMarkerIO)

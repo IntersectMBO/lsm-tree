@@ -66,7 +66,6 @@ import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)
 import           Database.LSMTree.Internal.IncomingRun
 import           Database.LSMTree.Internal.Index (Index)
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
                      MergeDebt (..), MergingRun, RunParams (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -78,8 +77,8 @@ import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
-                     SerialisedKey, SerialisedValue)
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue,
+                     SerialisedBlob, SerialisedKey, SerialisedValue)
 import           Database.LSMTree.Internal.UniqCounter
 import           Database.LSMTree.Internal.Vector (forMStrict, mapMStrict,
                      mapStrict)

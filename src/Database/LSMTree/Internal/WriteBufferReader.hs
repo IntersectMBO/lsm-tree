@@ -1,6 +1,6 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
--- | A write buffer that is being read incrementally.
+-- | A persisted write buffer that is being read incrementally from disk.
 --
 module Database.LSMTree.Internal.WriteBufferReader (
     readWriteBuffer
@@ -21,13 +21,13 @@ import           Database.LSMTree.Internal.BlobFile (BlobFile)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      mkRawBlobRef)
 import qualified Database.LSMTree.Internal.Entry as E
-import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.RunReader (Entry (..), Result (..),
                      mkEntryOverflow, readDiskPage, readOverflowPages,
                      toFullEntry)
-import           Database.LSMTree.Internal.Serialise (SerialisedValue)
+import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue,
+                     SerialisedValue)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified System.FS.API as FS
