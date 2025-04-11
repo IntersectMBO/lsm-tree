@@ -15,8 +15,8 @@ import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Lookup (ResolveSerialisedValue)
+import qualified Database.LSMTree.Internal.Readers as Readers
 import qualified Database.LSMTree.Internal.RunReader as Reader
-import qualified Database.LSMTree.Internal.RunReaders as Readers
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      SerialisedValue)
 import qualified Database.LSMTree.Internal.Vector as V

@@ -270,12 +270,12 @@ library
     Database.LSMTree.Internal.RawBytes
     Database.LSMTree.Internal.RawOverflowPage
     Database.LSMTree.Internal.RawPage
+    Database.LSMTree.Internal.Readers
     Database.LSMTree.Internal.Run
     Database.LSMTree.Internal.RunAcc
     Database.LSMTree.Internal.RunBuilder
     Database.LSMTree.Internal.RunNumber
     Database.LSMTree.Internal.RunReader
-    Database.LSMTree.Internal.RunReaders
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Snapshot
@@ -494,12 +494,12 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.RawBytes
     Test.Database.LSMTree.Internal.RawOverflowPage
     Test.Database.LSMTree.Internal.RawPage
+    Test.Database.LSMTree.Internal.Readers
     Test.Database.LSMTree.Internal.Run
     Test.Database.LSMTree.Internal.RunAcc
     Test.Database.LSMTree.Internal.RunBloomFilterAlloc
     Test.Database.LSMTree.Internal.RunBuilder
     Test.Database.LSMTree.Internal.RunReader
-    Test.Database.LSMTree.Internal.RunReaders
     Test.Database.LSMTree.Internal.Serialise
     Test.Database.LSMTree.Internal.Serialise.Class
     Test.Database.LSMTree.Internal.Snapshot.Codec

@@ -1,6 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
-module Database.LSMTree.Internal.RunReaders (
+-- | Multiple inputs (write buffers, runs) that are being read incrementally.
+module Database.LSMTree.Internal.Readers (
     Readers (..)
   , OffsetKey (..)
   , new
