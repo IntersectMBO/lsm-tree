@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Database.LSMTree.Internal.Readers (tests) where
 
@@ -13,6 +14,8 @@ import           Data.Coerce (coerce)
 import           Data.Foldable (traverse_)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
+import           Data.Tree (Tree)
+import qualified Data.Tree as Tree
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (BiasedKey (..))
 import           Database.LSMTree.Extras.RunData
@@ -82,14 +85,33 @@ data ReaderSourceData =
       !(RunData BiasedKey SerialisedValue SerialisedBlob)
   | FromRunData
       !(RunData BiasedKey SerialisedValue SerialisedBlob)
+  | FromReadersData
+      !Readers.ReadersMergeType ![ReaderSourceData]
   deriving stock (Eq, Show)
 
+depth :: ReaderSourceData -> Int
+depth = \case
+    FromWriteBufferData _ -> 1
+    FromRunData         _ -> 1
+    FromReadersData _ rds -> 1 + maximum (0 : map depth rds)
+
 instance Arbitrary ReaderSourceData where
-  arbitrary =
-      QC.oneof [
-          FromWriteBufferData <$> arbitrary
-        , FromRunData <$> arbitrary
-        ]
+  arbitrary = QC.oneof [genLeaf, genTree]
+    where
+      genLeaf = QC.oneof [
+            FromWriteBufferData <$> arbitrary
+          , FromRunData <$> arbitrary
+          ]
+
+      genTree =
+          -- first generate a tree shape of up to 10 nodes, then the actual data
+          QC.scale (`div` 10) (arbitrary @(Tree ())) >>= enrich
+
+      enrich :: Tree () -> Gen ReaderSourceData
+      enrich (Tree.Node () []) =
+          genLeaf
+      enrich (Tree.Node () children) =
+          FromReadersData <$> arbitrary <*> traverse enrich children
 
   shrink (FromWriteBufferData rd) =
       [ FromWriteBufferData rd' | rd' <- shrink rd
@@ -99,10 +121,33 @@ instance Arbitrary ReaderSourceData where
       ] <>
       [ FromRunData rd' | rd' <- shrink rd
       ]
+  shrink s@(FromReadersData ty rds) =
+      rds
+        <>
+      [ FromRunData (RunData (sourceKOps s))
+      ] <>
+      [ FromReadersData ty' rds' | (ty', rds') <- shrink (ty, rds)
+      ]
+
+instance Arbitrary Readers.ReadersMergeType where
+  arbitrary = QC.elements [Readers.MergeLevel, Readers.MergeUnion]
+    where
+      _coveredAllCases :: Readers.ReadersMergeType -> ()
+      _coveredAllCases = \case
+          Readers.MergeLevel -> ()
+          Readers.MergeUnion -> ()
 
 sourceKOps :: ReaderSourceData -> Map.Map BiasedKey SerialisedEntry
 sourceKOps (FromWriteBufferData rd) = unRunData rd
 sourceKOps (FromRunData         rd) = unRunData rd
+sourceKOps (FromReadersData ty rds) = Map.unionsWith f (map sourceKOps rds)
+  where
+    f = case ty of
+      Readers.MergeLevel -> combine resolve
+      Readers.MergeUnion -> combineUnion resolve
+
+resolve :: ResolveSerialisedValue
+resolve (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
 
 --------------------------------------------------------------------------------
 -- Mock
@@ -123,7 +168,7 @@ newMock :: Maybe SerialisedKey
 newMock offset =
       MockReaders . Map.toList . Map.unions
     . zipWith (\i -> Map.mapKeysMonotonic (\k -> (k, RunNumber i))) [0..]
-    . map (skip . Map.mapKeysMonotonic coerce . sourceKOps)
+    . map (skip . Map.mapKeysMonotonic serialiseKey . sourceKOps)
   where
     skip = maybe id (\k -> Map.dropWhileAntitone (< k)) offset
 
@@ -280,25 +325,28 @@ instance InLockstep ReadersState where
     -> ReadersVal a
     -> [String]
   tagStep (ReadersState before, ReadersState after) action _result = concat
-    -- Directly using strings, since there is only a small number of tags.
-    [ [ "NewEntries " <> showPowersOf 10 numEntries
-      | New _ sources <- [action]
-      , let numEntries = sum (map (Map.size . sourceKOps) sources)
+      -- Directly using strings, since there is only a small number of tags.
+      [ [ "NewEntries " <> showPowersOf 10 numEntries
+        | New _ sources <- [action]
+        , let numEntries = sum (map (Map.size . sourceKOps) sources)
+        ]
+      , [ "NewEntriesKeyDuplicates " <> showPowersOf 2 keyCount
+        | New _ sources <- [action]
+        , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . sourceKOps) sources)
+        , keyCount <- Map.elems keyCounts
+        , keyCount > 1
+        ]
+      , [ "NewDepth " <> showPowersOf 2 (maximum (0 : map depth sources))
+        | New _ sources <- [action]
+        ]
+      , [ "ReadersFullyDrained"
+        | not (isEmpty before), isEmpty after
+        ]
+      , [ "DropWhileKeyDropped " <> showPowersOf 2 (length dropped)
+        | DropWhileKey key <- [action]
+        , let dropped = takeWhile ((== key) . fst . fst) (mockEntries before)
+        ]
       ]
-    , [ "NewEntriesKeyDuplicates " <> showPowersOf 2 keyCount
-      | New _ sources <- [action]
-      , let keyCounts = Map.unionsWith (+) (map (Map.map (const 1) . sourceKOps) sources)
-      , keyCount <- Map.elems keyCounts
-      , keyCount > 1
-      ]
-    , [ "ReadersFullyDrained"
-      | not (isEmpty before), isEmpty after
-      ]
-    , [ "DropWhileKeyDropped " <> showPowersOf 2 (length dropped)
-      | DropWhileKey key <- [action]
-      , let dropped = takeWhile ((== key) . fst . fst) (mockEntries before)
-      ]
-    ]
 
 runMock ::
      Action (Lockstep ReadersState) a
@@ -371,16 +419,7 @@ runIO act lu = case act of
       -- if runs are still being read, they need to be cleaned up
       traverse_ (liftIO . closeReadersCtx) mCtx
       counter <- liftIO $ newUniqCounter numRuns
-      sources <- forM srcDatas $ \case
-        FromWriteBufferData rd -> liftIO $ do
-          n <- incrUniqCounter counter
-          wbblobs <- WBB.new hfs (FS.mkFsPath [show (uniqueToInt n) <> ".wb.blobs"])
-          let kops = unRunData (serialiseRunData rd)
-          wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hfs wbblobs)) kops
-          return $ Readers.FromWriteBuffer wb wbblobs
-        FromRunData rd -> do
-          r <- liftIO $ unsafeCreateRun hfs hbio runParams (FS.mkFsPath []) counter $ serialiseRunData rd
-          return $ Readers.FromRun r
+      sources <- liftIO $ forM srcDatas (fromSourceData hfs hbio counter)
       newReaders <- liftIO $ do
         let offsetKey = maybe Readers.NoOffsetKey (Readers.OffsetKey . coerce) offset
         mreaders <- Readers.new offsetKey sources
@@ -406,6 +445,19 @@ runIO act lu = case act of
       (n, hasMore) <- Readers.dropWhileKey r k
       return (hasMore, (n, hasMore))
   where
+    fromSourceData hfs hbio counter = \case
+        FromWriteBufferData rd -> do
+          n <- incrUniqCounter counter
+          wbblobs <- WBB.new hfs (FS.mkFsPath [show (uniqueToInt n) <> ".wb.blobs"])
+          let kops = unRunData (serialiseRunData rd)
+          wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hfs wbblobs)) kops
+          return $ Readers.FromWriteBuffer wb wbblobs
+        FromRunData rd -> do
+          r <- unsafeCreateRun hfs hbio runParams (FS.mkFsPath []) counter $ serialiseRunData rd
+          return $ Readers.FromRun r
+        FromReadersData ty rds -> do
+          Readers.FromReaders ty <$> traverse (fromSourceData hfs hbio counter) rds
+
     pop = expectReaders $ \hfs r -> do
       (key, e, hasMore) <- Readers.pop r
       fullEntry <- toMockEntry hfs e
