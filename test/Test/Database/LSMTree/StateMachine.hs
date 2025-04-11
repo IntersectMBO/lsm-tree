@@ -730,10 +730,12 @@ data Action' h a where
     => Var h (V.Vector (WrapBlobRef h IO b))
     -> Act' h (V.Vector (WrapBlob b))
   -- Snapshots
-  CreateSnapshot ::
+  SaveSnapshot ::
        C k v b
     => Maybe SilentCorruption
-    -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
+    -> R.SnapshotName
+    -> R.SnapshotLabel
+    -> Var h (WrapTable h IO k v b)
     -> Act' h ()
   OpenSnapshot   ::
        C k v b
@@ -824,8 +826,8 @@ instance ( Eq (Class.TableConfig h)
         Just mups1 == cast mups2 && Just var1 == cast var2
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
           Just vars1 == cast vars2
-      go (CreateSnapshot mcorr1 label1 name1 var1) (CreateSnapshot mcorr2 label2 name2 var2) =
-          mcorr1 == mcorr2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
+      go (SaveSnapshot mcorr1 name1 label1 var1) (SaveSnapshot mcorr2 name2 label2 var2) =
+          mcorr1 == mcorr2 && name1 == name2 && label1 == label2 && Just var1 == cast var2
       go
         (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label1 name1)
         (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label2 name2) =
@@ -862,7 +864,7 @@ instance ( Eq (Class.TableConfig h)
           Deletes{} -> ()
           Mupserts{} -> ()
           RetrieveBlobs{} -> ()
-          CreateSnapshot{} -> ()
+          SaveSnapshot{} -> ()
           OpenSnapshot{} -> ()
           DeleteSnapshot{} -> ()
           ListSnapshots{} -> ()
@@ -1002,7 +1004,7 @@ instance ( Eq (Class.TableConfig h)
       Deletes _ tableVar            -> [SomeGVar tableVar]
       Mupserts _ tableVar           -> [SomeGVar tableVar]
       RetrieveBlobs blobsVar        -> [SomeGVar blobsVar]
-      CreateSnapshot _ _ _ tableVar -> [SomeGVar tableVar]
+      SaveSnapshot   _ _ _ tableVar -> [SomeGVar tableVar]
       OpenSnapshot{}                -> []
       DeleteSnapshot _              -> []
       ListSnapshots                 -> []
@@ -1203,7 +1205,7 @@ instance ( Eq (Class.TableConfig h)
       Deletes{}             -> OEither $ bimap OId OId result
       Mupserts{}            -> OEither $ bimap OId OId result
       RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
-      CreateSnapshot{}      -> OEither $ bimap OId OId result
+      SaveSnapshot{}        -> OEither $ bimap OId OId result
       OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
       DeleteSnapshot{}      -> OEither $ bimap OId OId result
       ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
@@ -1231,7 +1233,7 @@ instance ( Eq (Class.TableConfig h)
       Deletes{}             -> Just Dict
       Mupserts{}            -> Just Dict
       RetrieveBlobs{}       -> Just Dict
-      CreateSnapshot{}      -> Just Dict
+      SaveSnapshot{}        -> Just Dict
       OpenSnapshot{}        -> Nothing
       DeleteSnapshot{}      -> Just Dict
       ListSnapshots{}       -> Just Dict
@@ -1269,7 +1271,7 @@ instance ( Eq (Class.TableConfig h)
       Deletes{}             -> OEither $ bimap OId OId result
       Mupserts{}            -> OEither $ bimap OId OId result
       RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
-      CreateSnapshot{}      -> OEither $ bimap OId OId result
+      SaveSnapshot{}        -> OEither $ bimap OId OId result
       OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
       DeleteSnapshot{}      -> OEither $ bimap OId OId result
       ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
@@ -1297,7 +1299,7 @@ instance ( Eq (Class.TableConfig h)
       Deletes{}             -> Just Dict
       Mupserts{}            -> Just Dict
       RetrieveBlobs{}       -> Just Dict
-      CreateSnapshot{}      -> Just Dict
+      SaveSnapshot{}        -> Just Dict
       OpenSnapshot{}        -> Nothing
       DeleteSnapshot{}      -> Just Dict
       ListSnapshots{}       -> Just Dict
@@ -1407,7 +1409,7 @@ runModel lookUp (Action merrs action') = case action' of
       . Model.runModelMWithInjectedErrors merrs
           (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
           (pure ()) -- TODO(err)
-    CreateSnapshot mcorr label name tableVar ->
+    SaveSnapshot mcorr name label tableVar ->
       wrap MUnit
         . Model.runModelMWithInjectedErrors merrs
             (do Model.createSnapshot name label (getTable $ lookUp tableVar)
@@ -1552,9 +1554,9 @@ runIO action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
             (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
             (\_ -> pure ()) -- TODO(err)
-        CreateSnapshot mcorr label name tableVar ->
+        SaveSnapshot mcorr name label tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
+          runRealWithInjectedErrors "SaveSnapshot" env merrs
             (do Class.createSnapshot label name table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
@@ -1663,9 +1665,9 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
             (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
             (\_ -> pure ()) -- TODO(err)
-        CreateSnapshot mcorr label name tableVar ->
+        SaveSnapshot mcorr name label tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
+          runRealWithInjectedErrors "SaveSnapshot" env merrs
             (do Class.createSnapshot label name table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
@@ -1829,7 +1831,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         Deletes{} -> ()
         Mupserts{} -> ()
         RetrieveBlobs{} -> ()
-        CreateSnapshot{} -> ()
+        SaveSnapshot{} -> ()
         DeleteSnapshot{} -> ()
         ListSnapshots{} -> ()
         OpenSnapshot{} -> ()
@@ -1968,7 +1970,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
-            CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
+            SaveSnapshot <$> genCorruption <*> genUnusedSnapshotName <*> pure label <*> genTableVar)
         | not (null unusedSnapshotNames)
           -- TODO: should errors and corruption be generated at the same time,
           -- or should they be mutually exclusive?
@@ -2127,7 +2129,7 @@ dictIsTypeable = \case
       Deletes{}        -> Dict
       Mupserts{}       -> Dict
       RetrieveBlobs{}  -> Dict
-      CreateSnapshot{} -> Dict
+      SaveSnapshot{}   -> Dict
       OpenSnapshot{}   -> Dict
       DeleteSnapshot{} -> Dict
       ListSnapshots{}  -> Dict
@@ -2329,7 +2331,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
     -- === Tags
 
     updSnapshotted stats = case (action', result) of
-      (CreateSnapshot _ _ name _, MEither (Right (MUnit ()))) -> stats {
+      (SaveSnapshot _ name _ _, MEither (Right (MUnit ()))) -> stats {
           snapshotted = Set.insert name (snapshotted stats)
         }
       (DeleteSnapshot name, MEither (Right (MUnit ()))) -> stats {
@@ -2434,7 +2436,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         CloseCursor{}         -> stats
         ReadCursor{}          -> stats
         RetrieveBlobs{}       -> stats
-        CreateSnapshot{}      -> stats
+        SaveSnapshot{}        -> stats
         DeleteSnapshot{}      -> stats
         ListSnapshots{}       -> stats
       where
@@ -2535,7 +2537,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         CloseCursor{} -> stats
         ReadCursor{} -> stats
         RetrieveBlobs{} -> stats
-        CreateSnapshot{} -> stats
+        SaveSnapshot{} -> stats
         OpenSnapshot{} -> stats
         DeleteSnapshot{} -> stats
         ListSnapshots{} -> stats
@@ -2602,9 +2604,9 @@ data Tag =
     -- | Delete a missing snapshot
   | DeleteMissingSnapshot
     -- | A corrupted snapshot was created successfully
-  | CreateSnapshotCorrupted R.SnapshotName
+  | SaveSnapshotCorrupted R.SnapshotName
     -- | An /un/corrupted snapshot was created successfully
-  | CreateSnapshotUncorrupted R.SnapshotName
+  | SaveSnapshotUncorrupted R.SnapshotName
     -- | A snapshot failed to open because we detected that the snapshot was
     -- corrupt
   | OpenSnapshotDetectsCorruption R.SnapshotName
@@ -2628,13 +2630,13 @@ tagStep' (ModelState _stateBefore statsBefore,
     , tagOpenMissingSnapshot
     , tagDeleteExistingSnapshot
     , tagDeleteMissingSnapshot
-    , tagCreateSnapshotCorruptedOrUncorrupted
+    , tagSaveSnapshotCorruptedOrUncorrupted
     , tagOpenSnapshotDetectsCorruption
     , tagOpenSnapshotUnion
     ]
   where
     tagSnapshotTwice
-      | CreateSnapshot _ _ name _ <- action'
+      | SaveSnapshot _ name _ _ <- action'
       , name `Set.member` snapshotted statsBefore
       = Just SnapshotTwice
       | otherwise
@@ -2668,12 +2670,12 @@ tagStep' (ModelState _stateBefore statsBefore,
       | otherwise
       = Nothing
 
-    tagCreateSnapshotCorruptedOrUncorrupted
-      | CreateSnapshot mcorr _ name _ <- action'
+    tagSaveSnapshotCorruptedOrUncorrupted
+      | SaveSnapshot mcorr name _ _ <- action'
       , MEither (Right (MUnit ())) <- result
       = Just $ case mcorr of
-          Just (_ :: SilentCorruption) -> CreateSnapshotCorrupted name
-          _                            -> CreateSnapshotUncorrupted name
+          Just (_ :: SilentCorruption) -> SaveSnapshotCorrupted name
+          _                            -> SaveSnapshotUncorrupted name
       | otherwise
       = Nothing
 
