@@ -737,10 +737,11 @@ data Action' h a where
     -> R.SnapshotLabel
     -> Var h (WrapTable h IO k v b)
     -> Act' h ()
-  OpenSnapshot   ::
+  OpenTableFromSnapshot ::
        C k v b
     => {-# UNPACK #-} !(PrettyProxy (k, v, b))
-    -> R.SnapshotLabel -> R.SnapshotName
+    -> R.SnapshotName
+    -> R.SnapshotLabel
     -> Act' h (WrapTable h IO k v b)
   DeleteSnapshot :: R.SnapshotName -> Act' h ()
   ListSnapshots  :: Act' h [R.SnapshotName]
@@ -825,12 +826,12 @@ instance ( Eq (Class.TableConfig h)
       go (Mupserts mups1 var1) (Mupserts mups2 var2) =
         Just mups1 == cast mups2 && Just var1 == cast var2
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
-          Just vars1 == cast vars2
+        Just vars1 == cast vars2
       go (SaveSnapshot mcorr1 name1 label1 var1) (SaveSnapshot mcorr2 name2 label2 var2) =
-          mcorr1 == mcorr2 && name1 == name2 && label1 == label2 && Just var1 == cast var2
+        mcorr1 == mcorr2 && name1 == name2 && label1 == label2 && Just var1 == cast var2
       go
-        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label1 name1)
-        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label2 name2) =
+        (OpenTableFromSnapshot (PrettyProxy :: PrettyProxy kvb) name1 label1)
+        (OpenTableFromSnapshot (PrettyProxy :: PrettyProxy kvb) name2 label2) =
           label1 == label2 && name1 == name2
       go (DeleteSnapshot name1) (DeleteSnapshot name2) =
         name1 == name2
@@ -865,7 +866,7 @@ instance ( Eq (Class.TableConfig h)
           Mupserts{} -> ()
           RetrieveBlobs{} -> ()
           SaveSnapshot{} -> ()
-          OpenSnapshot{} -> ()
+          OpenTableFromSnapshot{} -> ()
           DeleteSnapshot{} -> ()
           ListSnapshots{} -> ()
           Duplicate{} -> ()
@@ -992,27 +993,27 @@ instance ( Eq (Class.TableConfig h)
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars (Action _ action') = case action' of
-      New _ _                       -> []
-      Close tableVar                -> [SomeGVar tableVar]
-      Lookups _ tableVar            -> [SomeGVar tableVar]
-      RangeLookup _ tableVar        -> [SomeGVar tableVar]
-      NewCursor _ tableVar          -> [SomeGVar tableVar]
-      CloseCursor cursorVar         -> [SomeGVar cursorVar]
-      ReadCursor _ cursorVar        -> [SomeGVar cursorVar]
-      Updates _ tableVar            -> [SomeGVar tableVar]
-      Inserts _ tableVar            -> [SomeGVar tableVar]
-      Deletes _ tableVar            -> [SomeGVar tableVar]
-      Mupserts _ tableVar           -> [SomeGVar tableVar]
-      RetrieveBlobs blobsVar        -> [SomeGVar blobsVar]
-      SaveSnapshot   _ _ _ tableVar -> [SomeGVar tableVar]
-      OpenSnapshot{}                -> []
-      DeleteSnapshot _              -> []
-      ListSnapshots                 -> []
-      Duplicate tableVar            -> [SomeGVar tableVar]
-      Union table1Var table2Var     -> [SomeGVar table1Var, SomeGVar table2Var]
-      Unions tableVars              -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
-      RemainingUnionDebt tableVar   -> [SomeGVar tableVar]
-      SupplyUnionCredits tableVar _ -> [SomeGVar tableVar]
+      New _ _                        -> []
+      Close tableVar                 -> [SomeGVar tableVar]
+      Lookups _ tableVar             -> [SomeGVar tableVar]
+      RangeLookup _ tableVar         -> [SomeGVar tableVar]
+      NewCursor _ tableVar           -> [SomeGVar tableVar]
+      CloseCursor cursorVar          -> [SomeGVar cursorVar]
+      ReadCursor _ cursorVar         -> [SomeGVar cursorVar]
+      Updates _ tableVar             -> [SomeGVar tableVar]
+      Inserts _ tableVar             -> [SomeGVar tableVar]
+      Deletes _ tableVar             -> [SomeGVar tableVar]
+      Mupserts _ tableVar            -> [SomeGVar tableVar]
+      RetrieveBlobs blobsVar         -> [SomeGVar blobsVar]
+      SaveSnapshot   _ _ _ tableVar  -> [SomeGVar tableVar]
+      OpenTableFromSnapshot{}        -> []
+      DeleteSnapshot _               -> []
+      ListSnapshots                  -> []
+      Duplicate tableVar             -> [SomeGVar tableVar]
+      Union table1Var table2Var      -> [SomeGVar table1Var, SomeGVar table2Var]
+      Unions tableVars               -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
+      RemainingUnionDebt tableVar    -> [SomeGVar tableVar]
+      SupplyUnionCredits tableVar _  -> [SomeGVar tableVar]
       SupplyPortionOfDebt tableVar _ -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
@@ -1190,59 +1191,59 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h IO) a
     -> Obs h a
   observeReal _proxy (Action _ action') result = case action' of
-      New{}                 -> OEither $ bimap OId (const OTable) result
-      Close{}               -> OEither $ bimap OId OId result
-      Lookups{}             -> OEither $
+      New{}                   -> OEither $ bimap OId (const OTable) result
+      Close{}                 -> OEither $ bimap OId OId result
+      Lookups{}               -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}         -> OEither $
+      RangeLookup{}           -> OEither $
           bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
-      NewCursor{}           -> OEither $ bimap OId (const OCursor) result
-      CloseCursor{}         -> OEither $ bimap OId OId result
-      ReadCursor{}          -> OEither $
+      NewCursor{}             -> OEither $ bimap OId (const OCursor) result
+      CloseCursor{}           -> OEither $ bimap OId OId result
+      ReadCursor{}            -> OEither $
           bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
-      Updates{}             -> OEither $ bimap OId OId result
-      Inserts{}             -> OEither $ bimap OId OId result
-      Deletes{}             -> OEither $ bimap OId OId result
-      Mupserts{}            -> OEither $ bimap OId OId result
-      RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
-      SaveSnapshot{}        -> OEither $ bimap OId OId result
-      OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
-      DeleteSnapshot{}      -> OEither $ bimap OId OId result
-      ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}           -> OEither $ bimap OId (const OTable) result
-      Union{}               -> OEither $ bimap OId (const OTable) result
-      Unions{}              -> OEither $ bimap OId (const OTable) result
-      RemainingUnionDebt{}  -> OEither $ bimap OId OId result
-      SupplyUnionCredits{}  -> OEither $ bimap OId OUnionCredits result
-      SupplyPortionOfDebt{} -> OEither $ bimap OId OUnionCreditsPortion result
+      Updates{}               -> OEither $ bimap OId OId result
+      Inserts{}               -> OEither $ bimap OId OId result
+      Deletes{}               -> OEither $ bimap OId OId result
+      Mupserts{}              -> OEither $ bimap OId OId result
+      RetrieveBlobs{}         -> OEither $ bimap OId (OVector . fmap OBlob) result
+      SaveSnapshot{}          -> OEither $ bimap OId OId result
+      OpenTableFromSnapshot{} -> OEither $ bimap OId (const OTable) result
+      DeleteSnapshot{}        -> OEither $ bimap OId OId result
+      ListSnapshots{}         -> OEither $ bimap OId (OList . fmap OId) result
+      Duplicate{}             -> OEither $ bimap OId (const OTable) result
+      Union{}                 -> OEither $ bimap OId (const OTable) result
+      Unions{}                -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{}    -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}    -> OEither $ bimap OId OUnionCredits result
+      SupplyPortionOfDebt{}   -> OEither $ bimap OId OUnionCreditsPortion result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h IO) a)))
   showRealResponse _ (Action _ action') = case action' of
-      New{}                 -> Nothing
-      Close{}               -> Just Dict
-      Lookups{}             -> Nothing
-      RangeLookup{}         -> Nothing
-      NewCursor{}           -> Nothing
-      CloseCursor{}         -> Just Dict
-      ReadCursor{}          -> Nothing
-      Updates{}             -> Just Dict
-      Inserts{}             -> Just Dict
-      Deletes{}             -> Just Dict
-      Mupserts{}            -> Just Dict
-      RetrieveBlobs{}       -> Just Dict
-      SaveSnapshot{}        -> Just Dict
-      OpenSnapshot{}        -> Nothing
-      DeleteSnapshot{}      -> Just Dict
-      ListSnapshots{}       -> Just Dict
-      Duplicate{}           -> Nothing
-      Union{}               -> Nothing
-      Unions{}              -> Nothing
-      RemainingUnionDebt{}  -> Just Dict
-      SupplyUnionCredits{}  -> Just Dict
-      SupplyPortionOfDebt{} -> Just Dict
+      New{}                   -> Nothing
+      Close{}                 -> Just Dict
+      Lookups{}               -> Nothing
+      RangeLookup{}           -> Nothing
+      NewCursor{}             -> Nothing
+      CloseCursor{}           -> Just Dict
+      ReadCursor{}            -> Nothing
+      Updates{}               -> Just Dict
+      Inserts{}               -> Just Dict
+      Deletes{}               -> Just Dict
+      Mupserts{}              -> Just Dict
+      RetrieveBlobs{}         -> Just Dict
+      SaveSnapshot{}          -> Just Dict
+      OpenTableFromSnapshot{} -> Nothing
+      DeleteSnapshot{}        -> Just Dict
+      ListSnapshots{}         -> Just Dict
+      Duplicate{}             -> Nothing
+      Union{}                 -> Nothing
+      Unions{}                -> Nothing
+      RemainingUnionDebt{}    -> Just Dict
+      SupplyUnionCredits{}    -> Just Dict
+      SupplyPortionOfDebt{}   -> Just Dict
 
 instance ( Eq (Class.TableConfig h)
          , Class.IsTable h
@@ -1256,59 +1257,59 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h (IOSim s)) a
     -> Obs h a
   observeReal _proxy (Action _ action') result = case action' of
-      New{}                 -> OEither $ bimap OId (const OTable) result
-      Close{}               -> OEither $ bimap OId OId result
-      Lookups{}             -> OEither $
+      New{}                   -> OEither $ bimap OId (const OTable) result
+      Close{}                 -> OEither $ bimap OId OId result
+      Lookups{}               -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}         -> OEither $
+      RangeLookup{}           -> OEither $
           bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
-      NewCursor{}           -> OEither $ bimap OId (const OCursor) result
-      CloseCursor{}         -> OEither $ bimap OId OId result
-      ReadCursor{}          -> OEither $
+      NewCursor{}             -> OEither $ bimap OId (const OCursor) result
+      CloseCursor{}           -> OEither $ bimap OId OId result
+      ReadCursor{}            -> OEither $
           bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
-      Updates{}             -> OEither $ bimap OId OId result
-      Inserts{}             -> OEither $ bimap OId OId result
-      Deletes{}             -> OEither $ bimap OId OId result
-      Mupserts{}            -> OEither $ bimap OId OId result
-      RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
-      SaveSnapshot{}        -> OEither $ bimap OId OId result
-      OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
-      DeleteSnapshot{}      -> OEither $ bimap OId OId result
-      ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}           -> OEither $ bimap OId (const OTable) result
-      Union{}               -> OEither $ bimap OId (const OTable) result
-      Unions{}              -> OEither $ bimap OId (const OTable) result
-      RemainingUnionDebt{}  -> OEither $ bimap OId OId result
-      SupplyUnionCredits{}  -> OEither $ bimap OId OUnionCredits result
-      SupplyPortionOfDebt{} -> OEither $ bimap OId OUnionCreditsPortion result
+      Updates{}               -> OEither $ bimap OId OId result
+      Inserts{}               -> OEither $ bimap OId OId result
+      Deletes{}               -> OEither $ bimap OId OId result
+      Mupserts{}              -> OEither $ bimap OId OId result
+      RetrieveBlobs{}         -> OEither $ bimap OId (OVector . fmap OBlob) result
+      SaveSnapshot{}          -> OEither $ bimap OId OId result
+      OpenTableFromSnapshot{} -> OEither $ bimap OId (const OTable) result
+      DeleteSnapshot{}        -> OEither $ bimap OId OId result
+      ListSnapshots{}         -> OEither $ bimap OId (OList . fmap OId) result
+      Duplicate{}             -> OEither $ bimap OId (const OTable) result
+      Union{}                 -> OEither $ bimap OId (const OTable) result
+      Unions{}                -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{}    -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}    -> OEither $ bimap OId OUnionCredits result
+      SupplyPortionOfDebt{}   -> OEither $ bimap OId OUnionCreditsPortion result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h (IOSim s)) a)))
   showRealResponse _ (Action _ action') = case action' of
-      New{}                 -> Nothing
-      Close{}               -> Just Dict
-      Lookups{}             -> Nothing
-      RangeLookup{}         -> Nothing
-      NewCursor{}           -> Nothing
-      CloseCursor{}         -> Just Dict
-      ReadCursor{}          -> Nothing
-      Updates{}             -> Just Dict
-      Inserts{}             -> Just Dict
-      Deletes{}             -> Just Dict
-      Mupserts{}            -> Just Dict
-      RetrieveBlobs{}       -> Just Dict
-      SaveSnapshot{}        -> Just Dict
-      OpenSnapshot{}        -> Nothing
-      DeleteSnapshot{}      -> Just Dict
-      ListSnapshots{}       -> Just Dict
-      Duplicate{}           -> Nothing
-      Union{}               -> Nothing
-      Unions{}              -> Nothing
-      RemainingUnionDebt{}  -> Just Dict
-      SupplyUnionCredits{}  -> Just Dict
-      SupplyPortionOfDebt{} -> Just Dict
+      New{}                   -> Nothing
+      Close{}                 -> Just Dict
+      Lookups{}               -> Nothing
+      RangeLookup{}           -> Nothing
+      NewCursor{}             -> Nothing
+      CloseCursor{}           -> Just Dict
+      ReadCursor{}            -> Nothing
+      Updates{}               -> Just Dict
+      Inserts{}               -> Just Dict
+      Deletes{}               -> Just Dict
+      Mupserts{}              -> Just Dict
+      RetrieveBlobs{}         -> Just Dict
+      SaveSnapshot{}          -> Just Dict
+      OpenTableFromSnapshot{} -> Nothing
+      DeleteSnapshot{}        -> Just Dict
+      ListSnapshots{}         -> Just Dict
+      Duplicate{}             -> Nothing
+      Union{}                 -> Nothing
+      Unions{}                -> Nothing
+      RemainingUnionDebt{}    -> Just Dict
+      SupplyUnionCredits{}    -> Just Dict
+      SupplyPortionOfDebt{}   -> Just Dict
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -1415,7 +1416,7 @@ runModel lookUp (Action merrs action') = case action' of
             (do Model.saveSnapshot name label (getTable $ lookUp tableVar)
                 forM_ mcorr $ \_ -> Model.corruptSnapshot name)
             (pure ()) -- TODO(err)
-    OpenSnapshot _ label name ->
+    OpenTableFromSnapshot _ name label ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
           (Model.openSnapshot name label)
@@ -1560,8 +1561,8 @@ runIO action lookUp = ReaderT $ \ !env -> do
             (do Class.saveSnapshot name label table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
-        OpenSnapshot _ label name ->
-          runRealWithInjectedErrors "OpenSnapshot" env merrs
+        OpenTableFromSnapshot _ name label ->
+          runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name ->
@@ -1671,8 +1672,8 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
             (do Class.saveSnapshot name label table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
-        OpenSnapshot _ label name ->
-          runRealWithInjectedErrors "OpenSnapshot" env merrs
+        OpenTableFromSnapshot _ name label ->
+          runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
             (WrapTable <$> Class.openSnapshot session label name)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name ->
@@ -1834,7 +1835,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         SaveSnapshot{} -> ()
         DeleteSnapshot{} -> ()
         ListSnapshots{} -> ()
-        OpenSnapshot{} -> ()
+        OpenTableFromSnapshot{} -> ()
         Duplicate{} -> ()
         Union{} -> ()
         Unions{} -> ()
@@ -1911,7 +1912,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         ]
 
      ++ [ (2, fmap Some $ (Action <$> genErrors <*>) $
-            OpenSnapshot @k @v @b PrettyProxy <$> pure label <*> genUsedSnapshotName)
+            OpenTableFromSnapshot @k @v @b PrettyProxy <$> genUsedSnapshotName <*> pure label)
         | length tableVars <= 5 -- no more than 5 tables at once
         , not (null usedSnapshotNames)
         , let genErrors = QC.frequency [
@@ -2117,28 +2118,28 @@ shrinkActionWithVars _ctx _st (Action merrs action') =
 -- typeable.
 dictIsTypeable :: Typeable h => Action' h a -> Dict (Typeable a)
 dictIsTypeable = \case
-      New{}            -> Dict
-      Close{}          -> Dict
-      Lookups{}        -> Dict
-      RangeLookup{}    -> Dict
-      NewCursor{}      -> Dict
-      CloseCursor{}    -> Dict
-      ReadCursor{}     -> Dict
-      Updates{}        -> Dict
-      Inserts{}        -> Dict
-      Deletes{}        -> Dict
-      Mupserts{}       -> Dict
-      RetrieveBlobs{}  -> Dict
-      SaveSnapshot{}   -> Dict
-      OpenSnapshot{}   -> Dict
-      DeleteSnapshot{} -> Dict
-      ListSnapshots{}  -> Dict
-      Duplicate{}      -> Dict
-      Union{}          -> Dict
-      Unions{}         -> Dict
-      RemainingUnionDebt{} -> Dict
-      SupplyUnionCredits{} -> Dict
-      SupplyPortionOfDebt{} -> Dict
+      New{}                   -> Dict
+      Close{}                 -> Dict
+      Lookups{}               -> Dict
+      RangeLookup{}           -> Dict
+      NewCursor{}             -> Dict
+      CloseCursor{}           -> Dict
+      ReadCursor{}            -> Dict
+      Updates{}               -> Dict
+      Inserts{}               -> Dict
+      Deletes{}               -> Dict
+      Mupserts{}              -> Dict
+      RetrieveBlobs{}         -> Dict
+      SaveSnapshot{}          -> Dict
+      OpenTableFromSnapshot{} -> Dict
+      DeleteSnapshot{}        -> Dict
+      ListSnapshots{}         -> Dict
+      Duplicate{}             -> Dict
+      Union{}                 -> Dict
+      Unions{}                -> Dict
+      RemainingUnionDebt{}    -> Dict
+      SupplyUnionCredits{}    -> Dict
+      SupplyPortionOfDebt{}   -> Dict
 
 shrinkAction'WithVars ::
      forall h a. (
@@ -2399,7 +2400,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         New{}
           | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
-        OpenSnapshot{}
+        OpenTableFromSnapshot{}
           | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
         Duplicate{}
@@ -2473,7 +2474,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
     updParentTable stats = case (action', result) of
         (New{}, MEither (Right (MTable tbl))) ->
           insertParentTableNew tbl stats
-        (OpenSnapshot{}, MEither (Right (MTable tbl))) ->
+        (OpenTableFromSnapshot{}, MEither (Right (MTable tbl))) ->
           insertParentTableNew tbl stats
         (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
           insertParentTableDerived [ptblVar] tbl stats
@@ -2538,7 +2539,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         ReadCursor{} -> stats
         RetrieveBlobs{} -> stats
         SaveSnapshot{} -> stats
-        OpenSnapshot{} -> stats
+        OpenTableFromSnapshot{} -> stats
         DeleteSnapshot{} -> stats
         ListSnapshots{} -> stats
         Duplicate{} -> stats
@@ -2609,9 +2610,9 @@ data Tag =
   | SaveSnapshotUncorrupted R.SnapshotName
     -- | A snapshot failed to open because we detected that the snapshot was
     -- corrupt
-  | OpenSnapshotDetectsCorruption R.SnapshotName
+  | OpenTableFromSnapshotDetectsCorruption R.SnapshotName
     -- | Opened a snapshot (successfully) for a table involving a union
-  | OpenSnapshotUnion
+  | OpenTableFromSnapshotUnion
   deriving stock (Show, Eq, Ord)
 
 -- | This is run for after every action
@@ -2631,8 +2632,8 @@ tagStep' (ModelState _stateBefore statsBefore,
     , tagDeleteExistingSnapshot
     , tagDeleteMissingSnapshot
     , tagSaveSnapshotCorruptedOrUncorrupted
-    , tagOpenSnapshotDetectsCorruption
-    , tagOpenSnapshotUnion
+    , tagOpenTableFromSnapshotDetectsCorruption
+    , tagOpenTableFromSnapshotUnion
     ]
   where
     tagSnapshotTwice
@@ -2643,14 +2644,14 @@ tagStep' (ModelState _stateBefore statsBefore,
       = Nothing
 
     tagOpenExistingSnapshot
-      | OpenSnapshot _ _ name <- action'
+      | OpenTableFromSnapshot _ name _ <- action'
       , name `Set.member` snapshotted statsBefore
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
-      | OpenSnapshot _ _ name <- action'
+      | OpenTableFromSnapshot _ name _ <- action'
       , not (name `Set.member` snapshotted statsBefore)
       = Just OpenMissingSnapshot
       | otherwise
@@ -2679,18 +2680,18 @@ tagStep' (ModelState _stateBefore statsBefore,
       | otherwise
       = Nothing
 
-    tagOpenSnapshotDetectsCorruption
-      | OpenSnapshot _ _ name <- action'
+    tagOpenTableFromSnapshotDetectsCorruption
+      | OpenTableFromSnapshot _ name _ <- action'
       , MEither (Left (MErr (Model.ErrSnapshotCorrupted _))) <- result
-      = Just (OpenSnapshotDetectsCorruption name)
+      = Just (OpenTableFromSnapshotDetectsCorruption name)
       | otherwise
       = Nothing
 
-    tagOpenSnapshotUnion
-      | OpenSnapshot{} <- action'
+    tagOpenTableFromSnapshotUnion
+      | OpenTableFromSnapshot{} <- action'
       , MEither (Right (MTable t)) <- result
       , Model.isUnionDescendant t == Model.IsUnionDescendant
-      = Just OpenSnapshotUnion
+      = Just OpenTableFromSnapshotUnion
       | otherwise
       = Nothing
 

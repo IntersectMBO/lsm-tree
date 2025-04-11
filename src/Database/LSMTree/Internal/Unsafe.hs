@@ -157,7 +157,7 @@ data LSMTreeTrace =
   | TraceCloseSession
     -- Table
   | TraceNewTable
-  | TraceOpenSnapshot SnapshotName OverrideDiskCachePolicy
+  | TraceOpenTableFromSnapshot SnapshotName OverrideDiskCachePolicy
   | TraceTable TableId TableTrace
   | TraceDeleteSnapshot SnapshotName
   | TraceListSnapshots
@@ -1306,7 +1306,7 @@ openSnapshot ::
   -> m (Table m h)
 openSnapshot sesh policyOveride label tableType snap resolve =
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
-    traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap policyOveride
+    traceWith (sessionTracer sesh) $ TraceOpenTableFromSnapshot snap policyOveride
     withOpenSession sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
         let hfs     = sessionHasFS seshEnv
