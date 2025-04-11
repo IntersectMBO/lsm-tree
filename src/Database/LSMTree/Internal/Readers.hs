@@ -33,6 +33,7 @@ import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan, RawBlobRef)
 import           Database.LSMTree.Internal.Entry (Entry (..))
+import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (OffsetKey (..),
                      RunReader (..))
@@ -137,13 +138,17 @@ data ReaderSource m h =
   | FromReaders     !ReadersMergeType ![ReaderSource m h]
 
 {-# SPECIALISE new ::
-     OffsetKey -> [ReaderSource IO h] -> IO (Maybe (Readers IO h)) #-}
+     ResolveSerialisedValue
+  -> OffsetKey
+  -> [ReaderSource IO h]
+  -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h.
      (MonadMask m, MonadST m, MonadSTM m)
-  => OffsetKey
+  => ResolveSerialisedValue
+  -> OffsetKey
   -> [ReaderSource m h]
   -> m (Maybe (Readers m h))
-new !offsetKey sources = do
+new resolve !offsetKey sources = do
     readers <- zipWithM (fromSource . ReaderNumber) [1..] sources
     for (nonEmpty (catMaybes readers)) $ \xs -> do
       (readersHeap, readCtx) <- Heap.newMutableHeap xs
@@ -155,14 +160,14 @@ new !offsetKey sources = do
         case src of
           FromWriteBuffer wb wbblobs -> do
             rs <- fromWB wb wbblobs
-            nextReadCtx n rs
+            nextReadCtx resolve n rs
           FromRun r -> do
             rs <- ReadRun <$> RunReader.new offsetKey r
-            nextReadCtx n rs
+            nextReadCtx resolve n rs
           FromReaders mergeType nestedSources -> do
-            new offsetKey nestedSources >>= \case
+            new resolve offsetKey nestedSources >>= \case
               Nothing -> return Nothing
-              Just rs -> nextReadCtx n (ReadReaders mergeType rs HasMore)
+              Just rs -> nextReadCtx resolve n (ReadReaders mergeType rs HasMore)
 
     fromWB :: WB.WriteBuffer -> Ref (WB.WriteBufferBlobs m h) -> m (Reader m h)
     fromWB wb wbblobs = do
@@ -216,33 +221,130 @@ peekKey Readers {..} = do
 data HasMore = HasMore | Drained
   deriving stock (Eq, Show)
 
--- TODO: avoid duplication with Merge.TreeMergeType?
-data ReadersMergeType = MergeLevel | MergeUnion
-  deriving stock (Eq, Show)
-
 {-# SPECIALISE pop ::
-     Readers IO h -> IO (SerialisedKey, RunReader.Entry IO h, HasMore) #-}
+     ResolveSerialisedValue
+  -> Readers IO h
+  -> IO (SerialisedKey, RunReader.Entry IO h, HasMore) #-}
 -- | Remove the entry with the smallest key and return it. If there are multiple
 -- entries with that key, it removes the one from the source that came first
 -- in list supplied to 'new'. No resolution of multiple entries takes place.
 pop ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => Readers m h
+  => ResolveSerialisedValue
+  -> Readers m h
   -> m (SerialisedKey, RunReader.Entry m h, HasMore)
-pop r@Readers {..} = do
+pop resolve r@Readers {..} = do
     ReadCtx {..} <- readMutVar readersNext
-    hasMore <- dropOne r readCtxNumber readCtxReader
+    hasMore <- dropOne resolve r readCtxNumber readCtxReader
     return (readCtxHeadKey, readCtxHeadEntry, hasMore)
 
+-- TODO: avoid duplication with Merge.TreeMergeType?
+data ReadersMergeType = MergeLevel | MergeUnion
+  deriving stock (Eq, Show)
+
+{-# SPECIALISE popResolved ::
+     ResolveSerialisedValue
+  -> ReadersMergeType
+  -> Readers IO h
+  -> IO (SerialisedKey, RunReader.Entry IO h, HasMore) #-}
+-- | Produces an entry with the smallest key, resolving all input entries if
+-- there are multiple. Therefore, the next call to 'peekKey' will return a
+-- larger key than the one returned here.
+--
+-- General notes on the code below:
+-- * It is quite similar to the one in Internal.Cursor and Internal.Merge. Maybe
+--   we can avoid some duplication.
+-- * Any function that doesn't take a 'hasMore' argument assumes that the
+--   readers have not been drained yet, so we must check before calling them.
+-- * There is probably opportunity for optimisations.
+--
+-- TODO: use this function in Internal.Cursor? Measure performance impact.
+popResolved ::
+     forall h m.
+     (MonadMask m, MonadST m, MonadSTM m)
+  => ResolveSerialisedValue
+  -> ReadersMergeType
+  -> Readers m h
+  -> m (SerialisedKey, RunReader.Entry m h, HasMore)
+popResolved resolve mergeType readers = readEntry
+  where
+    readEntry :: m (SerialisedKey, RunReader.Entry m h, HasMore)
+    readEntry = do
+        (key, entry, hasMore) <- pop resolve readers
+        case hasMore of
+          Drained -> do
+            return (key, entry, Drained)
+          HasMore -> do
+            case mergeType of
+              MergeLevel -> handleLevel key (RunReader.toFullEntry entry)
+              MergeUnion -> handleUnion key (RunReader.toFullEntry entry)
+
+    handleUnion :: SerialisedKey
+                -> Entry SerialisedValue (RawBlobRef m h)
+                -> m (SerialisedKey, RunReader.Entry m h, HasMore)
+    handleUnion key entry = do
+        nextKey <- peekKey readers
+        if nextKey /= key
+          then
+            -- No more entries for same key, done.
+            return (key, RunReader.Entry entry, HasMore)
+          else do
+            (_, nextEntry, hasMore) <- pop resolve readers
+            let resolved = Entry.combineUnion resolve entry
+                             (RunReader.toFullEntry nextEntry)
+            case hasMore of
+              HasMore -> handleUnion key resolved
+              Drained -> return (key, RunReader.Entry resolved, Drained)
+
+    handleLevel :: SerialisedKey
+                -> Entry SerialisedValue (RawBlobRef m h)
+                -> m (SerialisedKey, RunReader.Entry m h, HasMore)
+    handleLevel key entry =
+        case entry of
+          Mupdate v ->
+            handleMupdate key v
+          _ -> do
+            -- Anything but Mupdate supersedes all previous entries of
+            -- the same key, so we can simply drop them and are done.
+            hasMore' <- dropRemaining key
+            return (key, RunReader.Entry entry, hasMore')
+
+    -- Resolve a 'Mupsert' value with the other entries of the same key.
+    handleMupdate :: SerialisedKey
+                  -> SerialisedValue
+                  -> m (SerialisedKey, RunReader.Entry m h, HasMore)
+    handleMupdate key v = do
+        nextKey <- peekKey readers
+        if nextKey /= key
+          then
+            -- No more entries for same key, done.
+            return (key, RunReader.Entry (Mupdate v), HasMore)
+          else do
+            (_, nextEntry, hasMore) <- pop resolve readers
+            let resolved = Entry.combine resolve (Mupdate v)
+                             (RunReader.toFullEntry nextEntry)
+            case hasMore of
+              HasMore -> handleLevel key resolved
+              Drained -> return (key, RunReader.Entry resolved, Drained)
+
+    dropRemaining :: SerialisedKey -> m HasMore
+    dropRemaining key = do
+        (_, hasMore) <- dropWhileKey resolve readers key
+        return hasMore
+
 {-# SPECIALISE dropWhileKey ::
-     Readers IO h -> SerialisedKey -> IO (Int, HasMore) #-}
+     ResolveSerialisedValue
+  -> Readers IO h
+  -> SerialisedKey
+  -> IO (Int, HasMore) #-}
 -- | Drop all entries with a key that is smaller or equal to the supplied one.
 dropWhileKey ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => Readers m h
+  => ResolveSerialisedValue
+  -> Readers m h
   -> SerialisedKey
   -> m (Int, HasMore)  -- ^ How many were dropped?
-dropWhileKey Readers {..} key = do
+dropWhileKey resolve Readers {..} key = do
     cur <- readMutVar readersNext
     if readCtxHeadKey cur <= key
       then go 0 cur
@@ -250,7 +352,7 @@ dropWhileKey Readers {..} key = do
   where
     -- invariant: @readCtxHeadKey <= key@
     go !n ReadCtx {readCtxNumber, readCtxReader} = do
-        mNext <- nextReadCtx readCtxNumber readCtxReader >>= \case
+        mNext <- nextReadCtx resolve readCtxNumber readCtxReader >>= \case
           Nothing  -> Heap.extract readersHeap
           Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
         let !n' = n + 1
@@ -267,15 +369,20 @@ dropWhileKey Readers {..} key = do
                 return (n', HasMore)
 
 {-# SPECIALISE dropOne ::
-     Readers IO h -> ReaderNumber -> Reader IO h -> IO HasMore #-}
+     ResolveSerialisedValue
+  -> Readers IO h
+  -> ReaderNumber
+  -> Reader IO h
+  -> IO HasMore #-}
 dropOne ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => Readers m h
+  => ResolveSerialisedValue
+  -> Readers m h
   -> ReaderNumber
   -> Reader m h
   -> m HasMore
-dropOne Readers {..} number reader = do
-    mNext <- nextReadCtx number reader >>= \case
+dropOne resolve Readers {..} number reader = do
+    mNext <- nextReadCtx resolve number reader >>= \case
       Nothing  -> Heap.extract readersHeap
       Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
     case mNext of
@@ -286,13 +393,17 @@ dropOne Readers {..} number reader = do
         return HasMore
 
 {-# SPECIALISE nextReadCtx ::
-     ReaderNumber -> Reader IO h -> IO (Maybe (ReadCtx IO h)) #-}
+     ResolveSerialisedValue
+  -> ReaderNumber
+  -> Reader IO h
+  -> IO (Maybe (ReadCtx IO h)) #-}
 nextReadCtx ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => ReaderNumber
+  => ResolveSerialisedValue
+  -> ReaderNumber
   -> Reader m h
   -> m (Maybe (ReadCtx m h))
-nextReadCtx readCtxNumber readCtxReader =
+nextReadCtx resolve readCtxNumber readCtxReader =
     case readCtxReader of
       ReadBuffer r -> atomicModifyMutVar r $ \case
         [] ->
@@ -309,9 +420,8 @@ nextReadCtx readCtxNumber readCtxReader =
         Drained ->
           return Nothing
         HasMore -> do
-          -- TODO: This is incorrect. We can't just pop one entry out of the
-          -- readers, we need to resolve all entries with the same key!
-          (readCtxHeadKey, readCtxHeadEntry, hasMore') <- pop readers
+          (readCtxHeadKey, readCtxHeadEntry, hasMore') <-
+            popResolved resolve mergeType readers
           return $ Just ReadCtx {
               -- TODO: reduce allocations?
               readCtxReader = ReadReaders mergeType readers hasMore'

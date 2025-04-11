@@ -839,10 +839,10 @@ rangeLookup resolve range t fromEntry = do
     traceWith (tableTracer t) $ TraceRangeLookup range
     case range of
       FromToExcluding lb ub ->
-        withCursor (OffsetKey lb) t $ \cursor ->
+        withCursor resolve (OffsetKey lb) t $ \cursor ->
           go cursor (< ub) []
       FromToIncluding lb ub ->
-        withCursor (OffsetKey lb) t $ \cursor ->
+        withCursor resolve (OffsetKey lb) t $ \cursor ->
           go cursor (<= ub) []
   where
     -- TODO: tune!
@@ -997,30 +997,34 @@ data CursorEnv m h = CursorEnv {
   }
 
 {-# SPECIALISE withCursor ::
-     OffsetKey
+     ResolveSerialisedValue
+  -> OffsetKey
   -> Table IO h
   -> (Cursor IO h -> IO a)
   -> IO a #-}
 -- | See 'Database.LSMTree.withCursor'.
 withCursor ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => OffsetKey
+  => ResolveSerialisedValue
+  -> OffsetKey
   -> Table m h
   -> (Cursor m h -> m a)
   -> m a
-withCursor offsetKey t = bracket (newCursor offsetKey t) closeCursor
+withCursor resolve offsetKey t = bracket (newCursor resolve offsetKey t) closeCursor
 
 {-# SPECIALISE newCursor ::
-     OffsetKey
+     ResolveSerialisedValue
+  -> OffsetKey
   -> Table IO h
   -> IO (Cursor IO h) #-}
 -- | See 'Database.LSMTree.newCursor'.
 newCursor ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => OffsetKey
+  => ResolveSerialisedValue
+  -> OffsetKey
   -> Table m h
   -> m (Cursor m h)
-newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
+newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
     let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv tEnv
     cursorId <- uniqueToCursorId <$>
@@ -1039,7 +1043,7 @@ newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
               -- TODO: include union level
         cursorReaders <-
           withRollbackMaybe reg
-            (Readers.new offsetKey cursorSources)
+            (Readers.new resolve offsetKey cursorSources)
             Readers.close
         let cursorWBB = wbblobs
         cursorState <- newMVar (CursorOpen CursorEnv {..})

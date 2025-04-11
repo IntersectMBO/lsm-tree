@@ -422,7 +422,7 @@ runIO act lu = case act of
       sources <- liftIO $ forM srcDatas (fromSourceData hfs hbio counter)
       newReaders <- liftIO $ do
         let offsetKey = maybe Readers.NoOffsetKey (Readers.OffsetKey . coerce) offset
-        mreaders <- Readers.new offsetKey sources
+        mreaders <- Readers.new resolve offsetKey sources
         -- TODO: tidy up cleanup code?
         case mreaders of
           Nothing -> do
@@ -442,7 +442,7 @@ runIO act lu = case act of
       Right (_, _, Drained) -> return (Left ()) -- n > 1, so n too big
       Right (_, _, HasMore) -> runIO (Pop (n-1)) lu
     DropWhileKey k -> expectReaders $ \_ r -> do
-      (n, hasMore) <- Readers.dropWhileKey r k
+      (n, hasMore) <- Readers.dropWhileKey resolve r k
       return (hasMore, (n, hasMore))
   where
     fromSourceData hfs hbio counter = \case
@@ -459,7 +459,7 @@ runIO act lu = case act of
           Readers.FromReaders ty <$> traverse (fromSourceData hfs hbio counter) rds
 
     pop = expectReaders $ \hfs r -> do
-      (key, e, hasMore) <- Readers.pop r
+      (key, e, hasMore) <- Readers.pop resolve r
       fullEntry <- toMockEntry hfs e
       return (hasMore, (key, fullEntry, hasMore))
 
