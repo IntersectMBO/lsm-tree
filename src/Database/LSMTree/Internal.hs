@@ -89,7 +89,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (forM, unless, void)
+import           Control.Monad (forM, unless, void, (<$!>))
 import           Control.Monad.Class.MonadAsync as Async
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
@@ -991,9 +991,13 @@ data CursorEnv m h = CursorEnv {
     -- untile the cursor is closed.
   , cursorWBB        :: !(Ref (WBB.WriteBufferBlobs m h))
 
-    -- | The runs held open by the cursor. We must release these references
-    -- when the cursor gets closed.
+    -- | The runs from regular levels that are held open by the cursor. We must
+    -- release these references when the cursor gets closed.
   , cursorRuns       :: !(V.Vector (Ref (Run m h)))
+
+    -- | The runs from the union level that are held open by the cursor. We must
+    -- release these references when the cursor gets closed.
+  , cursorUnion      :: !(Maybe (UnionCache m h))
   }
 
 {-# SPECIALISE withCursor ::
@@ -1036,11 +1040,15 @@ newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withActionRegistry $ \reg -> do
-        (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent tEnv)
+        (wb, wbblobs, cursorRuns, cursorUnion) <-
+          dupTableContent reg (tableContent tEnv)
         let cursorSources =
                 Readers.FromWriteBuffer wb wbblobs
               : fmap Readers.FromRun (V.toList cursorRuns)
-              -- TODO: include union level
+             <> case cursorUnion of
+                  Nothing -> []
+                  Just (UnionCache treeCache) ->
+                    [lookupTreeToReaderSource treeCache]
         cursorReaders <-
           withRollbackMaybe reg
             (Readers.new resolve offsetKey cursorSources)
@@ -1068,7 +1076,26 @@ newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
           let runs = cachedRuns (tableCache content)
           runs' <- V.forM runs $ \r ->
                      withRollback reg (dupRef r) releaseRef
-          pure (wb, wbblobs', runs')
+          unionCache <- case tableUnionLevel content of
+            NoUnion   -> pure Nothing
+            Union _ c -> Just <$!> duplicateUnionCache reg c
+          pure (wb, wbblobs', runs', unionCache)
+
+lookupTreeToReaderSource ::
+     MT.LookupTree (V.Vector (Ref (Run m h))) -> Readers.ReaderSource m h
+lookupTreeToReaderSource = \case
+    MT.LookupBatch v ->
+      case map Readers.FromRun (V.toList v) of
+        [src] -> src
+        srcs  -> Readers.FromReaders Readers.MergeLevel srcs
+    MT.LookupNode ty children ->
+      Readers.FromReaders
+        (convertMergeType ty)
+        (map lookupTreeToReaderSource (V.toList children))
+  where
+    convertMergeType = \case
+      MR.MergeUnion -> Readers.MergeUnion
+      MR.MergeLevel -> Readers.MergeLevel
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.closeCursor'.
@@ -1091,6 +1118,7 @@ closeCursor Cursor {..} = do
 
         forM_ cursorReaders $ delayedCommit reg . Readers.close
         V.forM_ cursorRuns $ delayedCommit reg . releaseRef
+        forM_ cursorUnion $ releaseUnionCache reg
         delayedCommit reg (releaseRef cursorWBB)
         return CursorClosed
 
