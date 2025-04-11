@@ -1673,7 +1673,11 @@ ensureSessionsMatch (t :| ts) = do
   Table union: debt and credit
 -------------------------------------------------------------------------------}
 
--- | See 'Database.LSMTree.UnionDebt'.
+{- |
+The amount of union debt is an upper bound on the amount of computation that
+needs to be performed before an incremental union is completed. This includes
+the cost of completing incremental unions that were part of a union's input.
+-}
 newtype UnionDebt = UnionDebt Int
   deriving newtype (Show, Eq, Ord, Num)
 
@@ -1693,7 +1697,10 @@ remainingUnionDebt t = do
             (MergeDebt (MergeCredits c), _) <- MT.remainingMergeDebt mt
             pure (UnionDebt c)
 
--- | See 'Database.LSMTree.UnionCredits'.
+{- |
+The amount of union credits determines the amount of computation performed to
+incrementally complete a union.
+-}
 newtype UnionCredits = UnionCredits Int
   deriving newtype (Show, Eq, Ord, Num)
 
