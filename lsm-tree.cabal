@@ -77,7 +77,7 @@ description:
 
       [@AllocFixed bitsPerPhysicalEntry@]:
           The total size of all Bloom filters is the number of bits per physical entry multiplied by the number of physical entries.
-      [@AllocRequestFPR requestedFPR@]:      
+      [@AllocRequestFPR requestedFPR@]:
           TODO: How does one determine the bloom filter size using @AllocRequestFPR@?
 
   *   The worst-case size of the indexes is \(O(n)\).
@@ -148,6 +148,10 @@ common wno-x-partial
     ghc-options: -Wno-x-partial
 
 common language
+  -- This is at the top-level so that `cabal check` does not complain.
+  default-language:   Haskell2010
+
+  -- For newer GHC's, override Haskell2010 with GHC2021
   if impl(ghc >=9.2.1)
     default-language: GHC2021
 
@@ -335,7 +339,7 @@ library xxhash
   other-modules:   FFI
   hs-source-dirs:  xxhash/src
   build-depends:
-    , base
+    , base        <5
     , bytestring
     , primitive   ^>=0.9
 
@@ -345,7 +349,7 @@ test-suite xxhash-tests
   hs-source-dirs: xxhash/tests
   main-is:        xxhash-tests.hs
   build-depends:
-    , base
+    , base              <5
     , bytestring
     , lsm-tree:xxhash
     , primitive
@@ -387,7 +391,7 @@ test-suite bloomfilter-tests
   main-is:        bloomfilter-tests.hs
   other-modules:  QCSupport
   build-depends:
-    , base
+    , base                  <5
     , bytestring
     , lsm-tree:bloomfilter
     , QuickCheck
@@ -403,7 +407,7 @@ test-suite bloomfilter-primes
   hs-source-dirs: bloomfilter/tests
   main-is:        primes.hs
   build-depends:
-    , base
+    , base    <5
     , primes  ^>=0.2.1.0
 
 test-suite bloomfilter-spell
@@ -527,7 +531,7 @@ test-suite lsm-tree-test
   build-depends:
     , ansi-terminal
     , barbies
-    , base
+    , base                    <5
     , bitvec
     , bytestring
     , cborg
@@ -599,7 +603,7 @@ benchmark lsm-tree-micro-bench
     Bench.Database.LSMTree.Internal.WriteBuffer
 
   build-depends:
-    , base
+    , base                  <5
     , bytestring
     , containers
     , contra-tracer
@@ -625,7 +629,7 @@ benchmark lsm-tree-bench-bloomfilter
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-bloomfilter.hs
   build-depends:
-    , base
+    , base                  <5
     , lsm-tree
     , lsm-tree:bloomfilter
     , lsm-tree:extras
@@ -642,7 +646,7 @@ benchmark lsm-tree-bench-lookups
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-lookups.hs
   build-depends:
-    , base
+    , base                  <5
     , deepseq
     , fs-api
     , io-classes
@@ -664,7 +668,7 @@ library mcg
   hs-source-dirs:  src-mcg
   exposed-modules: MCG
   build-depends:
-    , base
+    , base    <5
     , primes
 
 flag measure-batch-latency
@@ -685,7 +689,7 @@ benchmark lsm-tree-bench-wp8
   main-is:        lsm-tree-bench-wp8.hs
   build-depends:
     , async
-    , base
+    , base                  <5
     , bytestring
     , clock
     , containers
@@ -720,7 +724,7 @@ benchmark rocksdb-bench-wp8
     buildable: False
 
   build-depends:
-    , base
+    , base                  <5
     , binary
     , bytestring
     , clock
@@ -747,7 +751,7 @@ library rocksdb
   -- Ubuntu 22.04 doesn't have pkgconfig files for rocksdb
   extra-libraries: rocksdb
   build-depends:
-    , base
+    , base                 <5
     , bytestring
     , indexed-traversable
 
@@ -759,7 +763,7 @@ library kmerge
     KMerge.LoserTree
 
   build-depends:
-    , base
+    , base                 <5
     , indexed-traversable
     , primitive
 
@@ -825,7 +829,7 @@ library prototypes
     ScheduledMergesTestQLS
 
   build-depends:
-    , base
+    , base                 <5
     , binary
     , bytestring
     , constraints
@@ -990,7 +994,7 @@ test-suite control-test
     Test.Control.RefCount
 
   build-depends:
-    , base
+    , base              <5
     , io-classes
     , io-sim
     , lsm-tree:control

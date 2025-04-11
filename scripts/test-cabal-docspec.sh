@@ -21,6 +21,7 @@ if [ "${SKIP_CABAL_BUILD}" = "" ]; then
 fi
 cabal-docspec \
     --extra-package directory \
+    --extra-package primitive \
     --extra-package lsm-tree:prototypes \
     -XOverloadedStrings \
     -XNumericUnderscores \
