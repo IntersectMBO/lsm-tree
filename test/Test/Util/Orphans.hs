@@ -19,9 +19,10 @@ import qualified Control.Concurrent.STM as Real
 import           Control.Monad ((<=<))
 import           Control.Monad.IOSim (IOSim)
 import           Data.Kind (Type)
-import           Database.LSMTree (Cursor, LookupResult, QueryResult, Table)
-import           Database.LSMTree.Common (BlobRef, SerialiseValue)
-import           Database.LSMTree.Internal.Serialise (SerialiseKey)
+import           Database.LSMTree (Cursor, Entry, LookupResult, Table)
+import           Database.LSMTree.Internal.Serialise (SerialiseKey,
+                     SerialiseValue)
+import           Database.LSMTree.Internal.Types (BlobRef)
 import           Test.QuickCheck.Modifiers (Small (..))
 import           Test.QuickCheck.StateModel (Realized)
 import           Test.QuickCheck.StateModel.Lockstep (InterpretOp)
@@ -45,7 +46,7 @@ type family RealizeIOSim s a where
   -- lsm-tree
   RealizeIOSim s (Table IO k v b)    = Table (IOSim s) k v b
   RealizeIOSim s (LookupResult v b)  = LookupResult v (RealizeIOSim s b)
-  RealizeIOSim s (QueryResult k v b) = QueryResult k v (RealizeIOSim s b)
+  RealizeIOSim s (Entry k v b) = Entry k v (RealizeIOSim s b)
   RealizeIOSim s (Cursor IO k v b)   = Table (IOSim s) k v b
   RealizeIOSim s (BlobRef IO b)      = BlobRef (IOSim s) b
   -- Type family wrappers

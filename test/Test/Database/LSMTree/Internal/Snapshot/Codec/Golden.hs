@@ -10,11 +10,11 @@ import           Data.Foldable (fold)
 import qualified Data.List as List
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
-import           Database.LSMTree.Common (BloomFilterAlloc (..),
-                     DiskCachePolicy (..), NumEntries (..), TableConfig (..),
-                     WriteBufferAlloc (..), defaultTableConfig)
-import           Database.LSMTree.Internal.Config (FencePointerIndexType (..),
-                     MergePolicy (..), MergeSchedule (..), SizeRatio (..))
+import           Database.LSMTree (BloomFilterAlloc (..), DiskCachePolicy (..),
+                     FencePointerIndexType (..), MergePolicy (..),
+                     MergeSchedule (..), NumEntries (..), SizeRatio (..),
+                     TableConfig (..), WriteBufferAlloc (..),
+                     defaultTableConfig)
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),
                      NominalDebt (..))

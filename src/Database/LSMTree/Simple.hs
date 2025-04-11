@@ -152,14 +152,6 @@ import           Data.Maybe (isJust)
 import           Data.Typeable (TypeRep)
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal (BlobRefInvalidError (..),
-                     CursorClosedError (..), SessionClosedError (..),
-                     SnapshotCorruptedError (..),
-                     SnapshotDoesNotExistError (..), SnapshotExistsError (..),
-                     SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableCorruptedError (..), TableTooLargeError (..),
-                     UnionCredits (..), UnionDebt (..))
-import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Config
                      (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
                      DiskCachePolicy (..), FencePointerIndexType (..),
@@ -180,6 +172,14 @@ import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
                      serialiseValueIdentity, serialiseValueIdentityUpToSlicing)
 import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import qualified Database.LSMTree.Internal.Snapshot as Internal
+import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
+                     CursorClosedError (..), SessionClosedError (..),
+                     SnapshotCorruptedError (..),
+                     SnapshotDoesNotExistError (..), SnapshotExistsError (..),
+                     SnapshotNotCompatibleError (..), TableClosedError (..),
+                     TableCorruptedError (..), TableTooLargeError (..),
+                     UnionCredits (..), UnionDebt (..))
+import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)

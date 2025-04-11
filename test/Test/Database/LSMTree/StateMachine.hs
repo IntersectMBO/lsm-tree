@@ -85,9 +85,15 @@ import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
 import qualified Database.LSMTree as R
-import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
+import           Database.LSMTree.Class (Entry (..), LookupResult (..))
 import qualified Database.LSMTree.Class as Class
-import           Database.LSMTree.Common (BlobRefInvalidError (..),
+import           Database.LSMTree.Extras (showPowersOf)
+import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
+import           Database.LSMTree.Extras.NoThunks (propNoThunks)
+import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
+                     SerialisedValue)
+import qualified Database.LSMTree.Internal.Types as R.Types
+import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
                      CursorClosedError (..), SessionClosedError (..),
                      SessionDirCorruptedError (..),
                      SessionDirDoesNotExistError (..),
@@ -96,12 +102,7 @@ import           Database.LSMTree.Common (BlobRefInvalidError (..),
                      SnapshotNotCompatibleError (..), TableClosedError (..),
                      TableCorruptedError (..),
                      TableUnionNotCompatibleError (..))
-import           Database.LSMTree.Extras (showPowersOf)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
-import           Database.LSMTree.Extras.NoThunks (propNoThunks)
-import qualified Database.LSMTree.Internal as R.Internal
-import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
-                     SerialisedValue)
+import qualified Database.LSMTree.Internal.Unsafe as R.Unsafe
 import qualified Database.LSMTree.Model.IO as ModelIO
 import qualified Database.LSMTree.Model.Session as Model
 import           NoThunks.Class
@@ -421,13 +422,13 @@ acquire_RealImpl_MockFS tr = do
 data CheckFS = CheckFS | NoCheckFS
 
 release_RealImpl_MockFS ::
-     R.IOLike m
+     (R.IOLike m)
   => CheckFS
   -> (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
   -> m Property
 release_RealImpl_MockFS fsFlag (fsVar, session, _, _) = do
     sts <- getAllSessionTables session
-    forM_ sts $ \(SomeTable t) -> R.close t
+    forM_ sts $ \(SomeTable t) -> R.closeTable t
     scs <- getAllSessionCursors session
     forM_ scs $ \(SomeCursor c) -> R.closeCursor c
     mockfs1 <- atomically $ readTMVar fsVar
@@ -437,26 +438,29 @@ release_RealImpl_MockFS fsFlag (fsVar, session, _, _) = do
       CheckFS -> propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2
       NoCheckFS -> QC.property ()
 
-data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
-data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
+data SomeTable m
+  = SomeTable (forall k v b. R.Table m k v b)
+
+data SomeCursor m
+  = SomeCursor (forall k v b. R.Cursor m k v b)
 
 getAllSessionTables ::
      (MonadSTM m, MonadThrow m, MonadMVar m)
   => R.Session m
   -> m [SomeTable m]
-getAllSessionTables (R.Internal.Session' s) = do
-    R.Internal.withOpenSession s $ \seshEnv -> do
-      ts <- readMVar (R.Internal.sessionOpenTables seshEnv)
-      pure ((\x -> SomeTable (R.Internal.Table' x))  <$> Map.elems ts)
+getAllSessionTables (R.Types.Session s) = do
+    R.Unsafe.withOpenSession s $ \seshEnv -> do
+      ts <- readMVar (R.Unsafe.sessionOpenTables seshEnv)
+      pure ((\x -> SomeTable (R.Types.Table x))  <$> Map.elems ts)
 
 getAllSessionCursors ::
      (MonadSTM m, MonadThrow m, MonadMVar m)
   => R.Session m
   -> m [SomeCursor m]
-getAllSessionCursors (R.Internal.Session' s) =
-    R.Internal.withOpenSession s $ \seshEnv -> do
-      cs <- readMVar (R.Internal.sessionOpenCursors seshEnv)
-      pure ((\x -> SomeCursor (R.Internal.Cursor' x))  <$> Map.elems cs)
+getAllSessionCursors (R.Types.Session s) =
+    R.Unsafe.withOpenSession s $ \seshEnv -> do
+      cs <- readMVar (R.Unsafe.sessionOpenCursors seshEnv)
+      pure ((\x -> SomeCursor (R.Types.Cursor x))  <$> Map.elems cs)
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -584,7 +588,7 @@ keyValueBlobLabel :: R.SnapshotLabel
 keyValueBlobLabel = R.SnapshotLabel "Key Value Blob"
 
 instance R.ResolveValue Value where
-  resolveValue _ = (<>)
+  resolveSerialised _ = (<>)
 
 {-------------------------------------------------------------------------------
   Model state
@@ -687,7 +691,7 @@ data Action' h a where
   RangeLookup ::
        (C k v b, Ord k)
     => R.Range k -> Var h (WrapTable h IO k v b)
-    -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
+    -> Act' h (V.Vector (Entry k v (WrapBlobRef h IO b)))
   -- Cursor
   NewCursor ::
        C k v b
@@ -702,7 +706,7 @@ data Action' h a where
        C k v b
     => Int
     -> Var h (WrapCursor h IO k v b)
-    -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
+    -> Act' h (V.Vector (Entry k v (WrapBlobRef h IO b)))
   -- Updates
   Updates ::
        C k v b
@@ -901,9 +905,9 @@ instance ( Eq (Class.TableConfig h)
     MLookupResult :: (Class.C_ v, Class.C_ b)
                   => LookupResult v (Val h (WrapBlobRef h IO b))
                   -> Val h (LookupResult v (WrapBlobRef h IO b))
-    MQueryResult :: Class.C k v b
-                 => QueryResult k v (Val h (WrapBlobRef h IO b))
-                 -> Val h (QueryResult k v (WrapBlobRef h IO b))
+    MEntry :: Class.C k v b
+                 => Entry k v (Val h (WrapBlobRef h IO b))
+                 -> Val h (Entry k v (WrapBlobRef h IO b))
     MBlob :: (Show b, Typeable b, Eq b)
           => WrapBlob b -> Val h (WrapBlob b)
     MSnapshotName :: R.SnapshotName -> Val h R.SnapshotName
@@ -927,9 +931,9 @@ instance ( Eq (Class.TableConfig h)
     OLookupResult :: (Class.C_ v, Class.C_ b)
                   => LookupResult v (Obs h (WrapBlobRef h IO b))
                   -> Obs h (LookupResult v (WrapBlobRef h IO b))
-    OQueryResult :: Class.C k v b
-                 => QueryResult k v (Obs h (WrapBlobRef h IO b))
-                 -> Obs h (QueryResult k v (WrapBlobRef h IO b))
+    OEntry :: Class.C k v b
+                 => Entry k v (Obs h (WrapBlobRef h IO b))
+                 -> Obs h (Entry k v (WrapBlobRef h IO b))
     OBlob :: (Show b, Typeable b, Eq b)
           => WrapBlob b -> Obs h (WrapBlob b)
     OUnionCredits :: R.UnionCredits -> Obs h R.UnionCredits
@@ -947,7 +951,7 @@ instance ( Eq (Class.TableConfig h)
       MCursor _              -> OCursor
       MBlobRef _             -> OBlobRef
       MLookupResult x        -> OLookupResult $ fmap observeModel x
-      MQueryResult x         -> OQueryResult $ fmap observeModel x
+      MEntry x         -> OEntry $ fmap observeModel x
       MSnapshotName x        -> OId x
       MBlob x                -> OBlob x
       MUnionDebt x           -> OId x
@@ -1083,7 +1087,7 @@ instance Eq (Obs h a) where
       (OCursor, OCursor) -> True
       (OBlobRef, OBlobRef) -> True
       (OLookupResult x, OLookupResult y) -> x == y
-      (OQueryResult x, OQueryResult y) -> x == y
+      (OEntry x, OEntry y) -> x == y
       (OBlob x, OBlob y) -> x == y
       (OUnionCredits x, OUnionCredits y) -> x == y
       (OUnionCreditsPortion x, OUnionCreditsPortion y) -> x == y
@@ -1100,7 +1104,7 @@ instance Eq (Obs h a) where
           OCursor{} -> ()
           OBlobRef{} -> ()
           OLookupResult{} -> ()
-          OQueryResult{} -> ()
+          OEntry{} -> ()
           OBlob{} -> ()
           OUnionCredits{} -> ()
           OUnionCreditsPortion{} -> ()
@@ -1178,11 +1182,11 @@ instance ( Eq (Class.TableConfig h)
       Lookups{}             -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}         -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
       NewCursor{}           -> OEither $ bimap OId (const OCursor) result
       CloseCursor{}         -> OEither $ bimap OId OId result
       ReadCursor{}          -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
       Updates{}             -> OEither $ bimap OId OId result
       Inserts{}             -> OEither $ bimap OId OId result
       Deletes{}             -> OEither $ bimap OId OId result
@@ -1244,11 +1248,11 @@ instance ( Eq (Class.TableConfig h)
       Lookups{}             -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
       RangeLookup{}         -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
       NewCursor{}           -> OEither $ bimap OId (const OCursor) result
       CloseCursor{}         -> OEither $ bimap OId OId result
       ReadCursor{}          -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
       Updates{}             -> OEither $ bimap OId OId result
       Inserts{}             -> OEither $ bimap OId OId result
       Deletes{}             -> OEither $ bimap OId OId result
@@ -1348,7 +1352,7 @@ runModel lookUp (Action merrs action') = case action' of
           (Model.lookups ks (getTable $ lookUp tableVar))
           (pure ()) -- TODO(err)
     RangeLookup range tableVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
+      wrap (MVector . fmap (MEntry . fmap MBlobRef))
       . Model.runModelMWithInjectedErrors merrs
           (Model.rangeLookup range (getTable $ lookUp tableVar))
           (pure ()) -- TODO(err)
@@ -1363,7 +1367,7 @@ runModel lookUp (Action merrs action') = case action' of
           (Model.closeCursor (getCursor $ lookUp cursorVar))
           (pure ()) -- TODO(err)
     ReadCursor n cursorVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
+      wrap (MVector . fmap (MEntry . fmap MBlobRef))
       . Model.runModelMWithInjectedErrors merrs
           (Model.readCursor n (getCursor $ lookUp cursorVar))
           (pure ()) -- TODO(err)
@@ -1869,10 +1873,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     blobRefsVars :: [Var h (V.Vector (WrapBlobRef h IO b))]
     blobRefsVars = fmap (mapGVar (OpComp OpLookupResults)) lookupResultVars
-                ++ fmap (mapGVar (OpComp OpQueryResults))  queryResultVars
+                ++ fmap (mapGVar (OpComp OpEntrys))  queryResultVars
       where
         lookupResultVars :: [Var h (V.Vector (LookupResult  v (WrapBlobRef h IO b)))]
-        queryResultVars  :: [Var h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))]
+        queryResultVars  :: [Var h (V.Vector (Entry k v (WrapBlobRef h IO b)))]
 
         lookupResultVars = fromRight <$> findVars ctx Proxy
         queryResultVars  = fromRight <$> findVars ctx Proxy
@@ -2229,8 +2233,8 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
     OpLookupResults      -> Just . MVector
                           . V.mapMaybe (\case MLookupResult x -> getBlobRef x)
                           . \case MVector x -> x
-    OpQueryResults       -> Just . MVector
-                          . V.mapMaybe (\case MQueryResult x -> getBlobRef x)
+    OpEntrys       -> Just . MVector
+                          . V.mapMaybe (\case MEntry x -> getBlobRef x)
                           . \case MVector x -> x
 
 {-------------------------------------------------------------------------------
