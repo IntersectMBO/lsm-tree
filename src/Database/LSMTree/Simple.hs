@@ -1354,7 +1354,7 @@ withTableFromSnapshotWith ::
     (Table k v -> IO a) ->
     IO a
 withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
-    bracket (openTableFromSnapshotWith session tableConfigOverride snapName snapLabel) closeTable
+    bracket (openTableFromSnapshotWith tableConfigOverride session snapName snapLabel) closeTable
 
 {- |
 Open a table from a named snapshot.
@@ -1383,19 +1383,19 @@ openTableFromSnapshot ::
     SnapshotLabel ->
     IO (Table k v)
 openTableFromSnapshot session snapName snapLabel =
-    openTableFromSnapshotWith session NoOverrideDiskCachePolicy snapName snapLabel
+    openTableFromSnapshotWith NoOverrideDiskCachePolicy session snapName snapLabel
 
 {- |
 Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
 -}
 openTableFromSnapshotWith ::
     forall k v.
-    Session ->
     OverrideDiskCachePolicy ->
+    Session ->
     SnapshotName ->
     SnapshotLabel ->
     IO (Table k v)
-openTableFromSnapshotWith (Session session) tableConfigOverride snapName snapLabel =
+openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
     Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapSimpleTable snapName const
 
 {- |
