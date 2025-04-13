@@ -20,11 +20,14 @@ module Data.BloomFilter.Blocked.Internal (
     elemHashes,
 
     -- * Conversion
-    serialise,
-    deserialise,
     freeze,
     unsafeFreeze,
     thaw,
+
+    -- * (De)Serialisation
+    formatVersion,
+    serialise,
+    deserialise,
   ) where
 
 import           Control.Exception (assert)
