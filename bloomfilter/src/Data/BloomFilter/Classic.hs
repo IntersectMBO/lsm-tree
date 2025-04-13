@@ -37,6 +37,10 @@ module Data.BloomFilter.Classic (
     create,
     unfold,
     fromList,
+
+    -- ** (De)Serialisation
+    formatVersion,
+    serialise,
     deserialise,
 
     -- ** Sizes
@@ -57,7 +61,6 @@ module Data.BloomFilter.Classic (
     elem,
     notElem,
     elemHashes,
-    serialise,
 
     -- * Mutable Bloom filters
     MBloom,

@@ -26,6 +26,10 @@ module Data.BloomFilter.Blocked (
     create,
     unfold,
     fromList,
+
+    -- ** (De)Serialisation
+    formatVersion,
+    serialise,
     deserialise,
 
     -- ** Sizes
@@ -46,7 +50,6 @@ module Data.BloomFilter.Blocked (
     elem,
     notElem,
     elemHashes,
-    serialise,
 
     -- * Mutable Bloom filters
     MBloom,

@@ -46,6 +46,18 @@ import qualified Data.BloomFilter.Classic.BitArray as BitArray
 import           Data.BloomFilter.Classic.Calc
 import           Data.BloomFilter.Hash
 
+-- | The version of the format used by 'serialise' and 'deserialise'. The
+-- format number will change when there is an incompatible change in the
+-- library, such that deserialising and using the filter will not work.
+-- This can include more than just changes to the serialised format, for
+-- example changes to hash functions or how the hash is mapped to bits.
+--
+-- Note that the format produced does not include this version. Version
+-- checking is the responsibility of the user of the library.
+--
+formatVersion :: Int
+formatVersion = 0
+
 -------------------------------------------------------------------------------
 -- Mutable Bloom filters
 --
@@ -93,8 +105,13 @@ insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = a } !ch =
             -- and Int because it's less than the filter size.
             BitArray.unsafeSet a idx >> go (i + 1)
 
--- | Modify the filter's bit array. The callback is expected to read (exactly)
--- the given number of bytes into the given byte array buffer.
+-- | Overwrite the filter's bit array. Use 'new' to create a filter of the
+-- expected size and then use this function to fill in the bit data.
+--
+-- The callback is expected to read (exactly) the given number of bytes into
+-- the given byte array buffer.
+--
+-- See also 'formatVersion' for compatibility advice.
 --
 deserialise :: PrimMonad m
             => MBloom (PrimState m) a
@@ -159,6 +176,12 @@ elemHashes !ch Bloom { numBits, numHashes, bitArray } =
               then go (i + 1)
               else False
 
+-- | Serialise the bloom filter to a 'BloomSize' (which is needed to
+-- deserialise) and a 'ByteArray' along with the offset and length containing
+-- the filter's bit data.
+--
+-- See also 'formatVersion' for compatibility advice.
+--
 serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
     (size b, ba, off, len)
