@@ -103,8 +103,8 @@ prop_total_deserialisation_whitebox hsn (Small nbits) =
                     vector (nbytes+n)
     nbytes     = ((((fromIntegral nbits+7) `div` 8) + 7) `div` 8) * 8
     genVersion = frequency [
-                   (6, pure 1),
-                   (1, pure (byteSwap32 1)),
+                   (6, pure bloomFilterVersion),
+                   (1, pure (byteSwap32 bloomFilterVersion)),
                    (1, arbitrary)
                  ]
     prefix version =

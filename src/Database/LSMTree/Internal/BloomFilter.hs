@@ -1,6 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.BloomFilter (
+  bloomFilterVersion,
   bloomFilterToLBS,
   bloomFilterFromFile,
 ) where
@@ -25,8 +26,13 @@ import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
 
 -- | By writing out the version in host endianness, we also indicate endianness.
 -- During deserialisation, we would discover an endianness mismatch.
+--
+-- We base our version number on the 'BF.formatVersion' from the @bloomfilter@
+-- library, plus our own version here. This accounts both for changes in the
+-- format code here, and changes in the library.
+--
 bloomFilterVersion :: Word32
-bloomFilterVersion = 1
+bloomFilterVersion = 1 + fromIntegral BF.formatVersion
 
 bloomFilterToLBS :: BF.Bloom a -> LBS.ByteString
 bloomFilterToLBS bf =
