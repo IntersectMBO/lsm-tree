@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP           #-}
 {-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE UnboxedTuples #-}
 {-# OPTIONS_HADDOCK not-home #-}
 -- | This module defines the 'Bloom' and 'MBloom' types and all the functions
 -- that need direct knowledge of and access to the representation. This forms
@@ -37,11 +38,8 @@ import           Data.Primitive.ByteArray
 import           Data.Primitive.PrimArray
 import           Data.Word (Word64)
 
-#if MIN_VERSION_base(4,17,0)
-import           GHC.Exts (remWord64#)
-#else
-import           GHC.Exts (remWord#)
-#endif
+import           GHC.Exts (Int (I#), int2Word#, timesWord2#, word2Int#,
+                     word64ToWord#)
 import           GHC.Word (Word64 (W64#))
 
 import           Data.BloomFilter.Classic.BitArray (BitArray, MBitArray)
@@ -58,8 +56,15 @@ import           Data.BloomFilter.Hash
 -- Note that the format produced does not include this version. Version
 -- checking is the responsibility of the user of the library.
 --
+-- History:
+--
+-- * Version 0: original
+--
+-- * Version 1: changed range reduction (of hash to bit index) from remainder
+--   to method based on multiplication.
+--
 formatVersion :: Int
-formatVersion = 0
+formatVersion = 1
 
 -------------------------------------------------------------------------------
 -- Mutable Bloom filters
@@ -95,18 +100,14 @@ new BloomSize { sizeBits, sizeHashes } = do
     }
 
 insertHashes :: MBloom s a -> CheapHashes a -> ST s ()
-insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = a } !ch =
+insertHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !ch =
     go 0
   where
-    go !i | i >= k = return ()
-    go !i = let idx' :: Word64
-                !idx' = evalHashes ch i in
-            let idx :: Int
-                !idx = fromIntegral (idx' `unsafeRemWord64` fromIntegral m) in
-            -- While the idx' can cover the full Word64 range,
-            -- after taking the remainder, it now must fit in
-            -- and Int because it's less than the filter size.
-            BitArray.unsafeSet a idx >> go (i + 1)
+    go !i | i >= mbNumHashes = return ()
+    go !i = do
+      let idx = reduceRange64 (evalHashes ch i) mbNumBits
+      BitArray.unsafeSet mbBitArray idx
+      go (i + 1)
 
 -- | Overwrite the filter's bit array. Use 'new' to create a filter of the
 -- expected size and then use this function to fill in the bit data.
@@ -168,14 +169,9 @@ elemHashes !ch Bloom { numBits, numHashes, bitArray } =
     go :: Int -> Bool
     go !i | i >= numHashes
           = True
-    go !i = let idx' :: Word64
-                !idx' = evalHashes ch i in
-            let idx :: Int
-                !idx = fromIntegral (idx' `unsafeRemWord64` fromIntegral numBits) in
-            -- While the idx' can cover the full Word64 range,
-            -- after taking the remainder, it now must fit in
-            -- and Int because it's less than the filter size.
-            if BitArray.unsafeIndex bitArray idx
+    go !i =
+      let idx = reduceRange64 (evalHashes ch i) numBits
+       in if BitArray.unsafeIndex bitArray idx
               then go (i + 1)
               else False
 
@@ -237,10 +233,21 @@ thaw Bloom { numBits, numHashes, bitArray } = do
 -- Low level utils
 --
 
--- | Like 'rem' but does not check for division by 0.
-unsafeRemWord64 :: Word64 -> Word64 -> Word64
-#if MIN_VERSION_base(4,17,0)
-unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
-#else
-unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
-#endif
+-- | Given a word sampled uniformly from the full 'Word64' range, such as a
+-- hash, reduce it fairly to a value in the range @[0,n)@.
+--
+-- See <https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/>
+--
+{-# INLINE reduceRange64 #-}
+reduceRange64 :: Word64 -- ^ Sample from 0..2^64-1
+              -> Int -- ^ upper bound of range [0,n)
+              -> Int -- ^ result within range
+reduceRange64 (W64# x) (I# n) =
+    -- Note that we use widening multiplication of two 64bit numbers, with a
+    -- 128bit result. GHC provides a primop which returns the 128bit result as
+    -- a pair of 64bit words. There are (as of 2025) no high level wrappers in
+    -- the base or primitive packages, so we use the primops directly.
+    case timesWord2# (word64ToWord# x) (int2Word# n) of
+      (# high, _low #) -> I# (word2Int# high)
+    -- Note that while x can cover the full Word64 range, since the result is
+    -- less than n, and since n was an Int then the result fits an Int too.

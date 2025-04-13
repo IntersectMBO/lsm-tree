@@ -277,6 +277,8 @@ thaw Bloom { numBlocks, numHashes, bitArray } = do
 -- | Given a word sampled uniformly from the full 'Word32' range, such as a
 -- hash, reduce it fairly to a value in the range @[0,n)@.
 --
+-- See <https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/>
+--
 reduceRange32 :: Word32 -- ^ Sample from 0..2^32-1
               -> Word32 -- ^ upper bound of range [0,n)
               -> Word32 -- ^ result within range
