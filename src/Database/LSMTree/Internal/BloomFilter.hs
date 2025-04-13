@@ -30,7 +30,7 @@ import           Database.LSMTree.Internal.CRC32C (FileFormatError (..))
 -- format code here, and changes in the library.
 --
 bloomFilterVersion :: Word32
-bloomFilterVersion = 1 + BF.formatVersion
+bloomFilterVersion = 1 + fromIntegral BF.formatVersion
 
 bloomFilterToLBS :: BF.Bloom a -> LBS.ByteString
 bloomFilterToLBS bf =
