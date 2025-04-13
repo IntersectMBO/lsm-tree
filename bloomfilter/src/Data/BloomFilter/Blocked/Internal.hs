@@ -25,11 +25,14 @@ module Data.BloomFilter.Blocked.Internal (
     prefetchElem,
 
     -- * Conversion
-    serialise,
-    deserialise,
     freeze,
     unsafeFreeze,
     thaw,
+
+    -- * (De)Serialisation
+    formatVersion,
+    serialise,
+    deserialise,
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -48,6 +51,28 @@ import           Data.BloomFilter.Blocked.BitArray (BitArray, BitIx (..),
 import qualified Data.BloomFilter.Blocked.BitArray as BitArray
 import           Data.BloomFilter.Classic.Calc
 import           Data.BloomFilter.Hash
+
+-- | The version of the format used by 'serialise' and 'deserialise'. The
+-- format number will change when there is an incompatible change in the
+-- library, such that deserialising and using the filter will not work.
+-- This can include more than just changes to the serialised format, for
+-- example changes to hash functions or how the hash is mapped to bits.
+--
+-- Note that the format produced does not include this version. Version
+-- checking is the responsibility of the user of the library.
+--
+-- The library guarantes that the format version value for the classic
+-- ("Data.BloomFilter.Classic") and blocked ("Data.BloomFilter.Blocked")
+-- implementation will not overlap with each other or any previous value used
+-- by either implementation. So switching between the two implementations will
+-- always be detectable and unambigious.
+--
+-- History:
+--
+-- * Version 1000: original blocked implementation
+--
+formatVersion :: Int
+formatVersion = 1000
 
 -------------------------------------------------------------------------------
 -- Mutable Bloom filters
@@ -117,8 +142,13 @@ prefetchInsert MBloom { mbNumBlocks, mbBitArray } !h =
     blockIx :: BlockIx
     (!blockIx, _) = blockIxAndBitGen h mbNumBlocks
 
--- | Modify the filter's bit array. The callback is expected to read (exactly)
--- the given number of bytes into the given byte array buffer.
+-- | Overwrite the filter's bit array. Use 'new' to create a filter of the
+-- expected size and then use this function to fill in the bit data.
+--
+-- The callback is expected to write (exactly) the given number of bytes into
+-- the given byte array buffer.
+--
+-- See also 'formatVersion' for compatibility advice.
 --
 deserialise :: PrimMonad m
             => MBloom (PrimState m) a
@@ -196,6 +226,12 @@ prefetchElem Bloom { numBlocks, bitArray } !h =
     blockIx :: BlockIx
     (!blockIx, _) = blockIxAndBitGen h numBlocks
 
+-- | Serialise the bloom filter to a 'BloomSize' (which is needed to
+-- deserialise) and a 'ByteArray' along with the offset and length containing
+-- the filter's bit data.
+--
+-- See also 'formatVersion' for compatibility advice.
+--
 serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
     (size b, ba, off, len)
