@@ -99,7 +99,7 @@ prop_total_deserialisation_whitebox hsn (Small nword64s) =
         prop_total_deserialisation (prefix <> BS.pack bytes)
   where
     prefix = LBS.toStrict $ BS.Builder.toLazyByteString $
-                 BS.Builder.word32Host 1 {- version -}
+                 BS.Builder.word32Host bloomFilterVersion
               <> BS.Builder.word32Host hsn
               <> BS.Builder.word64Host (fromIntegral nword64s)
 
