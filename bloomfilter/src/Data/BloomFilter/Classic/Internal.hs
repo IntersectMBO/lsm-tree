@@ -44,12 +44,9 @@ import           Data.Primitive.PrimArray
 import           Data.Primitive.Types (Prim (..))
 import           Data.Word (Word64)
 
-#if MIN_VERSION_base(4,17,0)
-import           GHC.Exts (remWord64#)
-#else
-import           GHC.Exts (remWord#)
-#endif
-import           GHC.Exts (Int#, uncheckedIShiftL#, (+#))
+import           GHC.Exts (Int (I#), Int#, int2Word#, timesWord2#,
+                     uncheckedIShiftL#, word2Int#, (+#))
+import qualified GHC.Exts as Exts
 import           GHC.Word (Word64 (W64#))
 
 import           Data.BloomFilter.Classic.BitArray (BitArray, MBitArray)
@@ -72,8 +69,15 @@ import           Data.BloomFilter.Hash
 -- by either implementation. So switching between the two implementations will
 -- always be detectable and unambigious.
 --
+-- History:
+--
+-- * Version 0: original
+--
+-- * Version 1: changed range reduction (of hash to bit index) from remainder
+--   to method based on multiplication.
+--
 formatVersion :: Int
-formatVersion = 0
+formatVersion = 1
 
 -------------------------------------------------------------------------------
 -- Mutable Bloom filters
@@ -117,9 +121,7 @@ insertHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
       let probe :: Word64
           probe = evalHashes h i
           index :: Int
-          index = fromIntegral (probe `unsafeRemWord64` fromIntegral mbNumBits)
-      -- While the probe point can cover the full Word64 range, after range
-      -- reduction it is less then the filter size and thus must fit in an Int.
+          index = reduceRange64 probe mbNumBits
       BitArray.unsafeSet mbBitArray index
       go (i + 1)
 
@@ -133,7 +135,7 @@ readHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
       let probe :: Word64
           probe = evalHashes h i
           index :: Int
-          index = fromIntegral (probe `unsafeRemWord64` fromIntegral mbNumBits)
+          index = reduceRange64 probe mbNumBits
       b <- BitArray.unsafeRead mbBitArray index
       if b then go (i + 1)
            else return False
@@ -203,9 +205,7 @@ elemHashes Bloom { numBits, numHashes, bitArray } !h =
       let probe :: Word64
           probe = evalHashes h i
           index :: Int
-          index = fromIntegral (probe `unsafeRemWord64` fromIntegral numBits)
-          -- While the probe point can cover the full Word64 range, after range
-          -- reduction it is less then the filter size and must fit in an Int.
+          index = reduceRange64 probe numBits
        in if BitArray.unsafeIndex bitArray index
             then go (i + 1)
             else False
@@ -268,12 +268,33 @@ thaw Bloom { numBits, numHashes, bitArray } = do
 -- Low level utils
 --
 
--- | Like 'rem' but does not check for division by 0.
-unsafeRemWord64 :: Word64 -> Word64 -> Word64
+-- | Given a word sampled uniformly from the full 'Word64' range, such as a
+-- hash, reduce it fairly to a value in the range @[0,n)@.
+--
+-- See <https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/>
+--
+{-# INLINE reduceRange64 #-}
+reduceRange64 :: Word64 -- ^ Sample from 0..2^64-1
+              -> Int -- ^ upper bound of range [0,n)
+              -> Int -- ^ result within range
+reduceRange64 (W64# x) (I# n) =
+    -- Note that we use widening multiplication of two 64bit numbers, with a
+    -- 128bit result. GHC provides a primop which returns the 128bit result as
+    -- a pair of 64bit words. There are (as of 2025) no high level wrappers in
+    -- the base or primitive packages, so we use the primops directly.
+    case timesWord2# (word64ToWordShim# x) (int2Word# n) of
+      (# high, _low #) -> I# (word2Int# high)
+    -- Note that while x can cover the full Word64 range, since the result is
+    -- less than n, and since n was an Int then the result fits an Int too.
+
+{-# INLINE word64ToWordShim# #-}
+
 #if MIN_VERSION_base(4,17,0)
-unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
+word64ToWordShim# :: Exts.Word64# -> Exts.Word#
+word64ToWordShim# = Exts.word64ToWord#
 #else
-unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
+word64ToWordShim# :: Exts.Word# -> Exts.Word#
+word64ToWordShim# x# = x#
 #endif
 
 -------------------------------------------------------------------------------
