@@ -144,11 +144,16 @@ unfold :: forall a b.
        -> b                         -- ^ initial seed
        -> Bloom a
 {-# INLINE unfold #-}
-unfold bloomsize f k = create bloomsize (loop k)
-  where loop :: forall s. b -> MBloom s a -> ST s ()
-        loop j mb = case f j of
-                      Just (a, j') -> insert mb a >> loop j' mb
-                      _            -> return ()
+unfold bloomsize f k =
+    create bloomsize body
+  where
+    body :: forall s. MBloom s a -> ST s ()
+    body mb = loop k
+      where
+        loop :: b -> ST s ()
+        loop !j = case f j of
+                    Nothing      -> return ()
+                    Just (a, j') -> insert mb a >> loop j'
 
 
 {-# INLINEABLE fromList #-}
