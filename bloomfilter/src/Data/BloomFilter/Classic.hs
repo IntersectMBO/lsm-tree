@@ -55,6 +55,7 @@ module Data.BloomFilter.Classic (
     size,
     elem,
     notElem,
+    (?),
     serialise,
 
     -- * Mutable Bloom filters
@@ -119,13 +120,24 @@ insert !mb !x = insertHashes mb (hashes x)
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: Hashable a => a -> Bloom a -> Bool
-elem !x !b = elemHashes b (hashes x)
+elem = \ !x !b -> elemHashes b (hashes x)
+
+-- | Same as 'elem' but with the opposite argument order:
+--
+-- > x `elem` bfilter
+--
+-- versus
+--
+-- > bfilter ? x
+--
+(?) :: Hashable a => Bloom a -> a -> Bool
+(?) = flip elem
 
 -- | Query an immutable Bloom filter for non-membership.  If the value
 -- /is/ present, return @False@.  If the value is not present, there
 -- is /still/ some possibility that @False@ will be returned.
 notElem :: Hashable a => a -> Bloom a -> Bool
-notElem = \elt ub -> not (elt `elem` ub)
+notElem = \ x b -> not (x `elem` b)
 
 -- | Query a mutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
