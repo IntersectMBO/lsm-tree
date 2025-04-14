@@ -1442,8 +1442,8 @@ runModel lookUp (Action merrs action') = case action' of
       wrap MUnionCreditsPortion
       . Model.runModelMWithInjectedErrors merrs
           (do let table = getTable $ lookUp tableVar
-              debt <- Model.remainingUnionDebt table
-              Model.supplyUnionCredits table (portion `portionOf` debt))
+              Model.supplyPortionOfDebt table portion
+          )
           (pure ()) -- TODO(err)
   where
     getTable ::

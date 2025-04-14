@@ -83,6 +83,7 @@ module Database.LSMTree.Model.Session (
   , remainingUnionDebt
   , UnionCredits (..)
   , supplyUnionCredits
+  , supplyPortionOfDebt
   ) where
 
 import           Control.Monad (forM, when)
@@ -832,12 +833,6 @@ remainingUnionDebt t = do
 -- * The table is a (descendant of a) union table
 --
 -- * The number of supplied union credits is at least 1.
---
--- TODO: in the real implementation, supplying union credits can invalidate blob
--- references for other tables if they share merging runs in their union levels.
--- For example, supplying union credits to a duplicate of a (descendant of a)
--- union table can invalidate blob references for both the original and
--- duplicate table.
 supplyUnionCredits ::
      ( MonadState Model m
      , MonadError Err m
@@ -857,3 +852,25 @@ supplyUnionCredits t@Table{..} c@(UnionCredits credits)
             tables = Map.insert tableID (updc + 1, toSomeTable table) (tables m)
           })
       pure c
+
+-- | A version of 'supplyUnionCredits' that supplies a portion of the current debt.
+--
+-- The debt in the model is always 0, so any portion of that debt is also 0. The
+-- real system might have non-zero debt, but the model does not know how much,
+-- so it has to assume that *any* portion (assuming it's a positive portion)
+-- leads to invalidated blob references.
+supplyPortionOfDebt ::
+     ( MonadState Model m
+     , MonadError Err m
+     , C k v b
+     )
+  => Table k v b
+  -> portion
+  -> m UnionCredits
+supplyPortionOfDebt t@Table{..} _ = do
+    (updc, table) <- guardTableIsOpen t
+    when (isUnionDescendant == IsUnionDescendant) $
+      modify (\m -> m {
+          tables = Map.insert tableID (updc + 1, toSomeTable table) (tables m)
+        })
+    pure (UnionCredits 0)
