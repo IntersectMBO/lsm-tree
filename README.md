@@ -87,13 +87,175 @@ LSM-trees can be used concurrently, but with a few restrictions:
 
 ### Performance <span id="performance" class="anchor"></span>
 
-The worst-case time and space complexities are given in [big-O
+The worst-case behaviour of the library is described using [big-O
 notation](http://en.wikipedia.org/wiki/Big_O_notation "http://en.wikipedia.org/wiki/Big_O_notation").
-The time cost of operations on LSM-trees is generally dominated by the
-number of disk I/O actions. As such, the worst-case complexity of basic
-operations refer to the number of disk I/O actions.
+The documentation provides two measures of complexity:
 
-TODO: Describe the time complexity of the basic operations.
+- The time complexity of operations is described in terms of the number
+  of disk I/O operations and referred to as the disk I/O complexity. In
+  practice, the time of the operations on LSM-trees is dominated by the
+  number of disk I/O actions.
+
+- The space complexity of tables is described in terms of the in-memory
+  size of an LSM-tree table. Both the in-memory and on-disk size of an
+  LSM-tree table scale linearly with the number of physical entries.
+  However, the in-memory size of an LSM-tree table is smaller than its
+  on-disk size by a significant constant. This is discussed in detail
+  below, under [In-memory size of
+  tables](#performance_size "#performance_size").
+
+The complexities are described in terms of the following variables and
+constants:
+
+- The variable *n* refers to the number of *physical* table entries. A
+  *physical* table entry is any key–operation pair, e.g., `Insert k v`
+  or `Delete k`, whereas a *logical* table entry is determined by all
+  physical entries with the same key. If the variable *n* is used to
+  describe the complexity of an operation that involves multiple tables,
+  it refers to the sum of all table entries.
+
+- The variable *t* refers to the number of open tables in the session.
+
+- The variable *s* refers to the number of snapshots in the session.
+
+- The variable *b* usually refers to the size of a batch of
+  inputs/outputs. Its precise meaning is explained for each occurrence.
+
+- The constant *B* refers to the size of the write buffer, which is a
+  configuration parameter.
+
+- The constant *T* refers to the size ratio of the table, which is a
+  configuration parameter.
+
+- The constant *P* refers to the the average number of key–value pairs
+  that fit in a page of memory.
+
+#### Disk I/O cost of operations <span id="performance_time" class="anchor"></span>
+
+The following table summarises the cost of the operations on LSM-trees
+measured in the number of disk I/O operations. If the cost depends on
+the merge policy, the table contains one entry for each merge policy.
+Otherwise, the merge policy is listed as N/A.
+
+<table>
+<thead>
+<tr>
+<th>Resource</th>
+<th>Operation</th>
+<th>Merge policy</th>
+<th>Cost in disk I/O operations</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Session</td>
+<td>Create/Open</td>
+<td>N/A</td>
+<td><span class="math inline"><em>O</em>(1)</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Close</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(t \: T \: \log_T
+\frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td>Table</td>
+<td>Create</td>
+<td>N/A</td>
+<td><span class="math inline"><em>O</em>(1)</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Close</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Lookup</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Range Lookup</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B} +
+\frac{b}{P})$</span>
+*</td>
+</tr>
+<tr>
+<td></td>
+<td>Insert/Delete/Update</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(\frac{1}{P} \: \log_T
+\frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Duplicate</td>
+<td>N/A</td>
+<td><span class="math inline"><em>O</em>(0)</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Union</td>
+<td>N/A</td>
+<td><span class="math inline">$O(\frac{n}{P})$</span></td>
+</tr>
+<tr>
+<td>Snapshot</td>
+<td>Save</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Open</td>
+<td>N/A</td>
+<td><span class="math inline">$O(\frac{n}{P})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Delete</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>List</td>
+<td>N/A</td>
+<td><span class="math inline"><em>O</em>(<em>s</em>)</span></td>
+</tr>
+<tr>
+<td>Cursor</td>
+<td>Create</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Close</td>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Read next entry</td>
+<td>N/A</td>
+<td><span class="math inline">$O(\frac{1}{P})$</span></td>
+</tr>
+</tbody>
+</table>
+
+(\*The variable *b* refers to the number of entries retrieved by the
+range lookup.)
+
+TODO: Document the average-case behaviour of lookups.
+
+#### In-memory size of tables <span id="performance_size" class="anchor"></span>
 
 The in-memory size of an LSM-tree is described in terms of the variable
 *n*, which refers to the number of *physical* database entries. A
@@ -103,7 +265,7 @@ physical entries with the same key.
 
 The worst-case in-memory size of an LSM-tree is *O*(*n*).
 
-- The worst-case size of the write buffer is *O*(1).
+- The worst-case in-memory size of the write buffer is *O*(*B*).
 
   The maximum size of the write buffer on the write buffer allocation
   strategy, which is determined by the `confWriteBufferAlloc` field of
@@ -114,39 +276,39 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   The maximum size of the write buffer is the maximum number of entries
   multiplied by the average size of a key–operation pair.
 
-- The worst-case size of the Bloom filters is *O*(*n*).
+- The worst-case in-memory size of the Bloom filters is *O*(*n*).
 
-  The total size of all Bloom filters depends on the Bloom filter
-  allocation strategy, which is determined by the `confBloomFilterAlloc`
-  field of `TableConfig`.
+  The total in-memory size of all Bloom filters depends on the Bloom
+  filter allocation strategy, which is determined by the
+  `confBloomFilterAlloc` field of `TableConfig`.
 
   `AllocFixed bitsPerPhysicalEntry`  
-  The total size of all Bloom filters is the number of bits per physical
-  entry multiplied by the number of physical entries.
+  The total in-memory size of all Bloom filters is the number of bits
+  per physical entry multiplied by the number of physical entries.
 
   `AllocRequestFPR requestedFPR`  
-  TODO: How does one determine the bloom filter size using
+  **TODO**: How does one determine the bloom filter size using
   `AllocRequestFPR`?
 
-- The worst-case size of the indexes is *O*(*n*).
+- The worst-case in-memory size of the indexes is *O*(*n*).
 
-  The total size of all indexes depends on the index type, which is
-  determined by the `confFencePointerIndex` field of `TableConfig`. The
-  size of the various indexes is described in reference to the size of
-  the database in [*memory
+  The total in-memory size of all indexes depends on the index type,
+  which is determined by the `confFencePointerIndex` field of
+  `TableConfig`. The in-memory size of the various indexes is described
+  in reference to the size of the database in [*memory
   pages*](https://en.wikipedia.org/wiki/Page_%28computer_memory%29 "https://en.wikipedia.org/wiki/Page_%28computer_memory%29").
 
   `OrdinaryIndex`  
   An ordinary index stores the maximum serialised key for each memory
-  page. The total size of all indexes is proportional to the average
-  size of one serialised key per memory page.
+  page. The total in-memory size of all indexes is proportional to the
+  average size of one serialised key per memory page.
 
   `CompactIndex`  
   A compact index stores the 64 most significant bits of the minimum
   serialised key for each memory page, as well as 1 bit per memory page
   to resolve clashes, 1 bit per memory page to mark overflow pages, and
-  a negligable amount of memory for tie breakers. The total size of all
-  indexes is approximately 66 bits per memory page.
+  a negligable amount of memory for tie breakers. The total in-memory
+  size of all indexes is approximately 66 bits per memory page.
 
 The total size of an LSM-tree must not exceed 2<sup>41</sup> physical
 entries. Violation of this condition *is* checked and will throw a
