@@ -61,10 +61,10 @@ type Alignment = Int
 blockSize :: Int
 blockSize = 0x100000
 
-{-# SPECIALIZE
+{-# SPECIALISE
     newBlock :: ST s (Block s)
   #-}
-{-# SPECIALIZE
+{-# SPECIALISE
     newBlock :: IO (Block RealWorld)
   #-}
 newBlock :: PrimMonad m => m (Block (PrimState m))
@@ -81,10 +81,10 @@ withArena am f = do
     closeArena am a
     pure x
 
-{-# SPECIALIZE
+{-# SPECIALISE
     newArena :: ArenaManager s -> ST s (Arena s)
   #-}
-{-# SPECIALIZE
+{-# SPECIALISE
     newArena :: ArenaManager RealWorld -> IO (Arena RealWorld)
   #-}
 newArena :: PrimMonad m => ArenaManager (PrimState m) -> m (Arena (PrimState m))
@@ -101,10 +101,10 @@ newArena (ArenaManager arenas) = do
             full <- newMutVar []
             return Arena {..}
 
-{-# SPECIALIZE
+{-# SPECIALISE
     closeArena :: ArenaManager s -> Arena s -> ST s ()
   #-}
-{-# SPECIALIZE
+{-# SPECIALISE
     closeArena :: ArenaManager RealWorld -> Arena RealWorld -> IO ()
   #-}
 closeArena :: PrimMonad m => ArenaManager (PrimState m) -> Arena (PrimState m) -> m ()
@@ -133,10 +133,10 @@ scrambleBlock (Block _ mba) = do
     setByteArray mba 0 size (0x77 :: Word8)
 #endif
 
-{-# SPECIALIZE
+{-# SPECIALISE
     resetArena :: Arena s -> ST s ()
   #-}
-{-# SPECIALIZE
+{-# SPECIALISE
     resetArena :: Arena RealWorld -> IO ()
   #-}
 -- | Reset arena, i.e. return used blocks to free list.
@@ -162,7 +162,7 @@ withUnmanagedArena k = do
     mgr <- newArenaManager
     withArena mgr k
 
-{-# SPECIALIZE
+{-# SPECIALISE
     allocateFromArena :: Arena s -> Size -> Alignment -> ST s (Offset, MutableByteArray s)
   #-}
 -- | Allocate a slice of mutable byte array from the arena.
@@ -172,7 +172,7 @@ allocateFromArena !arena !size !alignment =
     assert (size <= blockSize) $ -- not too large allocations
     allocateFromArena' arena size alignment
 
-{-# SPECIALIZE
+{-# SPECIALISE
     allocateFromArena' :: Arena s -> Size -> Alignment -> ST s (Offset, MutableByteArray s)
   #-}
 -- TODO!? this is not async exception safe
@@ -206,7 +206,7 @@ allocateFromArena' arena@Arena { .. } !size !alignment = do
         -- * go again
         allocateFromArena' arena size alignment
 
-{-# SPECIALIZE newBlockWithFree :: MutVar s [Block s] -> ST s (Block s) #-}
+{-# SPECIALISE newBlockWithFree :: MutVar s [Block s] -> ST s (Block s) #-}
 -- | Allocate new block, possibly taking it from a free list
 newBlockWithFree :: PrimMonad m => MutVar (PrimState m) [Block (PrimState m)] -> m (Block (PrimState m))
 newBlockWithFree free = do

@@ -71,9 +71,9 @@ replaceRoot (MH sizeRef arr) val = do
         x <- readSmallArray arr 0
         return x
 
-{-# SPECIALIZE replaceRoot :: forall a.   Ord a => MutableHeap RealWorld a -> a -> IO          a #-}
-{-# SPECIALIZE replaceRoot :: forall a s. Ord a => MutableHeap s         a -> a -> Strict.ST s a #-}
-{-# SPECIALIZE replaceRoot :: forall a s. Ord a => MutableHeap s         a -> a -> Lazy.ST   s a #-}
+{-# SPECIALISE replaceRoot :: forall a.   Ord a => MutableHeap RealWorld a -> a -> IO          a #-}
+{-# SPECIALISE replaceRoot :: forall a s. Ord a => MutableHeap s         a -> a -> Strict.ST s a #-}
+{-# SPECIALISE replaceRoot :: forall a s. Ord a => MutableHeap s         a -> a -> Lazy.ST   s a #-}
 
 -- | Extract the next minimum value.
 extract :: forall a m. (PrimMonad m, Ord a) => MutableHeap (PrimState m) a -> m (Maybe a)
@@ -90,9 +90,9 @@ extract (MH sizeRef arr) = do
         writeSmallArray arr (size - 1) placeholder
         return $! Just x
 
-{-# SPECIALIZE extract :: forall a.   Ord a => MutableHeap RealWorld a -> IO          (Maybe a) #-}
-{-# SPECIALIZE extract :: forall a s. Ord a => MutableHeap s         a -> Strict.ST s (Maybe a) #-}
-{-# SPECIALIZE extract :: forall a s. Ord a => MutableHeap s         a -> Lazy.ST   s (Maybe a) #-}
+{-# SPECIALISE extract :: forall a.   Ord a => MutableHeap RealWorld a -> IO          (Maybe a) #-}
+{-# SPECIALISE extract :: forall a s. Ord a => MutableHeap s         a -> Strict.ST s (Maybe a) #-}
+{-# SPECIALISE extract :: forall a s. Ord a => MutableHeap s         a -> Lazy.ST   s (Maybe a) #-}
 
 {-------------------------------------------------------------------------------
   Internal operations
@@ -113,9 +113,9 @@ siftUp !arr !x = loop where
               writeSmallArray arr idx    p
               loop parent
 
-{-# SPECIALIZE siftUp :: forall a.   Ord a => SmallMutableArray RealWorld a -> a -> Int -> IO          () #-}
-{-# SPECIALIZE siftUp :: forall a s. Ord a => SmallMutableArray s         a -> a -> Int -> Strict.ST s () #-}
-{-# SPECIALIZE siftUp :: forall a s. Ord a => SmallMutableArray s         a -> a -> Int -> Lazy.ST   s () #-}
+{-# SPECIALISE siftUp :: forall a.   Ord a => SmallMutableArray RealWorld a -> a -> Int -> IO          () #-}
+{-# SPECIALISE siftUp :: forall a s. Ord a => SmallMutableArray s         a -> a -> Int -> Strict.ST s () #-}
+{-# SPECIALISE siftUp :: forall a s. Ord a => SmallMutableArray s         a -> a -> Int -> Lazy.ST   s () #-}
 
 siftDown :: forall a m. (PrimMonad m, Ord a) => SmallMutableArray (PrimState m) a -> Int -> a -> Int -> m ()
 siftDown !arr !size !x = loop where
@@ -164,9 +164,9 @@ siftDown !arr !size !x = loop where
         !lft = doubleOf idx + 1
         !rgt = doubleOf idx + 2
 
-{-# SPECIALIZE siftDown :: forall a.   Ord a => SmallMutableArray RealWorld a -> Int -> a -> Int -> IO          () #-}
-{-# SPECIALIZE siftDown :: forall a s. Ord a => SmallMutableArray s         a -> Int -> a -> Int -> Strict.ST s () #-}
-{-# SPECIALIZE siftDown :: forall a s. Ord a => SmallMutableArray s         a -> Int -> a -> Int -> Lazy.ST   s () #-}
+{-# SPECIALISE siftDown :: forall a.   Ord a => SmallMutableArray RealWorld a -> Int -> a -> Int -> IO          () #-}
+{-# SPECIALISE siftDown :: forall a s. Ord a => SmallMutableArray s         a -> Int -> a -> Int -> Strict.ST s () #-}
+{-# SPECIALISE siftDown :: forall a s. Ord a => SmallMutableArray s         a -> Int -> a -> Int -> Lazy.ST   s () #-}
 
 {-------------------------------------------------------------------------------
   Helpers
