@@ -541,10 +541,9 @@ instance (Typeable m, Typeable (PrimState m), Typeable h)
   wNoThunks ctx = \case
     ReadRun r      -> noThunks ctx r
     ReadBuffer var -> noThunks ctx (OnlyCheckWhnf var) -- contents intentionally lazy
-    ReadReaders ty readers hasMore -> allNoThunks [
+    ReadReaders ty readers -> allNoThunks [
         noThunks ctx ty
       , noThunks ctx readers
-      , noThunks ctx hasMore
       ]
 
 deriving stock instance Generic ReadersMergeType

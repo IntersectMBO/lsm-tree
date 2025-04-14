@@ -34,6 +34,8 @@ import           Data.Traversable (for)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan, RawBlobRef)
 import           Database.LSMTree.Internal.Entry (Entry (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
+import           Database.LSMTree.Internal.Index.CompactAcc (SMaybe (..),
+                     smaybe)
 import           Database.LSMTree.Internal.Run (Run)
 import           Database.LSMTree.Internal.RunReader (OffsetKey (..),
                      RunReader (..))
@@ -127,7 +129,15 @@ data Reader m h =
     -- | Recursively read from another reader. This requires keeping track of
     -- its 'HasMore' status, since we should not try to read another entry from
     -- it once it is drained.
-  | ReadReaders !ReadersMergeType !(Readers m h) !HasMore
+    --
+    -- We represent the recursive reader and 'HasMore' status together as a
+    -- 'Maybe' 'Readers'. The reason is subtle: once a 'Readers' becomes drained
+    -- it is immediately closed, after which the structure should not be used
+    -- anymore or you'd be using resources after they have been closed already.
+    --
+    -- TODO: maybe it's a slightly more ergonomic alternative to no close the
+    -- 'Readers' automatically.
+  | ReadReaders !ReadersMergeType !(SMaybe (Readers m h))
 
 type KOp m h = (SerialisedKey, Entry SerialisedValue (RawBlobRef m h))
 
@@ -167,7 +177,7 @@ new resolve !offsetKey sources = do
           FromReaders mergeType nestedSources -> do
             new resolve offsetKey nestedSources >>= \case
               Nothing -> return Nothing
-              Just rs -> nextReadCtx resolve n (ReadReaders mergeType rs HasMore)
+              Just rs -> nextReadCtx resolve n (ReadReaders mergeType (SJust rs))
 
     fromWB :: WB.WriteBuffer -> Ref (WB.WriteBufferBlobs m h) -> m (Reader m h)
     fromWB wb wbblobs = do
@@ -198,8 +208,7 @@ close Readers {..} = do
     closeReader = \case
         ReadBuffer _             -> pure ()
         ReadRun r                -> RunReader.close r
-        ReadReaders _ rs HasMore -> close rs
-        ReadReaders _ _  Drained -> pure ()  -- already closed all its resources
+        ReadReaders _ readersMay -> smaybe (pure ()) close readersMay
     closeHeap =
         Heap.extract readersHeap >>= \case
           Nothing -> return ()
@@ -416,14 +425,17 @@ nextReadCtx resolve readCtxNumber readCtxReader =
           Nothing
         RunReader.ReadEntry readCtxHeadKey readCtxHeadEntry ->
           Just ReadCtx {..}
-      ReadReaders mergeType readers hasMore -> case hasMore of
-        Drained ->
+      ReadReaders mergeType readersMay -> case readersMay of
+        SNothing ->
           return Nothing
-        HasMore -> do
-          (readCtxHeadKey, readCtxHeadEntry, hasMore') <-
+        SJust readers -> do
+          (readCtxHeadKey, readCtxHeadEntry, hasMore) <-
             popResolved resolve mergeType readers
+          let readersMay' = case hasMore of
+                Drained -> SNothing
+                HasMore -> SJust readers
           return $ Just ReadCtx {
               -- TODO: reduce allocations?
-              readCtxReader = ReadReaders mergeType readers hasMore'
+              readCtxReader = ReadReaders mergeType readersMay'
             , ..
           }
