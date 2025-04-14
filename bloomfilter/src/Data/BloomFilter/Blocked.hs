@@ -17,7 +17,6 @@ module Data.BloomFilter.Blocked (
     -- * Types
     Hash,
     Hashable,
-    CheapHashes,
 
     -- * Immutable Bloom filters
     Bloom,
@@ -49,18 +48,25 @@ module Data.BloomFilter.Blocked (
     size,
     elem,
     notElem,
-    elemHashes,
 
     -- * Mutable Bloom filters
     MBloom,
     new,
     insert,
-    insertHashes,
 
     -- ** Conversion
     freeze,
     thaw,
     unsafeFreeze,
+
+    -- * Low level variants
+    Hashes,
+    hashes,
+    insertHashes,
+    elemHashes,
+    -- ** Prefetching
+    prefetchInsert,
+    prefetchElem,
 ) where
 
 import           Control.Monad.ST (ST, runST)
@@ -101,14 +107,14 @@ create bloomsize body =
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
 insert :: Hashable a => MBloom s a -> a -> ST s ()
-insert = \ !mb x -> insertHashes mb (hash64 x)
+insert = \ !mb !x -> insertHashes mb (hashes x)
 
 {-# INLINE elem #-}
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: Hashable a => a -> Bloom a -> Bool
-elem = \ !x !b -> elemHashes b (hash64 x)
+elem = \ !x !b -> elemHashes b (hashes x)
 
 {-# INLINE notElem #-}
 -- | Query an immutable Bloom filter for non-membership.  If the value
