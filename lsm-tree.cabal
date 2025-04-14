@@ -70,9 +70,10 @@ description:
   *   The variable \(t\) refers to the number of open tables in the session.
   *   The variable \(s\) refers to the number of snapshots in the session.
   *   The variable \(b\) usually refers to the size of a batch of inputs\/outputs.
-      Its precise meaning is explained for each occurance.
-  *   The constant \(T\) refers to the size ratio of the table, which is a configuration parameter.
+      Its precise meaning is explained for each occurrence.
   *   The constant \(B\) refers to the size of the write buffer, which is a configuration parameter.
+  *   The constant \(T\) refers to the size ratio of the table, which is a configuration parameter.
+  *   The constant \(P\) refers to the the average number of key–value pairs that fit in a page of memory.
 
   === Disk I\/O cost of operations #performance_time#
 
@@ -86,38 +87,40 @@ description:
   +==========+========================+============================+================================================+
   | Session  | Create\/Open           | N\/A                       | \(O(1)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Close                  | N\/A                       | \(O(t \: T \: \log_T \frac{n}{B})\)            |
+  |          | Close                  | @MergePolicyLazyLevelling@ | \(O(t \: T \: \log_T \frac{n}{B})\)            |
   +----------+------------------------+----------------------------+------------------------------------------------+
   | Table    | Create                 | N\/A                       | \(O(1)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Close                  | N\/A                       | \(O(T \: \log_T \frac{n}{B})\)                 |
+  |          | Close                  | @MergePolicyLazyLevelling@ | \(O(T \: \log_T \frac{n}{B})\)                 |
   +----------+------------------------+----------------------------+------------------------------------------------+
   |          | Lookup                 | @MergePolicyLazyLevelling@ | \(O(T \: \log_T \frac{n}{B})\)                 |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Range Lookup           | N\/A                       | \(O(T \: \log_T \frac{n}{B} + b)\)*            |
+  |          | Range Lookup           | @MergePolicyLazyLevelling@ | \(O(T \: \log_T \frac{n}{B} + \frac{b}{P})\)*  |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Insert\/Delete\/Update | @MergePolicyLazyLevelling@ | \(O(\log_T \frac{n}{B})\)                      |
+  |          | Insert\/Delete\/Update | @MergePolicyLazyLevelling@ | \(O(\frac{1}{P} \: \log_T \frac{n}{B})\)       |
   +----------+------------------------+----------------------------+------------------------------------------------+
   |          | Duplicate              | N\/A                       | \(O(0)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Union                  | N\/A                       | \(O(n)\)                                       |
+  |          | Union                  | N\/A                       | \(O(\frac{n}{P})\)                             |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  | Snapshot | Save                   | N\/A                       | \(O(T \: \log_T \frac{n}{B})\)                 |
+  | Snapshot | Save                   | @MergePolicyLazyLevelling@ | \(O(T \: \log_T \frac{n}{B})\)                 |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Open                   | N\/A                       | \(O(n)\)                                       |
+  |          | Open                   | N\/A                       | \(O(\frac{n}{P})\)                             |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Delete                 | N\/A                       | \(O(T \: \log_T \frac{n}{B})\)                 |
+  |          | Delete                 | @MergePolicyLazyLevelling@ | \(O(T \: \log_T \frac{n}{B})\)                 |
   +----------+------------------------+----------------------------+------------------------------------------------+
   |          | List                   | N\/A                       | \(O(s)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  | Cursor   | Create                 | N\/A                       | \(O(T \: \log_T \frac{n}{B})\)                 |
+  | Cursor   | Create                 | @MergePolicyLazyLevelling@ | \(O(T \: \log_T \frac{n}{B})\)                 |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Close                  | N\/A                       | \(O(T \: \log_T \frac{n}{B})\)                 |
+  |          | Close                  | @MergePolicyLazyLevelling@ | \(O(T \: \log_T \frac{n}{B})\)                 |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Read next entry        | N\/A                       | \(O(1)\)                                       |
+  |          | Read next entry        | N\/A                       | \(O(\frac{1}{P})\)                             |
   +----------+------------------------+----------------------------+------------------------------------------------+
 
   (*The variable \(b\) refers to the number of entries retrieved by the range lookup.)
+
+  TODO: Document the average-case behaviour of lookups.
 
   === In-memory size of tables #performance_size#
 

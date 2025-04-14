@@ -119,13 +119,16 @@ constants:
 - The variable *s* refers to the number of snapshots in the session.
 
 - The variable *b* usually refers to the size of a batch of
-  inputs/outputs. Its precise meaning is explained for each occurance.
+  inputs/outputs. Its precise meaning is explained for each occurrence.
+
+- The constant *B* refers to the size of the write buffer, which is a
+  configuration parameter.
 
 - The constant *T* refers to the size ratio of the table, which is a
   configuration parameter.
 
-- The constant *B* refers to the size of the write buffer, which is a
-  configuration parameter.
+- The constant *P* refers to the the average number of key–value pairs
+  that fit in a page of memory.
 
 #### Disk I/O cost of operations <span id="performance_time" class="anchor"></span>
 
@@ -153,7 +156,7 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td></td>
 <td>Close</td>
-<td>N/A</td>
+<td><code>MergePolicyLazyLevelling</code></td>
 <td><span class="math inline">$O(t \: T \: \log_T
 \frac{n}{B})$</span></td>
 </tr>
@@ -166,7 +169,7 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td></td>
 <td>Close</td>
-<td>N/A</td>
+<td><code>MergePolicyLazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
@@ -178,15 +181,17 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td></td>
 <td>Range Lookup</td>
-<td>N/A</td>
-<td><span class="math inline">$O(T \: \log_T \frac{n}{B} + b)$</span>
+<td><code>MergePolicyLazyLevelling</code></td>
+<td><span class="math inline">$O(T \: \log_T \frac{n}{B} +
+\frac{b}{P})$</span>
 *</td>
 </tr>
 <tr>
 <td></td>
 <td>Insert/Delete/Update</td>
 <td><code>MergePolicyLazyLevelling</code></td>
-<td><span class="math inline">$O(\log_T \frac{n}{B})$</span></td>
+<td><span class="math inline">$O(\frac{1}{P} \: \log_T
+\frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
@@ -198,24 +203,24 @@ Otherwise, the merge policy is listed as N/A.
 <td></td>
 <td>Union</td>
 <td>N/A</td>
-<td><span class="math inline"><em>O</em>(<em>n</em>)</span></td>
+<td><span class="math inline">$O(\frac{n}{P})$</span></td>
 </tr>
 <tr>
 <td>Snapshot</td>
 <td>Save</td>
-<td>N/A</td>
+<td><code>MergePolicyLazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Open</td>
 <td>N/A</td>
-<td><span class="math inline"><em>O</em>(<em>n</em>)</span></td>
+<td><span class="math inline">$O(\frac{n}{P})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Delete</td>
-<td>N/A</td>
+<td><code>MergePolicyLazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
@@ -227,26 +232,28 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td>Cursor</td>
 <td>Create</td>
-<td>N/A</td>
+<td><code>MergePolicyLazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Close</td>
-<td>N/A</td>
+<td><code>MergePolicyLazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Read next entry</td>
 <td>N/A</td>
-<td><span class="math inline"><em>O</em>(1)</span></td>
+<td><span class="math inline">$O(\frac{1}{P})$</span></td>
 </tr>
 </tbody>
 </table>
 
 (\*The variable *b* refers to the number of entries retrieved by the
 range lookup.)
+
+TODO: Document the average-case behaviour of lookups.
 
 #### In-memory size of tables <span id="performance_size" class="anchor"></span>
 

@@ -331,7 +331,15 @@ newtype Session = Session {unSession :: Internal.Session IO HandleIO}
 {- |
 Run an action with access to a session opened from a session directory.
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(t \: T \log_T \frac{n}{B})\).
+
+The variable \(t\) refers to the number of tables in the session.
+
+If the session has any open tables, then 'closeTable' is called for each open table.
+Otherwise, the disk I\/O cost operation is \(O(1)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -396,8 +404,12 @@ openSession dir = do
 {- |
 Close a session.
 
-The worst-case disk I\/O complexity of this operation is \(O(t \: T \log_T \frac{n}{B})\),
-where the variable \(t\) refers to the number of tables in the session.
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(t \: T \log_T \frac{n}{B})\).
+
+The variable \(t\) refers to the number of tables in the session.
 
 If the session has any open tables, then 'closeTable' is called for each open table.
 Otherwise, the disk I\/O cost operation is \(O(1)\).
@@ -422,13 +434,15 @@ __Warning:__ Tables are ephemeral. Once you close a table, its data is lost fore
 type role Table nominal nominal
 
 type Table :: Type -> Type -> Type
-data Table k v
-    = Table {unTable :: {-# UNPACK #-} !(Internal.Table IO HandleIO)}
+newtype Table k v = Table {unTable :: (Internal.Table IO HandleIO)}
 
 {- |
 Run an action with access to an empty table.
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -490,7 +504,10 @@ newTableWith tableConfig (Session session) =
 {- |
 Close a table.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 Closing is idempotent, i.e., closing a closed table does nothing.
 All other operations on a closed table will throw an exception.
@@ -623,7 +640,7 @@ lookups (Table table) keys = do
 {- |
 Look up a batch of values associated with keys in the given range.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B} + b)\),
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B} + \frac{b}{P})\),
 where the variable \(b\) refers to the length of the /output/ vector.
 
 Range lookups can be performed concurrently from multiple Haskell threads.
@@ -637,8 +654,6 @@ Throws the following exceptions:
 ['TableCorruptedError']:
     If the table data is corrupted.
 -}
--- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
--- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 rangeLookup ::
     forall k v.
     (SerialiseKey k, SerialiseValue v) =>
@@ -661,7 +676,7 @@ If the key is already present in the table, the associated value is replaced wit
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(\log_T \frac{n}{B})\).
+    \(O(\frac{1}{P} \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
 
@@ -686,7 +701,7 @@ Variant of 'insert' for batch insertions.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(b \log_T \frac{n}{B})\).
+    \(O(\frac{b}{P} \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -710,7 +725,7 @@ If the key is not present in the table, the table is left unchanged.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(\log_T \frac{n}{B})\).
+    \(O(\frac{1}{P} \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
 
@@ -734,7 +749,7 @@ Variant of 'delete' for batch deletions.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(b \log_T \frac{n}{B})\).
+    \(O(\frac{b}{P} \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -760,7 +775,7 @@ Update the value at a specific key:
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(\log_T \frac{n}{B})\).
+    \(O(\frac{1}{P} \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
 
@@ -785,7 +800,7 @@ Variant of 'update' for batch updates.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(b \log_T \frac{n}{B})\).
+    \(O(\frac{b}{P} \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -815,7 +830,10 @@ Run an action with access to the duplicate of a table.
 The duplicate is an independent copy of the given table.
 The duplicate is unaffected by subsequent updates to the given table and vice versa.
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -828,7 +846,6 @@ Throws the following exceptions:
 ['TableClosedError']:
     If the table is closed.
 -}
--- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 withDuplicate ::
     forall k v a.
     Table k v ->
@@ -854,7 +871,6 @@ Throws the following exceptions:
 ['TableClosedError']:
     If the table is closed.
 -}
--- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 duplicate ::
     forall k v.
     Table k v ->
@@ -869,7 +885,7 @@ duplicate (Table table) =
 {- |
 Run an action with access to a table that contains the union of the entries of the given tables.
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -912,7 +928,7 @@ withUnions tables =
 {- |
 Create a table that contains the left-biased union of the entries of the given tables.
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
 
@@ -955,7 +971,10 @@ unions tables = do
 {- |
 Run an action with access to a table that incrementally computes the union of the given tables.
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -976,7 +995,6 @@ Throws the following exceptions:
 ['TableUnionNotCompatibleError']:
     If both tables are not from the same 'Session'.
 -}
--- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 withIncrementalUnion ::
     forall k v a.
     Table k v ->
@@ -989,10 +1007,13 @@ withIncrementalUnion table1 table2 =
 {- |
 Variant of 'withIncrementalUnion' that takes any number of tables.
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
-where the variable \(b\) refers to the number of input tables.
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B} + b)\).
+
+The variable \(b\) refers to the number of input tables.
 -}
--- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
 withIncrementalUnions ::
     forall k v a.
     NonEmpty (Table k v) ->
@@ -1023,7 +1044,6 @@ Throws the following exceptions:
 ['TableUnionNotCompatibleError']:
     If both tables are not from the same 'Session'.
 -}
--- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 incrementalUnion ::
     forall k v.
     Table k v ->
@@ -1038,7 +1058,6 @@ Variant of 'incrementalUnion' for any number of tables.
 The worst-case disk I\/O complexity of this operation is \(O(b)\),
 where the variable \(b\) refers to the number of input tables.
 -}
--- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\).
 incrementalUnions ::
     forall k v.
     NonEmpty (Table k v) ->
@@ -1050,7 +1069,7 @@ incrementalUnions (Table table :| tables) = do
 Get the amount of remaining union debt.
 This includes the union debt of any table that was part of the union's input.
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation is \(O(0)\).
 -}
 remainingUnionDebt ::
     forall k v.
@@ -1062,7 +1081,7 @@ remainingUnionDebt (Table table) =
 {- |
 Supply the given amount of union credits.
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
+The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
 where the variable \(b\) refers to the amount of credits supplied.
 
 Throws the following exceptions:
@@ -1096,13 +1115,16 @@ The name of this type references [database cursors](https://en.wikipedia.org/wik
 type role Cursor nominal nominal
 
 type Cursor :: Type -> Type -> Type
-data Cursor k v
-    = Cursor {unCursor :: {-# UNPACK #-} !(Internal.Cursor IO HandleIO)}
+newtype Cursor k v
+    = Cursor {unCursor :: (Internal.Cursor IO HandleIO)}
 
 {- |
 Run an action with access to a cursor.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -1139,7 +1161,10 @@ withCursorAtOffset (Table table) offsetKey action =
 {- |
 Create a cursor for the given table.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 __Warning:__ Cursors hold open resources and must be closed using 'closeCursor'.
 
@@ -1172,7 +1197,10 @@ newCursorAtOffset (Table table) offsetKey =
 {- |
 Close a cursor.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 Closing is idempotent, i.e., closing a closed cursor does nothing.
 All other operations on a closed cursor will throw an exception.
@@ -1186,7 +1214,7 @@ closeCursor = Internal.closeCursor . unCursor
 {- |
 Read the next table entry from the cursor.
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{1}{P})\).
 
 Throws the following exceptions:
 
@@ -1195,22 +1223,20 @@ Throws the following exceptions:
 ['CursorClosedError']:
     If the cursor is closed.
 -}
--- The worst-case time complexity is \(O(T \log_T \frac{n}{B})\)
--- The amortised time complexity is \(\Theta(\logT \log_T \frac{n}{B})\).
--- TODO: implement this function in terms of 'readEntry'
 next ::
     forall k v.
     (SerialiseKey k, SerialiseValue v) =>
     Cursor k v ->
     IO (Maybe (k, v))
 next iterator = do
+    -- TODO: implement this function in terms of 'readEntry'
     entries <- take 1 iterator
     pure $ fst <$> V.uncons entries
 
 {- |
 Read the next batch of table entries from the cursor.
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
+The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
 where the variable \(b\) refers to the length of the /output/ vector,
 which is /at most/ equal to the given number.
 In practice, the length of the output vector is only less than the given number
@@ -1227,8 +1253,6 @@ Throws the following exceptions:
 ['CursorClosedError']:
     If the cursor is closed.
 -}
--- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
--- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
 take ::
     forall k v.
     (SerialiseKey k, SerialiseValue v) =>
@@ -1243,7 +1267,7 @@ take n (Cursor cursor) =
 {- |
 Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
+The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
 where the variable \(b\) refers to the length of the /output/ vector,
 which is /at most/ equal to the given number.
 In practice, the length of the output vector is only less than the given number
@@ -1261,9 +1285,6 @@ Throws the following exceptions:
 ['CursorClosedError']:
     If the cursor is closed.
 -}
--- The worst-case time complexity is \(O(b \: T \log_T \frac{n}{B})\).
--- The amortised time complexity is \(\Theta(b \logT \log_T \frac{n}{B})\).
--- TODO: implement this function using a variant of 'readCursorWhile' that does not take the maximum batch size
 takeWhile ::
     forall k v.
     (SerialiseKey k, SerialiseValue v) =>
@@ -1272,6 +1293,8 @@ takeWhile ::
     Cursor k v ->
     IO (Vector (k, v))
 takeWhile n p (Cursor cursor) =
+    -- TODO: implement this function using a variant of 'readCursorWhile'
+    --       that does not take the maximum batch size
     Internal.readCursorWhile const (p . Internal.deserialiseKey) n cursor $ \ !k !v !_b ->
         (Internal.deserialiseKey k, Internal.deserialiseValue v)
 
@@ -1289,7 +1312,10 @@ Saving a snapshot /does not/ close the table.
 Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
 However, it is not so cheap that one should use it after every operation.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
 
@@ -1313,7 +1339,7 @@ saveSnapshot snapName snapLabel (Table table) =
 {- |
 Run an action with access to a table from a snapshot.
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -1359,7 +1385,7 @@ withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
 {- |
 Open a table from a named snapshot.
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
 
@@ -1401,7 +1427,10 @@ openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLab
 {- |
 Delete the named snapshot.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['MergePolicyLazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
 
