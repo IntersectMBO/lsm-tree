@@ -1,5 +1,6 @@
-{-# LANGUAGE CPP       #-}
-{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE CPP           #-}
+{-# LANGUAGE MagicHash     #-}
+{-# LANGUAGE UnboxedTuples #-}
 {-# OPTIONS_HADDOCK not-home #-}
 -- | This module defines the 'Bloom' and 'MBloom' types and all the functions
 -- that need direct knowledge of and access to the representation. This forms
@@ -8,14 +9,18 @@ module Data.BloomFilter.Classic.Internal (
     -- * Mutable Bloom filters
     MBloom,
     new,
-    insertHashes,
-    readHashes,
 
     -- * Immutable Bloom filters
     Bloom,
     bloomInvariant,
     size,
+
+    -- * Hash-based operations
+    Hashes,
+    hashes,
+    insertHashes,
     elemHashes,
+    readHashes,
 
     -- * Conversion
     serialise,
@@ -33,6 +38,7 @@ import           Data.Bits
 import           Data.Kind (Type)
 import           Data.Primitive.ByteArray
 import           Data.Primitive.PrimArray
+import           Data.Primitive.Types (Prim (..))
 import           Data.Word (Word64)
 
 #if MIN_VERSION_base(4,17,0)
@@ -40,6 +46,7 @@ import           GHC.Exts (remWord64#)
 #else
 import           GHC.Exts (remWord#)
 #endif
+import           GHC.Exts (Int#, uncheckedIShiftL#, (+#))
 import           GHC.Word (Word64 (W64#))
 
 import           Data.BloomFilter.Classic.BitArray (BitArray, MBitArray)
@@ -80,7 +87,7 @@ new BloomSize { sizeBits, sizeHashes } = do
       mbBitArray
     }
 
-insertHashes :: MBloom s a -> CheapHashes a -> ST s ()
+insertHashes :: MBloom s a -> Hashes a -> ST s ()
 insertHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
     go 0
   where
@@ -95,7 +102,7 @@ insertHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
       BitArray.unsafeSet mbBitArray index
       go (i + 1)
 
-readHashes :: forall s a. MBloom s a -> CheapHashes a -> ST s Bool
+readHashes :: forall s a. MBloom s a -> Hashes a -> ST s Bool
 readHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
     go 0
   where
@@ -159,9 +166,9 @@ size Bloom { numBits, numHashes } =
     }
 
 -- | Query an immutable Bloom filter for membership using already constructed
--- 'CheapHashes' value.
-elemHashes :: CheapHashes a -> Bloom a -> Bool
-elemHashes !h Bloom { numBits, numHashes, bitArray } =
+-- 'Hashes' value.
+elemHashes :: Bloom a -> Hashes a -> Bool
+elemHashes Bloom { numBits, numHashes, bitArray } !h =
     go 0
   where
     go :: Int -> Bool
@@ -236,3 +243,132 @@ unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
 #else
 unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
 #endif
+
+-------------------------------------------------------------------------------
+-- Hashes
+--
+
+-- | A pair of hashes used for a double hashing scheme.
+--
+-- See 'evalHashes'.
+data Hashes a = Hashes !Hash !Hash
+  deriving Show
+type role Hashes nominal
+
+instance Prim (Hashes a) where
+    sizeOfType# _ = 16#
+    alignmentOfType# _ = 8#
+
+    indexByteArray# ba i = Hashes
+        (indexByteArray# ba (indexLo i))
+        (indexByteArray# ba (indexHi i))
+    readByteArray# ba i s1 =
+        case readByteArray# ba (indexLo i) s1 of { (# s2, lo #) ->
+        case readByteArray# ba (indexHi i) s2 of { (# s3, hi #) ->
+        (# s3, Hashes lo hi #)
+        }}
+    writeByteArray# ba i (Hashes lo hi) s =
+        writeByteArray# ba (indexHi i) hi (writeByteArray# ba (indexLo i) lo s)
+
+    indexOffAddr# ba i = Hashes
+        (indexOffAddr# ba (indexLo i))
+        (indexOffAddr# ba (indexHi i))
+    readOffAddr# ba i s1 =
+        case readOffAddr# ba (indexLo i) s1 of { (# s2, lo #) ->
+        case readOffAddr# ba (indexHi i) s2 of { (# s3, hi #) ->
+        (# s3, Hashes lo hi #)
+        }}
+    writeOffAddr# ba i (Hashes lo hi) s =
+        writeOffAddr# ba (indexHi i) hi (writeOffAddr# ba (indexLo i) lo s)
+
+indexLo :: Int# -> Int#
+indexLo i = uncheckedIShiftL# i 1#
+
+indexHi :: Int# -> Int#
+indexHi i = uncheckedIShiftL# i 1# +# 1#
+
+{- Note [Original Hashes]
+
+Compute a list of 32-bit hashes relatively cheaply.  The value to
+hash is inspected at most twice, regardless of the number of hashes
+requested.
+
+We use a variant of Kirsch and Mitzenmacher's technique from \"Less
+Hashing, Same Performance: Building a Better Bloom Filter\",
+<http://www.eecs.harvard.edu/~kirsch/pubs/bbbf/esa06.pdf>.
+
+Where Kirsch and Mitzenmacher multiply the second hash by a
+coefficient, we shift right by the coefficient.  This offers better
+performance (as a shift is much cheaper than a multiply), and the
+low order bits of the final hash stay well mixed.
+
+-}
+
+{- Note: [Hashes]
+
+On the first glance the 'evalHashes' scheme seems dubious.
+
+Firstly, it's original performance motivation is dubious.
+
+> multiply the second hash by a coefficient
+
+While the scheme double hashing scheme is presented in
+theoretical analysis as
+
+    g(i) = a + i * b
+
+In practice it's implemented in a loop which looks like
+
+    g[0] = a
+    for (i = 1; i < k; i++) {
+        a += b;
+        g[i] = a;
+    }
+
+I.e. with just an addition.
+
+Secondly there is no analysis anywhere about the
+'evalHashes' scheme.
+
+Peter Dillinger's thesis (Adaptive Approximate State Storage)
+discusses various fast hashing schemes (section 6.5),
+mentioning why ordinary "double hashing" is weak scheme.
+
+Issue 1: when second hash value is bad, e.g. not coprime with bloom filters size in bits,
+we can get repetitions (worst case 0, or m/2).
+
+Issue 2: in bloom filter scenario, whether we do a + i * b or h0 - i * b' (with b' = -b)
+as we probe all indices (as set) doesn't matter, not sequentially (like in hash table).
+So we lose one bit entropy.
+
+Issue 3: the scheme is prone to partial overlap.
+Two values with the same second hash value could overlap on many indices.
+
+Then Dillinger discusses various schemes which solve this issue.
+
+The Hashes scheme seems to avoid these cuprits.
+This is probably because it uses most of the bits of the second hash, even in m = 2^n scenarios.
+(normal double hashing and enhances double hashing don't use the high bits or original hash then).
+TL;DR Hashes seems to work well in practice.
+
+For the record: RocksDB uses an own scheme as well,
+where first hash is used to pick a cache line, and second one to generate probes inside it.
+https://github.com/facebook/rocksdb/blob/096fb9b67d19a9a180e7c906b4a0cdb2b2d0c1f6/util/bloom_impl.h
+
+-}
+
+-- | Evalute 'Hashes' family.
+--
+-- \[
+-- g_i = h_0 + \left\lfloor h_1 / 2^i \right\rfloor
+-- \]
+--
+evalHashes :: Hashes a -> Int -> Hash
+evalHashes (Hashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
+
+-- | Create 'Hashes' structure.
+--
+-- It's simply hashes the value twice using seed 0 and 1.
+hashes :: Hashable a => a -> Hashes a
+hashes v = Hashes (hashSalt64 0 v) (hashSalt64 1 v)
+{-# INLINE hashes #-}

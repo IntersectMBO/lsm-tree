@@ -22,7 +22,6 @@ import           Control.Monad.ST (ST)
 
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Hash as Bloom
 
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
@@ -94,8 +93,8 @@ bloomQueries !blooms !ks
     !rsN = V.length blooms
     !ksN = V.length ks
 
-    hs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
-    !hs  = VP.generate ksN $ \i -> Bloom.makeHashes (V.unsafeIndex ks i)
+    hs :: VP.Vector (Bloom.Hashes SerialisedKey)
+    !hs  = VP.generate ksN $ \i -> Bloom.hashes (V.unsafeIndex ks i)
 
     -- Loop over all run indexes
     loop1 ::
@@ -120,7 +119,7 @@ bloomQueries !blooms !ks
         loop2 !res2 !resix2 !kix !b
           | kix == ksN = pure (res2, resix2)
           | let !h = hs `VP.unsafeIndex` kix
-          , Bloom.elemHashes h b = do
+          , Bloom.elemHashes b h = do
               -- Double the vector if we've reached the end.
               -- Note unsafeGrow takes the number to grow by, not the new size.
               res2' <- if resix2 == VPM.length res2

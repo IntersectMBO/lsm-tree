@@ -11,7 +11,6 @@ import           Control.Monad.ST.Unsafe
 import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom, BloomSize)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Hash as Bloom
 import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -92,19 +91,19 @@ benchmarks = do
     putStrLn ""
 
     hashcost <-
-      benchmark "makeCheapHashes"
+      benchmark "makeHashes"
                 "(This baseline is the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                   (benchMakeCheapHashes vbs))
+                   (benchMakeHashes vbs))
                 (fromIntegralChecked benchmarkNumLookups)
                 (0, 0)
                 289
 
     _ <-
-      benchmark "elemCheapHashes"
+      benchmark "elemHashes"
                 "(this is the simple one-by-one lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (benchElemCheapHashes vbs))
+                  (benchElemHashes vbs))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
@@ -277,21 +276,21 @@ benchInBatches !b !rng0 !action =
 
 -- | This gives us a combined cost of calculating the series of keys and their
 -- hashes (when used with 'benchInBatches').
-benchMakeCheapHashes :: Vector (Bloom SerialisedKey) -> BatchBench
-benchMakeCheapHashes !_bs !ks =
-    let khs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
-        !khs = V.convert (V.map Bloom.makeHashes ks)
+benchMakeHashes :: Vector (Bloom SerialisedKey) -> BatchBench
+benchMakeHashes !_bs !ks =
+    let khs :: VP.Vector (Bloom.Hashes SerialisedKey)
+        !khs = V.convert (V.map Bloom.hashes ks)
      in khs `seq` ()
 
 -- | This gives us a combined cost of calculating the series of keys, their
--- hashes, and then using 'Bloom.elemCheapHashes' with each filter  (when used
+-- hashes, and then using 'Bloom.elemHashes' with each filter  (when used
 -- with 'benchInBatches').
-benchElemCheapHashes :: Vector (Bloom SerialisedKey) -> BatchBench
-benchElemCheapHashes !bs !ks =
-    let khs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
-        !khs = V.convert (V.map Bloom.makeHashes ks)
+benchElemHashes :: Vector (Bloom SerialisedKey) -> BatchBench
+benchElemHashes !bs !ks =
+    let khs :: VP.Vector (Bloom.Hashes SerialisedKey)
+        !khs = V.convert (V.map Bloom.hashes ks)
      in V.foldl'
           (\_ b -> VP.foldl'
-                     (\_ kh -> Bloom.elemHashes kh b `seq` ())
+                     (\_ kh -> Bloom.elemHashes b kh `seq` ())
                      () khs)
           () bs
