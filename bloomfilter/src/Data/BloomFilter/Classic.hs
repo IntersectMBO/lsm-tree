@@ -28,7 +28,6 @@ module Data.BloomFilter.Classic (
     -- * Types
     Hash,
     Hashable,
-    CheapHashes,
 
     -- * Immutable Bloom filters
     Bloom,
@@ -56,20 +55,25 @@ module Data.BloomFilter.Classic (
     size,
     elem,
     notElem,
-    elemHashes,
     serialise,
 
     -- * Mutable Bloom filters
     MBloom,
     new,
     insert,
-    insertHashes,
     read,
 
     -- ** Conversion
     freeze,
     thaw,
     unsafeFreeze,
+
+    -- * Low level variants
+    Hashes,
+    hashes,
+    insertHashes,
+    elemHashes,
+    readHashes,
 ) where
 
 import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld,
@@ -109,13 +113,13 @@ create bloomsize body =
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
 insert :: Hashable a => MBloom s a -> a -> ST s ()
-insert !mb !x = insertHashes mb (makeHashes x)
+insert !mb !x = insertHashes mb (hashes x)
 
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: Hashable a => a -> Bloom a -> Bool
-elem elt ub = elemHashes (makeHashes elt) ub
+elem !x !b = elemHashes b (hashes x)
 
 -- | Query an immutable Bloom filter for non-membership.  If the value
 -- /is/ present, return @False@.  If the value is not present, there
@@ -127,7 +131,7 @@ notElem = \elt ub -> not (elt `elem` ub)
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 read :: Hashable a => MBloom s a -> a -> ST s Bool
-read mb elt = readHashes mb (makeHashes elt)
+read !mb !x = readHashes mb (hashes x)
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
 -- function populates the filter as follows.
