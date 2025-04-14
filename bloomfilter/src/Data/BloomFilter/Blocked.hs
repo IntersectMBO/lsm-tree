@@ -48,6 +48,7 @@ module Data.BloomFilter.Blocked (
     size,
     elem,
     notElem,
+    (?),
 
     -- * Mutable Bloom filters
     MBloom,
@@ -115,6 +116,17 @@ insert = \ !mb !x -> insertHashes mb (hashes x)
 -- /still/ some possibility that @True@ will be returned.
 elem :: Hashable a => a -> Bloom a -> Bool
 elem = \ !x !b -> elemHashes b (hashes x)
+
+-- | Same as 'elem' but with the opposite argument order:
+--
+-- > x `elem` bfilter
+--
+-- versus
+--
+-- > bfilter ? x
+--
+(?) :: Hashable a => Bloom a -> a -> Bool
+(?) = flip elem
 
 {-# INLINE notElem #-}
 -- | Query an immutable Bloom filter for non-membership.  If the value
