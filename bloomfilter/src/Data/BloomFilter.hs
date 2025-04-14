@@ -142,7 +142,7 @@ singleton hash numBits elt = create hash numBits (\mb -> insert mb elt)
 -- /still/ some possibility that @True@ will be returned.
 elem :: (Hashes h, Hashable a) => a -> Bloom' h a -> Bool
 elem elt ub = elemHashes (makeHashes elt) ub
-{-# SPECIALIZE elem :: Hashable a => a -> Bloom a -> Bool #-}
+{-# SPECIALISE elem :: Hashable a => a -> Bloom a -> Bool #-}
 
 -- | Query an immutable Bloom filter for membership using already constructed 'Hashes' value.
 elemHashes :: Hashes h => h a -> Bloom' h a -> Bool
@@ -160,7 +160,7 @@ elemHashes !ch !ub = go 0 where
             if V.unsafeIndex (bitArray ub) idx
               then go (i + 1)
               else False
-{-# SPECIALIZE elemHashes :: CheapHashes a -> Bloom a -> Bool #-}
+{-# SPECIALISE elemHashes :: CheapHashes a -> Bloom a -> Bool #-}
 
 -- | Query an immutable Bloom filter for non-membership.  If the value
 -- /is/ present, return @False@.  If the value is not present, there

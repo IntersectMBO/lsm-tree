@@ -99,21 +99,21 @@ newLoserTree (x0 :| xs0) = do
                         writeSmallArray arr j x
                         sift ids arr idxY (parentOf j) y idx0 xs
 
-{-# SPECIALIZE newLoserTree :: forall a.   Ord a => NonEmpty a -> IO          (MutableLoserTree RealWorld a, a) #-}
-{-# SPECIALIZE newLoserTree :: forall a s. Ord a => NonEmpty a -> Strict.ST s (MutableLoserTree s         a, a) #-}
-{-# SPECIALIZE newLoserTree :: forall a s. Ord a => NonEmpty a -> Lazy.ST   s (MutableLoserTree s         a, a) #-}
+{-# SPECIALISE newLoserTree :: forall a.   Ord a => NonEmpty a -> IO          (MutableLoserTree RealWorld a, a) #-}
+{-# SPECIALISE newLoserTree :: forall a s. Ord a => NonEmpty a -> Strict.ST s (MutableLoserTree s         a, a) #-}
+{-# SPECIALISE newLoserTree :: forall a s. Ord a => NonEmpty a -> Lazy.ST   s (MutableLoserTree s         a, a) #-}
 
 {-------------------------------------------------------------------------------
   Updates
 -------------------------------------------------------------------------------}
 
-{-# SPECIALIZE replace :: forall a.   Ord a => MutableLoserTree RealWorld a -> a -> IO          a #-}
-{-# SPECIALIZE replace :: forall a s. Ord a => MutableLoserTree s         a -> a -> Strict.ST s a #-}
-{-# SPECIALIZE replace :: forall a s. Ord a => MutableLoserTree s         a -> a -> Lazy.ST s   a #-}
+{-# SPECIALISE replace :: forall a.   Ord a => MutableLoserTree RealWorld a -> a -> IO          a #-}
+{-# SPECIALISE replace :: forall a s. Ord a => MutableLoserTree s         a -> a -> Strict.ST s a #-}
+{-# SPECIALISE replace :: forall a s. Ord a => MutableLoserTree s         a -> a -> Lazy.ST s   a #-}
 
-{-# SPECIALIZE remove :: forall a.   Ord a => MutableLoserTree RealWorld a -> IO          (Maybe a) #-}
-{-# SPECIALIZE remove :: forall a s. Ord a => MutableLoserTree s         a -> Strict.ST s (Maybe a) #-}
-{-# SPECIALIZE remove :: forall a s. Ord a => MutableLoserTree s         a -> Lazy.ST s   (Maybe a) #-}
+{-# SPECIALISE remove :: forall a.   Ord a => MutableLoserTree RealWorld a -> IO          (Maybe a) #-}
+{-# SPECIALISE remove :: forall a s. Ord a => MutableLoserTree s         a -> Strict.ST s (Maybe a) #-}
+{-# SPECIALISE remove :: forall a s. Ord a => MutableLoserTree s         a -> Lazy.ST s   (Maybe a) #-}
 
 -- | Don't fill the winner "hole". Return a next winner of (smaller) tournament.
 remove :: forall a m. (PrimMonad m, Ord a) => MutableLoserTree (PrimState m) a -> m (Maybe a)
@@ -156,9 +156,9 @@ replace (MLT sizeRef holeRef ids arr) val = do
         hole <- readPrimVar holeRef
         siftUp ids arr holeRef hole hole val
 
-{-# SPECIALIZE siftUp :: forall a.   Ord a => MutablePrimArray RealWorld Int -> SmallMutableArray RealWorld a -> PrimVar RealWorld Int -> Int -> Int -> a -> IO          a #-}
-{-# SPECIALIZE siftUp :: forall a s. Ord a => MutablePrimArray s Int         -> SmallMutableArray s         a -> PrimVar s         Int -> Int -> Int -> a -> Strict.ST s a #-}
-{-# SPECIALIZE siftUp :: forall a s. Ord a => MutablePrimArray s Int         -> SmallMutableArray s         a -> PrimVar s         Int -> Int -> Int -> a -> Lazy.ST s   a #-}
+{-# SPECIALISE siftUp :: forall a.   Ord a => MutablePrimArray RealWorld Int -> SmallMutableArray RealWorld a -> PrimVar RealWorld Int -> Int -> Int -> a -> IO          a #-}
+{-# SPECIALISE siftUp :: forall a s. Ord a => MutablePrimArray s Int         -> SmallMutableArray s         a -> PrimVar s         Int -> Int -> Int -> a -> Strict.ST s a #-}
+{-# SPECIALISE siftUp :: forall a s. Ord a => MutablePrimArray s Int         -> SmallMutableArray s         a -> PrimVar s         Int -> Int -> Int -> a -> Lazy.ST s   a #-}
 
 siftUp :: forall a m. (PrimMonad m, Ord a) => MutablePrimArray (PrimState m) Int -> SmallMutableArray (PrimState m) a -> PrimVar (PrimState m) Int -> Int -> Int -> a -> m a
 siftUp ids arr holeRef = sift

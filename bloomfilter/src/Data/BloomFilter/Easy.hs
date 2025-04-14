@@ -43,7 +43,7 @@ easyList :: Hashable a
          => Double              -- ^ desired false positive rate (0 < /ε/ < 1)
          -> [a]                 -- ^ values to populate with
          -> Bloom a
-{-# SPECIALIZE easyList :: Double -> [SB.ByteString] -> Bloom SB.ByteString #-}
+{-# SPECIALISE easyList :: Double -> [SB.ByteString] -> Bloom SB.ByteString #-}
 easyList errRate xs = B.fromList numHashes numBits xs
   where
     capacity = length xs

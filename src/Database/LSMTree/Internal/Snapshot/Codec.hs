@@ -81,7 +81,7 @@ isCompatible otherVersion = do
   Writing and reading files
 -------------------------------------------------------------------------------}
 
-{-# SPECIALIZE
+{-# SPECIALISE
   writeFileSnapshotMetaData ::
        HasFS IO h
     -> FsPath
@@ -112,7 +112,7 @@ writeFileSnapshotMetaData hfs contentPath checksumPath snapMetaData = do
 encodeSnapshotMetaData :: SnapshotMetaData -> ByteString
 encodeSnapshotMetaData = toLazyByteString . encode . Versioned
 
-{-# SPECIALIZE
+{-# SPECIALISE
   readFileSnapshotMetaData ::
        HasFS IO h
     -> FsPath

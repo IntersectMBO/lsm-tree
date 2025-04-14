@@ -293,5 +293,5 @@ evalCheapHashes (CheapHashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
 -- It's simply hashes the value twice using seed 0 and 1.
 makeCheapHashes :: Hashable a => a -> CheapHashes a
 makeCheapHashes v = CheapHashes (hashSalt64 0 v) (hashSalt64 1 v)
-{-# SPECIALIZE makeCheapHashes :: BS.ByteString -> CheapHashes BS.ByteString #-}
+{-# SPECIALISE makeCheapHashes :: BS.ByteString -> CheapHashes BS.ByteString #-}
 {-# INLINEABLE makeCheapHashes #-}

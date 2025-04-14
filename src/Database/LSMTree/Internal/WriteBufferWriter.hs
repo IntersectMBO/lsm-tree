@@ -152,7 +152,7 @@ unsafeFinalise dropCaches WriteBufferWriter {..} = do
   return (writerHasFS, writerHasBlockIO, writerFsPaths)
 
 
-{-# SPECIALIZE
+{-# SPECIALISE
   addKeyOp ::
        WriteBufferWriter IO h
     -> SerialisedKey

@@ -113,7 +113,7 @@ indexSearches !arena !indexes !kopsFiles !ks !rkixs = V.generateM n $ \i -> do
 
 type LookupAcc m h = V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
 
-{-# SPECIALIZE lookupsIOWithWriteBuffer ::
+{-# SPECIALISE lookupsIOWithWriteBuffer ::
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
@@ -155,7 +155,7 @@ lookupsIOWithWriteBuffer !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes 
       assert (V.length rs == V.length kopsFiles) $
       True
 
-{-# SPECIALIZE lookupsIO ::
+{-# SPECIALISE lookupsIO ::
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
@@ -196,7 +196,7 @@ lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks =
       assert (V.length rs == V.length kopsFiles) $
       True
 
-{-# SPECIALIZE intraPageLookupsWithWriteBuffer ::
+{-# SPECIALISE intraPageLookupsWithWriteBuffer ::
        ResolveSerialisedValue
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
@@ -243,7 +243,7 @@ data TableCorruptedError
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# SPECIALIZE intraPageLookupsOn ::
+{-# SPECIALISE intraPageLookupsOn ::
        ResolveSerialisedValue
     -> LookupAcc IO h
     -> V.Vector (Ref (Run IO h))
