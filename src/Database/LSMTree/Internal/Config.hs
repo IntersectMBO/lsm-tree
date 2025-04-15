@@ -78,7 +78,7 @@ instance NFData TableConfig where
 -- | A reasonable default 'TableConfig'.
 --
 -- This uses a write buffer with up to 20,000 elements and a generous amount of
--- memory for Bloom filters (FPR of 2%).
+-- memory for Bloom filters (FPR of 1%).
 --
 defaultTableConfig :: TableConfig
 defaultTableConfig =

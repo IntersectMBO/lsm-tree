@@ -278,17 +278,30 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
 
 - The worst-case in-memory size of the Bloom filters is *O*(*n*).
 
-  The total in-memory size of all Bloom filters depends on the Bloom
+  The total in-memory size of all Bloom filters is the number of bits
+  per physical entry multiplied by the number of physical entries. The
+  required number of bits per physical entry is determined by the Bloom
   filter allocation strategy, which is determined by the
   `confBloomFilterAlloc` field of `TableConfig`.
 
   `AllocFixed bitsPerPhysicalEntry`  
-  The total in-memory size of all Bloom filters is the number of bits
-  per physical entry multiplied by the number of physical entries.
+  The number of bits per physical entry is specified as
+  `bitsPerPhysicalEntry`.
 
   `AllocRequestFPR requestedFPR`  
-  **TODO**: How does one determine the bloom filter size using
-  `AllocRequestFPR`?
+  The number of bits per physical entry is determined by the requested
+  false-positive rate, which is specified as `requestedFPR`.
+
+  The false-positive rate scales exponentially with the number of bits
+  per entry:
+
+  | False-positive rate | Bits per entry |
+  |---------------------|----------------|
+  | 1 in 10             |  ≈ 4.77        |
+  | 1 in 100            |  ≈ 9.85        |
+  | 1 in 1, 000         |  ≈ 15.79       |
+  | 1 in 10, 000        |  ≈ 22.58       |
+  | 1 in 100, 000       |  ≈ 30.22       |
 
 - The worst-case in-memory size of the indexes is *O*(*n*).
 
