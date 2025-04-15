@@ -291,6 +291,20 @@ benchmark bloomfilter-bench
     , criterion
     , random
 
+executable bloomfilter-fpr-calc
+  import:         language
+  hs-source-dirs: bloomfilter/tests
+  main-is:        fpr-calc.hs
+  build-depends:
+    , base
+    , lsm-tree:bloomfilter
+    , containers
+    , parallel
+    , random
+    , regression-simple
+
+  ghc-options:     -O2 -Wall
+
 test-suite bloomfilter-spell
   import:         language
   type:           exitcode-stdio-1.0
