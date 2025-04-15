@@ -31,6 +31,7 @@ module Database.LSMTree.Internal.MergeSchedule (
     -- * Union cache
   , UnionCache (..)
   , mkUnionCache
+  , duplicateUnionCache
   , releaseUnionCache
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes

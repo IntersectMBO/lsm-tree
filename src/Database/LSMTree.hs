@@ -276,60 +276,68 @@ type Cursor :: (Type -> Type) -> Type -> Type -> Type -> Type
 type Cursor = Internal.Cursor'
 
 {-# SPECIALISE withCursor ::
-     Table IO k v b
+     ResolveValue v
+  => Table IO k v b
   -> (Cursor IO k v b -> IO a)
   -> IO a #-}
 withCursor ::
-     IOLike m
+     forall m k v b a.
+     (IOLike m, ResolveValue v)
   => Table m k v b
   -> (Cursor m k v b -> m a)
   -> m a
 withCursor (Internal.Table' t) action =
-    Internal.withCursor Internal.NoOffsetKey t (action . Internal.Cursor')
+    Internal.withCursor (resolve (Proxy @v)) Internal.NoOffsetKey t (action . Internal.Cursor')
 
 {-# SPECIALISE withCursorAtOffset ::
-     SerialiseKey k
+     (SerialiseKey k, ResolveValue v)
   => k
   -> Table IO k v b
   -> (Cursor IO k v b -> IO a)
   -> IO a #-}
 withCursorAtOffset ::
+     forall m k v b a.
      ( IOLike m
      , SerialiseKey k
+     , ResolveValue v
      )
   => k
   -> Table m k v b
   -> (Cursor m k v b -> m a)
   -> m a
 withCursorAtOffset offset (Internal.Table' t) action =
-    Internal.withCursor (Internal.OffsetKey (Internal.serialiseKey offset)) t $
+    Internal.withCursor (resolve (Proxy @v)) (Internal.OffsetKey (Internal.serialiseKey offset)) t $
       action . Internal.Cursor'
 
 {-# SPECIALISE newCursor ::
-     Table IO k v b
+     ResolveValue v
+  => Table IO k v b
   -> IO (Cursor IO k v b) #-}
 newCursor ::
-     IOLike m
+     forall m k v b.
+     (IOLike m, ResolveValue v)
   => Table m k v b
   -> m (Cursor m k v b)
 newCursor (Internal.Table' t) =
-    Internal.Cursor' <$!> Internal.newCursor Internal.NoOffsetKey t
+    Internal.Cursor' <$!> Internal.newCursor (resolve (Proxy @v)) Internal.NoOffsetKey t
 
 {-# SPECIALISE newCursorAtOffset ::
-     SerialiseKey k
+     (SerialiseKey k, ResolveValue v)
   => k
   -> Table IO k v b
   -> IO (Cursor IO k v b) #-}
 newCursorAtOffset ::
+     forall m k v b.
      ( IOLike m
      , SerialiseKey k
+     , ResolveValue v
      )
   => k
   -> Table m k v b
   -> m (Cursor m k v b)
 newCursorAtOffset offset (Internal.Table' t) =
     Internal.Cursor' <$!>
-      Internal.newCursor (Internal.OffsetKey (Internal.serialiseKey offset)) t
+      Internal.newCursor (resolve (Proxy @v)) (Internal.OffsetKey (Internal.serialiseKey offset)) t
 
 {-# SPECIALISE closeCursor ::
      Cursor IO k v b

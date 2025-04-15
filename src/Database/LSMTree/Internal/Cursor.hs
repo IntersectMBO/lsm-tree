@@ -57,7 +57,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
 
     readEntry :: m (Maybe res, Readers.HasMore)
     readEntry = do
-        (key, readerEntry, hasMore) <- Readers.pop readers
+        (key, readerEntry, hasMore) <- Readers.pop resolve readers
         let !entry = Reader.toFullEntry readerEntry
         case hasMore of
           Readers.Drained -> do
@@ -74,7 +74,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
 
     dropRemaining :: SerialisedKey -> m Readers.HasMore
     dropRemaining key = do
-        (_, hasMore) <- Readers.dropWhileKey readers key
+        (_, hasMore) <- Readers.dropWhileKey resolve readers key
         return hasMore
 
     -- Resolve a 'Mupsert' value with the other entries of the same key.
@@ -88,7 +88,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
             -- No more entries for same key, done.
             handleResolved key (Entry.Mupdate v) Readers.HasMore
           else do
-            (_, nextEntry, hasMore) <- Readers.pop readers
+            (_, nextEntry, hasMore) <- Readers.pop resolve readers
             let resolved = Entry.combine resolve (Entry.Mupdate v)
                              (Reader.toFullEntry nextEntry)
             case hasMore of

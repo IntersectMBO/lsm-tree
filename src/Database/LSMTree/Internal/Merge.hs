@@ -172,8 +172,8 @@ new ::
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge t m h))
 new hfs hbio runParams mergeType mergeResolve targetPaths runs = do
-    -- no offset, no write buffer
-    mreaders <- Readers.new Readers.NoOffsetKey Nothing runs
+    let sources = Readers.FromRun <$> V.toList runs
+    mreaders <- Readers.new mergeResolve Readers.NoOffsetKey sources
     -- TODO: Exception safety! If Readers.new fails after already creating some
     -- run readers, or Builder.new fails, the run readers will stay open,
     -- holding handles of the input runs' files.
@@ -341,7 +341,7 @@ doStepsLevel m@Merge {..} requestedSteps = go 0
       | n >= requestedSteps =
           return (n, MergeInProgress)
       | otherwise = do
-          (key, entry, hasMore) <- Readers.pop mergeReaders
+          (key, entry, hasMore) <- Readers.pop mergeResolve mergeReaders
           case hasMore of
             Readers.HasMore ->
               handleEntry (n + 1) key entry
@@ -371,7 +371,7 @@ doStepsLevel m@Merge {..} requestedSteps = go 0
             writeSerialisedEntry m key (Mupdate v)
             go n
           else do
-            (_, nextEntry, hasMore) <- Readers.pop mergeReaders
+            (_, nextEntry, hasMore) <- Readers.pop mergeResolve mergeReaders
             -- for resolution, we need the full second value to be present
             let resolved = combine mergeResolve
                              (Mupdate v)
@@ -391,7 +391,7 @@ doStepsLevel m@Merge {..} requestedSteps = go 0
                 pure (n + 1, MergeDone)
 
     dropRemaining !n !key = do
-        (dropped, hasMore) <- Readers.dropWhileKey mergeReaders key
+        (dropped, hasMore) <- Readers.dropWhileKey mergeResolve mergeReaders key
         case hasMore of
           Readers.HasMore -> go (n + dropped)
           Readers.Drained -> do
@@ -413,7 +413,7 @@ doStepsUnion m@Merge {..} requestedSteps = go 0
       | n >= requestedSteps =
           return (n, MergeInProgress)
       | otherwise = do
-          (key, entry, hasMore) <- Readers.pop mergeReaders
+          (key, entry, hasMore) <- Readers.pop mergeResolve mergeReaders
           handleEntry (n + 1) key entry hasMore
 
     -- Similar to 'handleMupdate' in 'stepsLevel', but here we have to combine
@@ -438,7 +438,7 @@ doStepsUnion m@Merge {..} requestedSteps = go 0
             writeReaderEntry m key entry
             go n
           else do
-            (_, nextEntry, hasMore) <- Readers.pop mergeReaders
+            (_, nextEntry, hasMore) <- Readers.pop mergeResolve mergeReaders
             -- for resolution, we need the full second value to be present
             let resolved = combineUnion mergeResolve
                              (Reader.toFullEntry entry)

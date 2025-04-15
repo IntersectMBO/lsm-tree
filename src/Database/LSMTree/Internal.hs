@@ -89,7 +89,7 @@ import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (forM, unless, void)
+import           Control.Monad (forM, unless, void, (<$!>))
 import           Control.Monad.Class.MonadAsync as Async
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
@@ -839,10 +839,10 @@ rangeLookup resolve range t fromEntry = do
     traceWith (tableTracer t) $ TraceRangeLookup range
     case range of
       FromToExcluding lb ub ->
-        withCursor (OffsetKey lb) t $ \cursor ->
+        withCursor resolve (OffsetKey lb) t $ \cursor ->
           go cursor (< ub) []
       FromToIncluding lb ub ->
-        withCursor (OffsetKey lb) t $ \cursor ->
+        withCursor resolve (OffsetKey lb) t $ \cursor ->
           go cursor (<= ub) []
   where
     -- TODO: tune!
@@ -976,51 +976,59 @@ data CursorEnv m h = CursorEnv {
     -- while they are active, once they are drained they do not. This could
     -- invalidate any 'BlobRef's previously handed out. To avoid this, we
     -- explicitly retain references on the runs and write buffer blofs and
-    -- only release them when the cursor is closed (see cursorRuns and
-    -- cursorWBB below).
+    -- only release them when the cursor is closed (see 'cursorWBB' and
+    -- 'cursorRuns' below).
   , cursorReaders    :: !(Maybe (Readers.Readers m h))
 
-    --TODO: the cursorRuns and cursorWBB could be replaced by just retaining
+    -- TODO: the cursorRuns and cursorWBB could be replaced by just retaining
     -- the BlobFile from the runs and WBB, so that we retain less. Since we
     -- only retain these to keep BlobRefs valid until the cursor is closed.
     -- Alternatively: the Readers could be modified to keep the BlobFiles even
     -- once the readers are drained, and only release them when the Readers is
     -- itself closed.
 
-    -- | The runs held open by the cursor. We must release these references
-    -- when the cursor gets closed.
-  , cursorRuns       :: !(V.Vector (Ref (Run m h)))
-
     -- | The write buffer blobs, which like the runs, we have to keep open
     -- untile the cursor is closed.
   , cursorWBB        :: !(Ref (WBB.WriteBufferBlobs m h))
+
+    -- | The runs from regular levels that are held open by the cursor. We must
+    -- release these references when the cursor gets closed.
+  , cursorRuns       :: !(V.Vector (Ref (Run m h)))
+
+    -- | The runs from the union level that are held open by the cursor. We must
+    -- release these references when the cursor gets closed.
+  , cursorUnion      :: !(Maybe (UnionCache m h))
   }
 
 {-# SPECIALISE withCursor ::
-     OffsetKey
+     ResolveSerialisedValue
+  -> OffsetKey
   -> Table IO h
   -> (Cursor IO h -> IO a)
   -> IO a #-}
 -- | See 'Database.LSMTree.withCursor'.
 withCursor ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => OffsetKey
+  => ResolveSerialisedValue
+  -> OffsetKey
   -> Table m h
   -> (Cursor m h -> m a)
   -> m a
-withCursor offsetKey t = bracket (newCursor offsetKey t) closeCursor
+withCursor resolve offsetKey t = bracket (newCursor resolve offsetKey t) closeCursor
 
 {-# SPECIALISE newCursor ::
-     OffsetKey
+     ResolveSerialisedValue
+  -> OffsetKey
   -> Table IO h
   -> IO (Cursor IO h) #-}
 -- | See 'Database.LSMTree.newCursor'.
 newCursor ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => OffsetKey
+  => ResolveSerialisedValue
+  -> OffsetKey
   -> Table m h
   -> m (Cursor m h)
-newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
+newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
     let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv tEnv
     cursorId <- uniqueToCursorId <$>
@@ -1032,10 +1040,18 @@ newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
     -- 'sessionOpenTables'.
     withOpenSession cursorSession $ \_ -> do
       withActionRegistry $ \reg -> do
-        (wb, wbblobs, cursorRuns) <- dupTableContent reg (tableContent tEnv)
+        (wb, wbblobs, cursorRuns, cursorUnion) <-
+          dupTableContent reg (tableContent tEnv)
+        let cursorSources =
+                Readers.FromWriteBuffer wb wbblobs
+              : fmap Readers.FromRun (V.toList cursorRuns)
+             <> case cursorUnion of
+                  Nothing -> []
+                  Just (UnionCache treeCache) ->
+                    [lookupTreeToReaderSource treeCache]
         cursorReaders <-
           withRollbackMaybe reg
-            (Readers.new offsetKey (Just (wb, wbblobs)) cursorRuns)
+            (Readers.new resolve offsetKey cursorSources)
             Readers.close
         let cursorWBB = wbblobs
         cursorState <- newMVar (CursorOpen CursorEnv {..})
@@ -1060,7 +1076,26 @@ newCursor !offsetKey t = withOpenTable t $ \tEnv -> do
           let runs = cachedRuns (tableCache content)
           runs' <- V.forM runs $ \r ->
                      withRollback reg (dupRef r) releaseRef
-          pure (wb, wbblobs', runs')
+          unionCache <- case tableUnionLevel content of
+            NoUnion   -> pure Nothing
+            Union _ c -> Just <$!> duplicateUnionCache reg c
+          pure (wb, wbblobs', runs', unionCache)
+
+lookupTreeToReaderSource ::
+     MT.LookupTree (V.Vector (Ref (Run m h))) -> Readers.ReaderSource m h
+lookupTreeToReaderSource = \case
+    MT.LookupBatch v ->
+      case map Readers.FromRun (V.toList v) of
+        [src] -> src
+        srcs  -> Readers.FromReaders Readers.MergeLevel srcs
+    MT.LookupNode ty children ->
+      Readers.FromReaders
+        (convertMergeType ty)
+        (map lookupTreeToReaderSource (V.toList children))
+  where
+    convertMergeType = \case
+      MR.MergeUnion -> Readers.MergeUnion
+      MR.MergeLevel -> Readers.MergeLevel
 
 {-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.closeCursor'.
@@ -1083,6 +1118,7 @@ closeCursor Cursor {..} = do
 
         forM_ cursorReaders $ delayedCommit reg . Readers.close
         V.forM_ cursorRuns $ delayedCommit reg . releaseRef
+        forM_ cursorUnion $ releaseUnionCache reg
         delayedCommit reg (releaseRef cursorWBB)
         return CursorClosed
 

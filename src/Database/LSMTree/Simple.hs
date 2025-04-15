@@ -1143,7 +1143,7 @@ withCursor ::
     (Cursor k v -> IO a) ->
     IO a
 withCursor (Table table) action =
-    Internal.withCursor Internal.NoOffsetKey table (action . Cursor)
+    Internal.withCursor const Internal.NoOffsetKey table (action . Cursor)
 
 {- |
 Variant of 'withCursor' that starts at a given key.
@@ -1156,7 +1156,7 @@ withCursorAtOffset ::
     (Cursor k v -> IO a) ->
     IO a
 withCursorAtOffset (Table table) offsetKey action =
-    Internal.withCursor (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table (action . Cursor)
+    Internal.withCursor const (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table (action . Cursor)
 
 {- |
 Create a cursor for the given table.
@@ -1180,7 +1180,7 @@ newCursor ::
     Table k v ->
     IO (Cursor k v)
 newCursor (Table table) =
-    Cursor <$> Internal.newCursor Internal.NoOffsetKey table
+    Cursor <$> Internal.newCursor const Internal.NoOffsetKey table
 
 {- |
 Variant of 'newCursor' that starts at a given key.
@@ -1192,7 +1192,7 @@ newCursorAtOffset ::
     k ->
     IO (Cursor k v)
 newCursorAtOffset (Table table) offsetKey =
-    Cursor <$> Internal.newCursor (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table
+    Cursor <$> Internal.newCursor const (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table
 
 {- |
 Close a cursor.

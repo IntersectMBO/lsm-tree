@@ -19,8 +19,10 @@ module Database.LSMTree.Internal.Index.CompactAcc (
   , appendSingle
   , appendMulti
   , unsafeEnd
-    -- * Internal: exported for testing and benchmarking
+    -- * Utility
   , SMaybe (..)
+  , smaybe
+    -- * Internal: exported for testing and benchmarking
   , unsafeWriteRange
   , vectorLowerBound
   , mvectorUpperBound
@@ -262,12 +264,10 @@ unsafeEnd IndexCompactAcc{..} = do
 data SMaybe a = SNothing | SJust !a
   deriving stock (Eq, Show)
 
-#ifdef NO_IGNORE_ASSERTS
 smaybe :: b -> (a -> b) -> SMaybe a -> b
 smaybe snothing sjust = \case
     SNothing -> snothing
     SJust x  -> sjust x
-#endif
 
 {-------------------------------------------------------------------------------
  Vector extras

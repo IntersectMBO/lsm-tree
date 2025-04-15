@@ -142,9 +142,9 @@ prop_roundtripCursor lb ub kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
       withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \t -> do
-          updates appendSerialisedValue (coerce kops) t
-          fromCursor <- withCursor (toOffsetKey lb) t $ \c ->
-            fetchBlobs hfs =<< readCursorUntil appendSerialisedValue ub c
+          updates resolve (coerce kops) t
+          fromCursor <- withCursor resolve (toOffsetKey lb) t $ \c ->
+            fetchBlobs hfs =<< readCursorUntil ub c
           return $
             tabulate "duplicates" (show <$> Map.elems duplicates) $
             tabulate "any blobs" [show (any (isJust . snd . snd) fromCursor)] $
@@ -163,7 +163,7 @@ prop_roundtripCursor lb ub kops = ioProperty $
       V.fromList . mapMaybe (traverse entryToValue) $
         maybe id (\k -> takeWhile ((<= k) . fst)) ub $
           maybe id (\k -> dropWhile ((< k) . fst)) lb $
-            Map.assocs . Map.fromListWith (combine appendSerialisedValue) $
+            Map.assocs . Map.fromListWith (combine resolve) $
               V.toList kops
 
     entryToValue :: Entry v b -> Maybe (v, Maybe b)
@@ -180,13 +180,12 @@ prop_roundtripCursor lb ub kops = ioProperty $
           V.toList kops
 
 readCursorUntil ::
-     ResolveSerialisedValue
-  -> Maybe SerialisedKey  -- Inclusive upper bound
+     Maybe SerialisedKey  -- Inclusive upper bound
   -> Cursor IO h
   -> IO (V.Vector (SerialisedKey,
                    (SerialisedValue,
                     Maybe (WeakBlobRef IO h))))
-readCursorUntil resolve ub cursor = go V.empty
+readCursorUntil ub cursor = go V.empty
   where
     chunkSize = 50
     toResult k v b = (coerce k, (v, b))
@@ -198,6 +197,5 @@ readCursorUntil resolve ub cursor = go V.empty
       if V.length res < chunkSize then return (acc <> res)
                                   else go (acc <> res)
 
-appendSerialisedValue :: ResolveSerialisedValue
-appendSerialisedValue (SerialisedValue x) (SerialisedValue y) =
-    SerialisedValue (x <> y)
+resolve :: ResolveSerialisedValue
+resolve (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
