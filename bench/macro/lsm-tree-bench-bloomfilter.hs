@@ -9,8 +9,8 @@ import           Control.Monad
 import           Control.Monad.ST
 import           Control.Monad.ST.Unsafe
 import           Data.Bits ((.&.))
-import           Data.BloomFilter (Bloom, BloomSize)
-import qualified Data.BloomFilter as Bloom
+import           Data.BloomFilter.Blocked (Bloom, BloomSize)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as V

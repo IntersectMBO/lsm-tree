@@ -9,8 +9,8 @@ import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
 import           Control.RefCount
 import           Data.Bits ((.&.))
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
+import           Data.BloomFilter.Blocked (Bloom)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Time
 import qualified Data.Vector as V
 import           Data.Vector.Algorithms.Merge as Merge

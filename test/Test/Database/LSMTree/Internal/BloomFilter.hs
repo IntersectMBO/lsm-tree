@@ -25,7 +25,7 @@ import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding ((.&.))
 
-import qualified Data.BloomFilter as BF
+import qualified Data.BloomFilter.Blocked as BF
 import           Database.LSMTree.Internal.BloomFilter
 import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,

@@ -24,8 +24,8 @@ module Test.Database.LSMTree.Internal.RunBloomFilterAlloc (
 
 import           Control.Exception (assert)
 import           Control.Monad.ST
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
+import           Data.BloomFilter.Blocked (Bloom)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.BloomFilter.Hash (Hashable)
 import           Data.Foldable (Foldable (..))
 import           Data.Proxy (Proxy (..))

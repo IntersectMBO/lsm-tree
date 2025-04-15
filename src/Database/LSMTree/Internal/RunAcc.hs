@@ -36,8 +36,8 @@ module Database.LSMTree.Internal.RunAcc (
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
-import           Data.BloomFilter (Bloom, MBloom)
-import qualified Data.BloomFilter as Bloom
+import           Data.BloomFilter.Blocked (Bloom, MBloom)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Data.Word (Word64)
