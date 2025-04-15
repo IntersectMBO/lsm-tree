@@ -15,6 +15,9 @@ benchmarks: True
 -- Luckily, bloomfilter is not commonly used package, so this is good enough.
 constraints: bloomfilter <0
 
+-- regression-simple is used by the bloomfilter-fpr-calc test executable
+allow-newer: regression-simple:base
+
 -- comment me if you don't have liburing installed
 --
 -- TODO: it is slightly unfortunate that one has to manually remove this file
