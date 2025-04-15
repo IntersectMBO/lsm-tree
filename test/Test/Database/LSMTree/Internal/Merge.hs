@@ -3,7 +3,7 @@ module Test.Database.LSMTree.Internal.Merge (tests) where
 import           Control.Exception (evaluate)
 import           Control.RefCount
 import           Data.Bifoldable (bifoldMap)
-import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map

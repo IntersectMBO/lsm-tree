@@ -18,7 +18,7 @@ import qualified Data.Primitive.ByteArray as P
 import           Data.Word (Word32, Word64, byteSwap32)
 import           System.FS.API
 
-import qualified Data.BloomFilter as BF
+import qualified Data.BloomFilter.Blocked as BF
 import           Database.LSMTree.Internal.ByteString (byteArrayToByteString)
 import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
                      FileFormat (..))

@@ -20,8 +20,8 @@ import           Data.Word (Word32)
 import           Control.Exception (assert)
 import           Control.Monad.ST (ST)
 
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
+import           Data.BloomFilter.Blocked (Bloom)
+import qualified Data.BloomFilter.Blocked as Bloom
 
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
