@@ -457,6 +457,21 @@ benchmark bloomfilter-bench
     , lsm-tree:bloomfilter
     , random
 
+executable bloomfilter-fpr-calc
+  import:         language, warnings
+  scope:          private
+  hs-source-dirs: bloomfilter/tests
+  main-is:        fpr-calc.hs
+  build-depends:
+    , base
+    , containers
+    , lsm-tree:bloomfilter
+    , parallel
+    , random
+    , regression-simple
+
+  ghc-options:    -threaded
+
 executable bloomfilter-spell
   import:         language
   scope:          private

@@ -73,6 +73,13 @@ instance Hashable Word64 where
 instance Hashable Word32 where
     hashSalt64 salt w = XXH3.xxh3_64bit_withSeed_w32 w salt
 
+instance Hashable Word where
+    hashSalt64 salt n = hashSalt64 salt (fromIntegral n :: Word64)
+    --32bit support would need some CPP here to select based on word size
+
+instance Hashable Int where
+    hashSalt64 salt n = hashSalt64 salt (fromIntegral n :: Word)
+
 {- Note [Tree hashing]
 
 We recursively hash inductive types (instead e.g. just serially hashing
