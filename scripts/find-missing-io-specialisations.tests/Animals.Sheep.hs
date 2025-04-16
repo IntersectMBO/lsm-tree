@@ -37,6 +37,16 @@ schnoerk
 bloek ::
      IO a
 
+{-# INLINE baeh
+#-}
+baeh :: m a -> m a
+baeh = id
+
+{-# INLINE
+  boo #-} -- maybe too large for inlining
+boo :: MonadSheep m => Scissors -> m Wool
+boo scissors = withScissors scissors $ \ capability -> cut capability (fur Boo)
+
 maeh :: a -> (b -> IO (a, b))
 maeh = curry return
 
