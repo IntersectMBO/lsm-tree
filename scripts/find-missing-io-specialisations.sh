@@ -42,21 +42,27 @@ hic='[[:alnum:]_#]' # Haskell identifier character
 
 LC_COLLATE=C LC_CTYPE=C sed -En '
     :start
+    # Process the first line of a module header
     /^module / {
         s/module +([^ ]*).*/\1 /
         h
     }
+    # Process a `SPECIALISE` or `INLINE` pragma
     /^\{-# *'"$pragma_types"'( |$)/ {
+        # Remove any pragma operation name from the hold space
         x
         s/ .*//
         x
+        # Add the pragma to the hold space
         :prag-add
         H
         /#-\}/ !{
             n
             b prag-add
         }
+        # Get the contents of the hold space
         g
+        # Skip a `SPECIALISE` pragma with a non-`IO` result type
         /\{-# *'"$specialise"'( |\n)/ {
             s/.*(::|=>|->)( |\n)*//
             /^IO / !{
@@ -67,20 +73,28 @@ LC_COLLATE=C LC_CTYPE=C sed -En '
             }
             g
         }
+        # Store the operation name along with the module name
         s/\{-# *'"$pragma_types"'( |\n)+//
         s/\n('"$hic"'*).*/ \1/
         h
     }
+    # Process a potential type signature
     /^[[:lower:]_]/ {
+        # Add the potential type signature to the hold space
         :tsig-add
         s/ -- .*//
         H
         n
         /^ / b tsig-add
+        # Get the persistent data and save the next line
         x
+        # Process a type signature
         /^[^ ]* '"$hic"'*\n'"$hic"'+( |\n)*::/ {
+            # Place the result type next to the operation name
             s/([^ ]* '"$hic"'*\n'"$hic"'+).*(::|=>|->)( |\n)*/\1 /
+            # Handle the case of a monadic result type
             /^[^ ]* '"$hic"'*\n[^ ]+ m / {
+                # Handle the case of a missing pragma
                 /^[^ ]* ('"$hic"'*)\n\1 / !{
                     s/([^ ]*) '"$hic"'*\n([^ ]+).*/\1.\2/p
                     s/\.[^.]+$/ /
@@ -88,9 +102,12 @@ LC_COLLATE=C LC_CTYPE=C sed -En '
                 }
             }
         }
+        # Clean up and forget about the pragma operation name if any
         s/ .*/ /
+        # Get the saved next line and store the persistent data
         :tsig-fin
         x
+        # Continue
         b start
     }
 ' "$@"
