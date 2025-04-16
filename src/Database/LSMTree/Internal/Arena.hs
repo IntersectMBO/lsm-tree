@@ -34,6 +34,12 @@ import           Data.Word (Word8)
 
 data ArenaManager s = ArenaManager (MutVar s [Arena s])
 
+{-# SPECIALISE
+    newArenaManager :: ST s (ArenaManager s)
+  #-}
+{-# SPECIALISE
+    newArenaManager :: IO (ArenaManager RealWorld)
+  #-}
 newArenaManager :: PrimMonad m => m (ArenaManager (PrimState m))
 newArenaManager = do
     m <- newMutVar []
@@ -116,8 +122,12 @@ closeArena (ArenaManager arenas) arena = do
 
     atomicModifyMutVar' arenas $ \xs -> (arena : xs, ())
 
-
-
+{-# SPECIALISE
+    scrambleArena :: Arena s -> ST s ()
+  #-}
+{-# SPECIALISE
+    scrambleArena :: Arena RealWorld -> IO ()
+  #-}
 scrambleArena :: PrimMonad m => Arena (PrimState m) -> m ()
 #ifndef NO_IGNORE_ASSERTS
 scrambleArena _ = return ()
@@ -127,6 +137,12 @@ scrambleArena Arena {..} = do
     readMutVar full >>= mapM_ scrambleBlock
     readMutVar free >>= mapM_ scrambleBlock
 
+{-# SPECIALISE
+    scrambleBlock :: Block s -> ST s ()
+  #-}
+{-# SPECIALISE
+    scrambleBlock :: Block RealWorld -> IO ()
+  #-}
 scrambleBlock :: PrimMonad m => Block (PrimState m) -> m ()
 scrambleBlock (Block _ mba) = do
     size <- getSizeofMutableByteArray mba
@@ -157,6 +173,12 @@ resetArena Arena {..} = do
 -- | Create unmanaged arena.
 --
 -- Never use this in non-tests code.
+{-# SPECIALISE
+    withUnmanagedArena :: (Arena s -> ST s a) -> ST s a
+  #-}
+{-# SPECIALISE
+    withUnmanagedArena :: (Arena RealWorld -> IO a) -> IO a
+  #-}
 withUnmanagedArena :: PrimMonad m => (Arena (PrimState m) -> m a) -> m a
 withUnmanagedArena k = do
     mgr <- newArenaManager
@@ -164,6 +186,9 @@ withUnmanagedArena k = do
 
 {-# SPECIALISE
     allocateFromArena :: Arena s -> Size -> Alignment -> ST s (Offset, MutableByteArray s)
+  #-}
+{-# SPECIALISE
+    allocateFromArena :: Arena RealWorld -> Size -> Alignment -> IO (Offset, MutableByteArray RealWorld)
   #-}
 -- | Allocate a slice of mutable byte array from the arena.
 allocateFromArena :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
@@ -174,6 +199,9 @@ allocateFromArena !arena !size !alignment =
 
 {-# SPECIALISE
     allocateFromArena' :: Arena s -> Size -> Alignment -> ST s (Offset, MutableByteArray s)
+  #-}
+{-# SPECIALISE
+    allocateFromArena' :: Arena RealWorld -> Size -> Alignment -> IO (Offset, MutableByteArray RealWorld)
   #-}
 -- TODO!? this is not async exception safe
 allocateFromArena' :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
@@ -206,7 +234,12 @@ allocateFromArena' arena@Arena { .. } !size !alignment = do
         -- * go again
         allocateFromArena' arena size alignment
 
-{-# SPECIALISE newBlockWithFree :: MutVar s [Block s] -> ST s (Block s) #-}
+{-# SPECIALISE
+    newBlockWithFree :: MutVar s [Block s] -> ST s (Block s)
+  #-}
+{-# SPECIALISE
+    newBlockWithFree :: MutVar RealWorld [Block RealWorld] -> IO (Block RealWorld)
+  #-}
 -- | Allocate new block, possibly taking it from a free list
 newBlockWithFree :: PrimMonad m => MutVar (PrimState m) [Block (PrimState m)] -> m (Block (PrimState m))
 newBlockWithFree free = do

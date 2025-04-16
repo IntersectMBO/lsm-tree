@@ -246,6 +246,11 @@ creditThresholdForLevel conf (LevelNo _i) =
 -- This is /not/ itself thread safe. All 'TableContent' update operations are
 -- expected to be serialised by the caller. See concurrency comments for
 -- 'TableContent' for detail.
+{-# SPECIALISE depositNominalCredits ::
+     NominalDebt
+  -> PrimVar RealWorld NominalCredits
+  -> NominalCredits
+  -> IO (NominalCredits, NominalCredits) #-}
 depositNominalCredits ::
      PrimMonad m
   => NominalDebt
