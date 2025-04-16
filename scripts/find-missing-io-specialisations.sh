@@ -22,8 +22,9 @@
 #   * The `sed` script that essentially performs all the work uses the
 #     hold space to hold the name of the current module and the name of
 #     the operation to which the most recently found `IO` specialisation
-#     refers. These two names are stored with a space between them. The
-#     strings before and after the space can also be empty:
+#     or inlining directive refers. These two names are stored with a
+#     space between them. The strings before and after the space can
+#     also be empty:
 #
 #       - The string before the space is empty when the module name is
 #         not given on the same line as the `module` keyword. This
@@ -31,10 +32,12 @@
 #         otherwise does not have any drawback.
 #
 #       - The string after the space is empty when no `IO`
-#         specialisation has been found yet in the current module or the
-#         most recently found `IO` specialisation is considered to not
-#         be relevant for the remainder of the module.
+#         specialisation or inlining directive has been found yet in the
+#         current module or the most recently found such directive is
+#         considered to not be relevant for the remainder of the module.
 
+specialise='SPECIALI[SZ]E'
+pragma_types="($specialise|INLINE)"
 hic='[[:alnum:]_#]' # Haskell identifier character
 
 LC_COLLATE=C LC_CTYPE=C sed -En '
@@ -43,26 +46,28 @@ LC_COLLATE=C LC_CTYPE=C sed -En '
         s/module +([^ ]*).*/\1 /
         h
     }
-    /^\{-# *SPECIALI[SZ]E( |$)/ {
+    /^\{-# *'"$pragma_types"'( |$)/ {
         x
         s/ .*//
         x
-        :spec-add
+        :prag-add
         H
         /#-\}/ !{
             n
-            b spec-add
+            b prag-add
         }
         g
-        s/.*(::|=>|->)( |\n)*//
-        /^IO / !{
+        /\{-# *'"$specialise"'( |\n)/ {
+            s/.*(::|=>|->)( |\n)*//
+            /^IO / !{
+                g
+                s/\n.*/ /
+                h
+                d
+            }
             g
-            s/\n.*/ /
-            h
-            d
         }
-        g
-        s/\{-# *SPECIALI[SZ]E( |\n)+//
+        s/\{-# *'"$pragma_types"'( |\n)+//
         s/\n('"$hic"'*).*/ \1/
         h
     }
