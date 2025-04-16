@@ -37,9 +37,12 @@ schnoerk
 bloek ::
      IO a
 
+lamb :: m a -> m a
+lamb = id
+
 {-# INLINE baeh
 #-}
-baeh :: m a -> m a
+baeh :: Monad m => m a -> m a
 baeh = id
 
 {-# INLINE

@@ -88,10 +88,10 @@ LC_COLLATE=C LC_CTYPE=C sed -En '
         /^ / b tsig-add
         # Get the persistent data and save the next line
         x
-        # Process a type signature
-        /^[^ ]* '"$hic"'*\n'"$hic"'+( |\n)*::/ {
+        # Process a type signature with a context
+        /^[^ ]* '"$hic"'*\n'"$hic"'+( |\n)*::.+=>/ {
             # Place the result type next to the operation name
-            s/([^ ]* '"$hic"'*\n'"$hic"'+).*(::|=>|->)( |\n)*/\1 /
+            s/([^ ]* '"$hic"'*\n'"$hic"'+).*(=>|->)( |\n)*/\1 /
             # Handle the case of a monadic result type
             /^[^ ]* '"$hic"'*\n[^ ]+ m / {
                 # Handle the case of a missing pragma
