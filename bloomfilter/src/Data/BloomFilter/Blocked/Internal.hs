@@ -43,10 +43,9 @@ import           Data.Kind (Type)
 import           Data.Primitive.ByteArray
 import           Data.Primitive.PrimArray
 import           Data.Primitive.Types (Prim (..))
-import           Data.Word (Word32, Word64)
 
 import           Data.BloomFilter.Blocked.BitArray (BitArray, MBitArray,
-                     bitsToBlocks, blocksToBits)
+                     BlockIx (..), BitIx (..), bitsToBlocks, blocksToBits)
 import qualified Data.BloomFilter.Blocked.BitArray as BitArray
 import           Data.BloomFilter.Classic.Calc
 import           Data.BloomFilter.Hash
@@ -106,15 +105,16 @@ insertHashes :: forall s a. MBloom s a -> Hashes a -> ST s ()
 insertHashes MBloom { mbNumBlocks, mbNumHashes, mbBitArray } !h =
     go g0 mbNumHashes
   where
-    blockIx :: Word32
+    blockIx :: BlockIx
     (!blockIx, !g0) = blockIxAndBitGen h mbNumBlocks
 
-    go :: Word32 -> Int -> ST s ()
+    go :: BitIxGen -> Int -> ST s ()
     go !_ 0  = return ()
     go !g !i = do
-      let blockBitIx :: Int
+      let blockBitIx :: BitIx
           (!blockBitIx, !g') = genBitIndex g
-      assert (blockIx >= 0 && fromIntegral blockIx < mbNumBlocks) $
+      assert (let BlockIx b = blockIx
+               in b >= 0 && b < fromIntegral mbNumBlocks) $
         BitArray.unsafeSet mbBitArray blockIx blockBitIx
       go g' (i-1)
 
@@ -122,7 +122,7 @@ prefetchInsert :: MBloom s a -> Hashes a -> ST s ()
 prefetchInsert MBloom { mbNumBlocks, mbBitArray } !h =
     BitArray.prefetchSet mbBitArray blockIx
   where
-    blockIx :: Word32
+    blockIx :: BlockIx
     (!blockIx, _) = blockIxAndBitGen h mbNumBlocks
 
 -- | Overwrite the filter's bit array. Use 'new' to create a filter of the
@@ -181,16 +181,16 @@ elemHashes :: Bloom a -> Hashes a -> Bool
 elemHashes Bloom { numBlocks, numHashes, bitArray } !h =
     go g0 numHashes
   where
-    blockIx :: Word32
+    blockIx :: BlockIx
     (!blockIx, !g0) = blockIxAndBitGen h numBlocks
 
-    go :: Word32 -> Int -> Bool
+    go :: BitIxGen -> Int -> Bool
     go !_ 0 = True
     go !g !i
-      | let blockBitIx :: Int
+      | let blockBitIx :: BitIx
             (!blockBitIx, !g') = genBitIndex g
-      , assert (blockIx >= 0) $
-        assert (fromIntegral blockIx < numBlocks) $
+      , assert (let BlockIx b = blockIx
+                 in b >= 0 && b < fromIntegral numBlocks) $
         BitArray.unsafeIndex bitArray blockIx blockBitIx
       = go g' (i-1)
 
@@ -200,7 +200,7 @@ prefetchElem :: Bloom a -> Hashes a -> ST s ()
 prefetchElem Bloom { numBlocks, bitArray } !h =
     BitArray.prefetchIndex bitArray blockIx
   where
-    blockIx :: Word32
+    blockIx :: BlockIx
     (!blockIx, _) = blockIxAndBitGen h numBlocks
 
 
@@ -268,14 +268,14 @@ thaw Bloom { numBlocks, numHashes, bitArray } = do
 --
 -- See <https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/>
 --
-reduceRange32 :: Word32 -- ^ Sample from 0..2^32-1
-              -> Word32 -- ^ upper bound of range [0,n)
-              -> Word32 -- ^ result within range
+reduceRange32 :: Word -- ^ Sample from 0..2^32-1
+              -> Word -- ^ upper bound of range [0,n)
+              -> Word -- ^ result within range
 reduceRange32 x n =
     assert (n > 0) $
-    let w :: Word64
-        w = fromIntegral x * fromIntegral n
-     in fromIntegral (w `shiftR` 32)
+    let w :: Word
+        w = x * n
+     in w `shiftR` 32
 
 -------------------------------------------------------------------------------
 -- Hashes
@@ -298,17 +298,19 @@ hashes = Hashes . hash64
 -- 32bits are used with a simpler PRNG to produce a sequence of probe points
 -- withi the selected 512bit block.
 --
-blockIxAndBitGen :: Hashes a -> Int -> (Word32, Word32)
+blockIxAndBitGen :: Hashes a -> Int -> (BlockIx, BitIxGen)
 blockIxAndBitGen (Hashes w64) numBlocks =
     assert (numBlocks > 0) $
     (blockIx, bitGen)
   where
-    blockIx = high32 `reduceRange32` fromIntegral numBlocks
-    bitGen  = low32
+    blockIx = BlockIx (high32 `reduceRange32` fromIntegral numBlocks)
+    bitGen  = BitIxGen low32
 
-    high32, low32 :: Word32
+    high32, low32 :: Word
     high32 = fromIntegral (w64 `shiftR` 32)
-    low32  = fromIntegral  w64
+    low32  = fromIntegral w64 .&. 0xffff_ffff
+
+newtype BitIxGen = BitIxGen Word
 
 {-# INLINE genBitIndex #-}
 -- | Generate the next in a (short) short sequence of pseudo-random 9-bit
@@ -317,9 +319,12 @@ blockIxAndBitGen (Hashes w64) numBlocks =
 -- This simple generator works by multiplying a 32bit value by the golden ratio
 -- (as a fraction of a 32bit value). This is only suitable for short sequences
 -- using the top few bits each time.
-genBitIndex :: Word32 -> (Int, Word32)
-genBitIndex h =
-    (i, h')
+genBitIndex :: BitIxGen -> (BitIx, BitIxGen)
+genBitIndex (BitIxGen h) =
+    (BitIx i, BitIxGen h')
   where
+    i  :: Int
     i  = fromIntegral (h `shiftR` (32-9)) -- top 9 bits
-    h' = h * 0x9e3779b9
+
+    h' :: Word
+    h' = (h * 0x9e37_79b9) .&. 0xffff_ffff -- keep least significant 32 bits

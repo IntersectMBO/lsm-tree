@@ -7,6 +7,8 @@
 module Data.BloomFilter.Blocked.BitArray (
     bitsToBlocks,
     blocksToBits,
+    BlockIx (..),
+    BitIx (..),
     BitArray (..),
     unsafeIndex,
     prefetchIndex,
@@ -27,7 +29,7 @@ import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Data.Bits
 import           Data.Primitive.ByteArray
 import           Data.Primitive.PrimArray
-import           Data.Word (Word32, Word64, Word8)
+import           Data.Word (Word64, Word8)
 
 import           GHC.Exts (Int (I#), prefetchByteArray0#,
                      prefetchMutableByteArray3#)
@@ -52,8 +54,11 @@ bitsToBlocks n = (n+511) `div` 512  -- rounded up
 blocksToBits :: Int -> Int
 blocksToBits n = n * 512
 
+newtype BlockIx = BlockIx Word
+newtype BitIx   = BitIx   Int
+
 {-# INLINE unsafeIndex #-}
-unsafeIndex :: BitArray -> Word32 -> Int -> Bool
+unsafeIndex :: BitArray -> BlockIx -> BitIx -> Bool
 unsafeIndex (BitArray arr) blockIx blockBitIx =
     assert (wordIx >= 0 && wordIx < sizeofPrimArray arr) $
     indexPrimArray arr wordIx `unsafeTestBit` wordBitIx
@@ -61,8 +66,8 @@ unsafeIndex (BitArray arr) blockIx blockBitIx =
     (wordIx, wordBitIx) = wordAndBitIndex blockIx blockBitIx
 
 {-# INLINE prefetchIndex #-}
-prefetchIndex :: BitArray -> Word32 -> ST s ()
-prefetchIndex (BitArray (PrimArray ba#)) blockIx =
+prefetchIndex :: BitArray -> BlockIx -> ST s ()
+prefetchIndex (BitArray (PrimArray ba#)) (BlockIx blockIx) =
     -- For reading, we want to prefetch such that we do least disturbence of
     -- the caches. We will typically not keep this cache line longer than one
     -- read.
@@ -107,7 +112,7 @@ deserialise bitArray fill = do
     asMutableByteArray (MBitArray (MutablePrimArray mba#)) =
       MutableByteArray mba#
 
-unsafeSet :: MBitArray s -> Word32 -> Int -> ST s ()
+unsafeSet :: MBitArray s -> BlockIx -> BitIx -> ST s ()
 unsafeSet (MBitArray arr) blockIx blockBitIx = 
     assert (wordIx >= 0 && wordIx <= sizeofMutablePrimArray arr) $ do
     w <- readPrimArray arr wordIx
@@ -116,8 +121,8 @@ unsafeSet (MBitArray arr) blockIx blockBitIx =
     (wordIx, wordBitIx) = wordAndBitIndex blockIx blockBitIx
 
 {-# INLINE prefetchSet #-}
-prefetchSet :: MBitArray s -> Word32 -> ST s ()
-prefetchSet (MBitArray (MutablePrimArray mba#)) blockIx =
+prefetchSet :: MBitArray s -> BlockIx -> ST s ()
+prefetchSet (MBitArray (MutablePrimArray mba#)) (BlockIx blockIx) =
     -- For setting, we will do several writes to the same cache line, so
     -- read it into all 3 levels of cache.
     let !i@(I# i#) = fromIntegral blockIx `shiftL` 6 in
@@ -147,8 +152,8 @@ thaw (BitArray arr) =
 -- block, compute the index of the word in the array, and index of the bit
 -- within the word.
 --
-wordAndBitIndex :: Word32 -> Int -> (Int, Int)
-wordAndBitIndex blockIx blockBitIx =
+wordAndBitIndex :: BlockIx -> BitIx -> (Int, Int)
+wordAndBitIndex (BlockIx blockIx) (BitIx blockBitIx) =
     assert (blockBitIx < 512) $
     (wordIx, wordBitIx)
   where
