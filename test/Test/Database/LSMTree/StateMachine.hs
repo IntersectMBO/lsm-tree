@@ -2070,14 +2070,14 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genUpdates :: Gen (V.Vector (k, R.Update v b))
     genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [
           R.Insert <$> QC.arbitrary <*> genBlob
-        , R.Mupsert <$> QC.arbitrary
+        , R.Upsert <$> QC.arbitrary
         , pure R.Delete
         ])
       where
         _coveredAllCases :: R.Update v b -> ()
         _coveredAllCases = \case
             R.Insert{} -> ()
-            R.Mupsert{} -> ()
+            R.Upsert{} -> ()
             R.Delete{} -> ()
 
     genInserts :: Gen (V.Vector (k, v, Maybe b))
@@ -2182,7 +2182,7 @@ shrinkAction'WithVars _ctx _st a = case a of
       | kvs' <- QC.shrink kvs
       ] <> [
         Some $ Updates (V.map f kvs) tableVar
-      | let f (k, v) = (k, R.Mupsert v)
+      | let f (k, v) = (k, R.Upsert v)
       ]
 
     Lookups ks tableVar -> [
@@ -2367,7 +2367,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
             numUpdates = countAll $ V.map (\k -> (k, R.Delete)) ks
           }
         (Mupserts mups _, MEither (Right (MUnit ()))) -> stats {
-            numUpdates = countAll $ V.map (second R.Mupsert) mups
+            numUpdates = countAll $ V.map (second R.Upsert) mups
           }
         _ -> stats
       where
@@ -2380,7 +2380,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                 R.Insert _ Nothing -> (i+1, iwb  , d  , m  )
                 R.Insert _ Just{}  -> (i  , iwb+1, d  , m  )
                 R.Delete{}         -> (i  , iwb  , d+1, m  )
-                R.Mupsert{}        -> (i  , iwb  , d  , m+1)
+                R.Upsert{}         -> (i  , iwb  , d  , m+1)
           in V.foldl' count (numUpdates stats) upds
 
     updSuccessActions stats = case result of

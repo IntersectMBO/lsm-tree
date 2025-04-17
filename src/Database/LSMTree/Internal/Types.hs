@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Database.LSMTree.Internal.Types (
     Session (..),
     Table (..),
@@ -109,7 +111,7 @@ instance NFData (Cursor m k v b) where
 
 {- |
 An instance of @'ResolveValue' v@ specifies how to merge values when using
-monoidal upserts ('mupsert').
+monoidal upsert.
 
 The class has two functions.
 The function 'resolve' acts on values, whereas the function 'resolveSerialised' acts on serialised values.
@@ -193,7 +195,7 @@ instance (SerialiseValue v, Semigroup v) => ResolveValue (ResolveViaSemigroup v)
   resolve (ResolveViaSemigroup v1) (ResolveViaSemigroup v2) = ResolveViaSemigroup (v1 <> v2)
 
 {- |
-Wrapper that provides an instance of 'ResolveValue' such that 'mupsert' behaves as 'insert'.
+Wrapper that provides an instance of 'ResolveValue' such that 'Database.LSMTree.upsert' behaves as 'Database.LSMTree.insert'.
 
 The name 'ResolveAsFirst' is in reference to the wrapper 'Data.Semigroup.First' from "Data.Semigroup".
 

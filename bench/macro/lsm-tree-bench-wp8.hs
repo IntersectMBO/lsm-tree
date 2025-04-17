@@ -868,8 +868,8 @@ updateToLookupResult :: LSM.Update v b -> LSM.LookupResult v ()
 updateToLookupResult (LSM.Insert v Nothing)  = LSM.Found v
 updateToLookupResult (LSM.Insert v (Just _)) = LSM.FoundWithBlob v ()
 updateToLookupResult  LSM.Delete             = LSM.NotFound
-updateToLookupResult (LSM.Mupsert _)         = error $
-                                               "Unexpected mupsert encountered"
+updateToLookupResult (LSM.Upsert _)         = error $
+                                               "Unexpected upsert encountered"
 
 -- | Return the adjacent batches where there is overlap between one batch's
 -- inserts and the next batch's lookups. Testing the pipelined version needs

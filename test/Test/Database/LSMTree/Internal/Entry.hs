@@ -109,11 +109,11 @@ deriving newtype instance (Arbitrary v, Arbitrary b)
 
 instance Semigroup v => Semigroup (Regular (Full.Update v b)) where
   Regular up1 <> Regular up2 = Regular $ case (up1, up2) of
-      (Full.Delete     , _                ) -> up1
-      (Full.Insert{}   , _                ) -> up1
-      (Full.Mupsert v1 , Full.Delete      ) -> Full.Insert v1 Nothing
-      (Full.Mupsert v1 , Full.Insert v2 _ ) -> Full.Insert (v1 <> v2) Nothing
-      (Full.Mupsert v1 , Full.Mupsert v2  ) -> Full.Mupsert (v1 <> v2)
+      (Full.Delete    , _               ) -> up1
+      (Full.Insert{}  , _               ) -> up1
+      (Full.Upsert v1 , Full.Delete     ) -> Full.Insert v1 Nothing
+      (Full.Upsert v1 , Full.Insert v2 _) -> Full.Insert (v1 <> v2) Nothing
+      (Full.Upsert v1 , Full.Upsert v2  ) -> Full.Upsert (v1 <> v2)
 
 --
 -- Entry
@@ -146,7 +146,7 @@ instance Semigroup v => Semigroup (Union (Full.Update v b)) where
       toModel :: Full.Update v b -> Maybe (v, S.First (Maybe b))
       toModel Full.Delete        = Nothing
       toModel (Full.Insert v mb) = Just (v, S.First mb)
-      toModel (Full.Mupsert v)   = Just (v, S.First Nothing)
+      toModel (Full.Upsert v)    = Just (v, S.First Nothing)
 
       fromModel :: Maybe (v, S.First (Maybe b)) -> Full.Update v b
       fromModel Nothing                = Full.Delete
@@ -210,12 +210,12 @@ updateToEntry :: Full.Update v b -> Entry v b
 updateToEntry = \case
     Full.Insert v Nothing  -> Insert v
     Full.Insert v (Just b) -> InsertWithBlob v b
-    Full.Mupsert v         -> Mupdate v
+    Full.Upsert v          -> Mupdate v
     Full.Delete            -> Delete
 
 entryToUpdate :: Entry v b -> Full.Update v b
 entryToUpdate = \case
     Insert v           -> Full.Insert v Nothing
     InsertWithBlob v b -> Full.Insert v (Just b)
-    Mupdate v          -> Full.Mupsert v
+    Mupdate v          -> Full.Upsert v
     Delete             -> Full.Delete

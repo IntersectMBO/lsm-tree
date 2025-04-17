@@ -68,7 +68,7 @@ prop_insertInsert k v1 v2 tbl =
 -- Note: the order of merge.
 prop_upsertInsert :: Key -> Value -> Value -> Tbl -> Property
 prop_upsertInsert k v1 v2 tbl =
-    updates (V.fromList [(k, Insert v1 Nothing), (k, Mupsert v2)]) tbl
+    updates (V.fromList [(k, Insert v1 Nothing), (k, Upsert v2)]) tbl
       === inserts (V.singleton (k, resolve v2 v1, Nothing)) tbl
 
 -- | Upsert is the same as lookup followed by an insert.

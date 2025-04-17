@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- | This module brings together the internal parts to provide an API in terms
 -- of untyped serialised keys, values and blobs.
@@ -841,7 +842,7 @@ rangeLookup resolve range t fromEntry = do
   -> IO () #-}
 -- | See 'Database.LSMTree.updates'.
 --
--- Does not enforce that mupsert and blobs should not occur in the same table.
+-- Does not enforce that upsert and BLOBs should not occur in the same table.
 updates ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue

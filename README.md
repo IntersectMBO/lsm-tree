@@ -24,8 +24,7 @@ It has support for:
 - Range lookups, which efficiently retrieve the values for all keys in a
   given range.
 
-- Monoidal upserts (or "mupserts") which combine the stored and new
-  values.
+- Monoidal upserts which combine the stored and new values.
 
 - BLOB storage which assocates a large auxiliary BLOB with a key.
 
@@ -43,9 +42,8 @@ This package exports two modules:
   This module exports a simplified API which picks sensible defaults for
   a number of configuration parameters.
 
-  It does not support mupserts or BLOBs, due to their unintuitive
-  interaction, see [Mupserts and
-  BLOBs](#mupsertsandblobs "#mupsertsandblobs").
+  It does not support upserts or BLOBs, due to their unintuitive
+  interaction, see [Upsert and BLOB](#upsertandblob "#upsertandblob").
 
   If you are looking at this package for the first time, it is strongly
   recommended that you start by reading this module.
@@ -54,13 +52,12 @@ This package exports two modules:
 
   This module exports the full API.
 
-### Mupserts and BLOBs <span id="mupsertsandblobs" class="anchor"></span>
+### Upsert and BLOB <span id="upsertandblob" class="anchor"></span>
 
-The interaction between mupserts and BLOBs is unintuitive. A mupsert
-updates the value associated with the key by combining the old and new
-value with a user-specified function. However, this does not apply to
-any BLOB value associated with the key, which is simply overwritten by
-the new BLOB value.
+The interaction between upserts and BLOBs is unintuitive. A upsert
+updates the value associated with the key by combining the new and old
+values with a user-specified function. However, any BLOB associated with
+the key is simply deleted.
 
 ### Portability <span id="portability" class="anchor"></span>
 

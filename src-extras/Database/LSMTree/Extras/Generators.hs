@@ -83,7 +83,7 @@ instance (Arbitrary v, Arbitrary b) => Arbitrary (Full.Update v b) where
 instance Arbitrary2 Full.Update where
   liftArbitrary2 genVal genBlob = frequency
     [ (10, Full.Insert <$> genVal <*> liftArbitrary genBlob)
-    , (5, Full.Mupsert <$> genVal)
+    , (5, Full.Upsert <$> genVal)
     , (1, pure Full.Delete)
     ]
 
@@ -92,7 +92,7 @@ instance Arbitrary2 Full.Update where
         Full.Delete
       : map (uncurry Full.Insert)
             (liftShrink2 shrinkVal (liftShrink shrinkBlob) (v, blob))
-    Full.Mupsert v -> Full.Insert v Nothing : map Full.Mupsert (shrinkVal v)
+    Full.Upsert v -> Full.Insert v Nothing : map Full.Upsert (shrinkVal v)
     Full.Delete -> []
 
 instance (Arbitrary k, Ord k) => Arbitrary (Range k) where

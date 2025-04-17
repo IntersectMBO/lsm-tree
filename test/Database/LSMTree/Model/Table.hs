@@ -178,7 +178,7 @@ updates r ups tbl0 = V.foldl' update tbl0 ups where
     update tbl (k, Insert v (Just blob)) = tbl
         { values = Map.insert (serialiseKey k) (serialiseValue v, Just (mkBlobRef blob)) (values tbl)
         }
-    update tbl (k, Mupsert v) = tbl
+    update tbl (k, Upsert v) = tbl
         { values = mapUpsert (serialiseKey k) e f (values tbl) }
       where
         e = (serialiseValue v, Nothing)
@@ -211,7 +211,7 @@ mupserts ::
   -> V.Vector (k, v)
   -> Table k v b
   -> Table k v b
-mupserts r = updates r . fmap (second Mupsert)
+mupserts r = updates r . fmap (second Upsert)
 
 {-------------------------------------------------------------------------------
   Blobs

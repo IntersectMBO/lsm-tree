@@ -484,7 +484,7 @@ mupserts ::
   -> V.Vector (k, v)
   -> Table k v b
   -> m ()
-mupserts r = updates r . fmap (fmap Model.Mupsert)
+mupserts r = updates r . fmap (fmap Model.Upsert)
 
 {-------------------------------------------------------------------------------
   Blobs

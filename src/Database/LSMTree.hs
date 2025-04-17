@@ -47,8 +47,8 @@ module Database.LSMTree (
   -- ** Table Updates #table_updates#
   insert,
   inserts,
-  mupsert,
-  mupserts,
+  upsert,
+  upserts,
   delete,
   deletes,
   Update (..),
@@ -1061,14 +1061,14 @@ upsert table k v = do
 @
 -}
 {-# SPECIALISE
-  mupsert ::
+  upsert ::
     (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     k ->
     v ->
     IO ()
   #-}
-mupsert ::
+upsert ::
   forall m k v b.
   (IOLike m) =>
   (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
@@ -1076,11 +1076,11 @@ mupsert ::
   k ->
   v ->
   m ()
-mupsert table k v =
-  mupserts table (V.singleton (k, v))
+upsert table k v =
+  upserts table (V.singleton (k, v))
 
 {- |
-Variant of 'mupsert' for batch insertions.
+Variant of 'upsert' for batch insertions.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
@@ -1091,24 +1091,24 @@ The variable \(b\) refers to the length of the input vector.
 
 The following property holds in the absence of races:
 
-prop> mupserts table entries = traverse_ (uncurry $ mupsert table) entries
+prop> upserts table entries = traverse_ (uncurry $ upsert table) entries
 -}
 {-# SPECIALISE
-  mupserts ::
+  upserts ::
     (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector (k, v) ->
     IO ()
   #-}
-mupserts ::
+upserts ::
   forall m k v b.
   (IOLike m) =>
   (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector (k, v) ->
   m ()
-mupserts table entries =
-  updates table (second Mupsert <$> entries)
+upserts table entries =
+  updates table (second Upsert <$> entries)
 
 {- |
 Delete a key from the table.
@@ -1195,7 +1195,7 @@ type Update :: Type -> Type -> Type
 data Update v b
   = Insert !v !(Maybe b)
   | Delete
-  | Mupsert !v
+  | Upsert !v
   deriving stock (Show, Eq)
 
 instance (NFData v, NFData b) => NFData (Update v b) where
@@ -1203,7 +1203,7 @@ instance (NFData v, NFData b) => NFData (Update v b) where
   rnf = \case
     Insert v mb -> rnf v `seq` rnf mb
     Delete -> ()
-    Mupsert v -> rnf v
+    Upsert v -> rnf v
 
 {- |
 Update generalises 'insert', 'delete', and 'upsert'.
@@ -1281,7 +1281,7 @@ updates (Table table :: Table m k v b) entries =
     Insert v (Just b) -> Entry.InsertWithBlob (Internal.serialiseValue v) (Internal.serialiseBlob b)
     Insert v Nothing -> Entry.Insert (Internal.serialiseValue v)
     Delete -> Entry.Delete
-    Mupsert v -> Entry.Mupdate (Internal.serialiseValue v)
+    Upsert v -> Entry.Mupdate (Internal.serialiseValue v)
 
 --------------------------------------------------------------------------------
 -- Duplication

@@ -278,7 +278,7 @@ instance IsTable R.Table where
     updates = R.updates
     inserts = R.inserts
     deletes = R.deletes
-    mupserts = R.mupserts
+    mupserts = R.upserts
 
     rangeLookup = R.rangeLookup
     retrieveBlobs _ = R.retrieveBlobs
