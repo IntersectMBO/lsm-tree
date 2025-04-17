@@ -466,11 +466,10 @@ data FileCorruptedError
 
 {-# SPECIALISE
   expectValidFile ::
-      (MonadThrow m)
-    => FsPath
+       FsPath
     -> FileFormat
     -> Either String a
-    -> m a
+    -> IO a
   #-}
 expectValidFile ::
      (MonadThrow m)

@@ -402,6 +402,10 @@ newtype UnionCache m h = UnionCache {
     cachedTree :: MT.LookupTree (V.Vector (Ref (Run m h)))
   }
 
+{-# SPECIALISE mkUnionCache ::
+     ActionRegistry IO
+  -> Ref (MergingTree IO h)
+  -> IO (UnionCache IO h) #-}
 mkUnionCache ::
      (PrimMonad m, MonadMVar m, MonadMask m)
   => ActionRegistry m
@@ -410,6 +414,10 @@ mkUnionCache ::
 mkUnionCache reg mt =
     UnionCache <$> MT.buildLookupTree reg mt
 
+{-# SPECIALISE duplicateUnionCache ::
+     ActionRegistry IO
+  -> UnionCache IO h
+  -> IO (UnionCache IO h) #-}
 duplicateUnionCache ::
      (PrimMonad m, MonadMask m)
   => ActionRegistry m
@@ -419,6 +427,10 @@ duplicateUnionCache reg (UnionCache mt) =
     UnionCache <$>
       MT.mapMStrict (mapMStrict (\r -> withRollback reg (dupRef r) releaseRef)) mt
 
+{-# SPECIALISE releaseUnionCache ::
+     ActionRegistry IO
+  -> UnionCache IO h
+  -> IO () #-}
 releaseUnionCache ::
      (PrimMonad m, MonadMask m)
   => ActionRegistry m

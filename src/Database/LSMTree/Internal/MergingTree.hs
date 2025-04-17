@@ -532,6 +532,9 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
 
 -- | This does /not/ release the reference, but allocates a new reference for
 -- the returned run, which must be released at some point.
+{-# SPECIALISE expectCompleted ::
+     Ref (MergingTree IO h)
+  -> IO (Ref (Run IO h)) #-}
 expectCompleted ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
   => Ref (MergingTree m h) -> m (Ref (Run m h))

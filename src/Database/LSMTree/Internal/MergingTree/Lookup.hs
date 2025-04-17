@@ -33,6 +33,10 @@ data LookupTree a =
 
 -- | Deriving 'Traversable' leads to functions that are not strict in the
 -- elements of the vector of children. This function avoids that issue.
+{-# SPECIALISE mapMStrict ::
+     (a -> IO b)
+  -> LookupTree a
+  -> IO (LookupTree b) #-}
 mapMStrict :: Monad m => (a -> m b) -> LookupTree a -> m (LookupTree b)
 mapMStrict f = \case
   LookupBatch a  -> LookupBatch <$!> f a
