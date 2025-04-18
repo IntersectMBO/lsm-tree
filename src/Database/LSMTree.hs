@@ -278,21 +278,25 @@ This module is intended to be imported qualified, to avoid name clashes with Pre
 >>> :{
 import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..),
                      SerialiseKey (..), SerialiseValue (..), Session, Table)
-import qualified Database.LSMTree as LSMT
 :}
+
+>>> import qualified Database.LSMTree as LSMT
 
 === Defining key, value, and BLOB types
 
 The examples in this module use the types @Key@, @Value@, and @Blob@ for keys, values and BLOBs.
 
->>> :{
-import Control.Exception (bracket)
-import Data.ByteString (ByteString)
-import Data.ByteString.Short (ShortByteString)
-import Data.Proxy (Proxy)
-import Data.String (IsString)
-import Data.Word (Word64)
-:}
+>>>  import Control.Exception (bracket)
+
+>>> import Data.ByteString (ByteString)
+
+>>> import Data.ByteString.Short (ShortByteString)
+
+>>> import Data.Proxy (Proxy)
+
+>>> import Data.String (IsString)
+
+>>> import Data.Word (Word64)
 
 The type @Key@ is a newtype wrapper around 'Data.Word.Word64'.
 The required instance of 'SerialiseKey' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.Word.Word64'.
@@ -343,10 +347,9 @@ The examples in this module are wrapped in a call to @runExample@,
 which creates a temporary session directory and
 runs the example with access to an open 'Session' and a fresh 'Table'.
 
->>> :{
-import qualified System.Directory as Dir
-import           System.FilePath ((</>))
-:}
+>>> import qualified System.Directory as Dir
+
+>>> import           System.FilePath ((</>))
 
 >>> :{
 runExample :: (Session IO -> Table IO Key Value Blob -> IO a) -> IO a
