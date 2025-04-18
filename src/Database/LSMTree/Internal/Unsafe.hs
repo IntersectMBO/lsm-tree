@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# OPTIONS_HADDOCK not-home #-}
 
 -- | This module brings together the internal parts to provide an API in terms
 -- of untyped serialised keys, values and blobs.
@@ -7,13 +8,9 @@
 -- exception-safe opening and closing of resources. Any other non-trivial logic
 -- should live somewhere else.
 --
-module Database.LSMTree.Internal (
-    -- * Existentials
-    Session' (..)
-  , Table' (..)
-  , Cursor' (..)
+module Database.LSMTree.Internal.Unsafe (
     -- * Exceptions
-  , SessionDirDoesNotExistError (..)
+    SessionDirDoesNotExistError (..)
   , SessionDirLockedError (..)
   , SessionDirCorruptedError (..)
   , SessionClosedError (..)
@@ -33,6 +30,7 @@ module Database.LSMTree.Internal (
     -- * Tracing
   , LSMTreeTrace (..)
   , TableTrace (..)
+  , CursorTrace (..)
     -- * Session
   , Session (..)
   , SessionState (..)
@@ -68,8 +66,8 @@ module Database.LSMTree.Internal (
   , readCursorWhile
     -- * Snapshots
   , SnapshotLabel
-  , createSnapshot
-  , openSnapshot
+  , saveSnapshot
+  , openTableFromSnapshot
   , deleteSnapshot
   , doesSnapshotExist
   , listSnapshots
@@ -98,7 +96,6 @@ import           Control.RefCount
 import           Control.Tracer
 import           Data.Either (fromRight)
 import           Data.Foldable
-import           Data.Kind
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -150,28 +147,6 @@ import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
 {-------------------------------------------------------------------------------
-  Existentials
--------------------------------------------------------------------------------}
-
-type Session' :: (Type -> Type) -> Type
-data Session' m = forall h. Typeable h => Session' !(Session m h)
-
-instance NFData (Session' m) where
-  rnf (Session' s) = rnf s
-
-type Table' :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Table' m k v b = forall h. Typeable h => Table' (Table m h)
-
-instance NFData (Table' m k v b) where
-  rnf (Table' t) = rnf t
-
-type Cursor' :: (Type -> Type) -> Type -> Type -> Type -> Type
-data Cursor' m k v b = forall h. Typeable h => Cursor' (Cursor m h)
-
-instance NFData (Cursor' m k v b) where
-  rnf (Cursor' t) = rnf t
-
-{-------------------------------------------------------------------------------
   Traces
 -------------------------------------------------------------------------------}
 
@@ -183,7 +158,7 @@ data LSMTreeTrace =
   | TraceCloseSession
     -- Table
   | TraceNewTable
-  | TraceOpenSnapshot SnapshotName OverrideDiskCachePolicy
+  | TraceOpenTableFromSnapshot SnapshotName OverrideDiskCachePolicy
   | TraceTable TableId TableTrace
   | TraceDeleteSnapshot SnapshotName
   | TraceListSnapshots
@@ -227,7 +202,7 @@ data CursorTrace =
 
 -- | A session provides context that is shared across multiple tables.
 --
--- For more information, see 'Database.LSMTree.Common.Session'.
+-- For more information, see 'Database.LSMTree.Internal.Types.Session'.
 data Session m h = Session {
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a session when multiple threads require access
@@ -266,7 +241,7 @@ data SessionEnv m h = SessionEnv {
     --
     -- Tables are assigned unique identifiers using 'sessionUniqCounter' to
     -- ensure that modifications to the set of known tables are independent.
-    -- Each identifier is added only once in 'new', 'openSnapshot', 'duplicate',
+    -- Each identifier is added only once in 'new', 'openTableFromSnapshot', 'duplicate',
     -- 'union', or 'unions', and is deleted only once in 'close' or
     -- 'closeSession'.
     --
@@ -317,7 +292,7 @@ withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
   -> FsPath
   -> (Session IO h -> IO a)
   -> IO a #-}
--- | See 'Database.LSMTree.Common.withSession'.
+-- | See 'Database.LSMTree.withSession'.
 withSession ::
      (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
   => Tracer m LSMTreeTrace
@@ -352,7 +327,7 @@ data SessionDirCorruptedError
   -> HasBlockIO IO h
   -> FsPath
   -> IO (Session IO h) #-}
--- | See 'Database.LSMTree.Common.openSession'.
+-- | See 'Database.LSMTree.openSession'.
 openSession ::
      forall m h.
      (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
@@ -467,7 +442,7 @@ openSession tr hfs hbio dir =
     checkSnapshotsDirLayout = pure ()
 
 {-# SPECIALISE closeSession :: Session IO h -> IO () #-}
--- | See 'Database.LSMTree.Common.closeSession'.
+-- | See 'Database.LSMTree.closeSession'.
 --
 -- A session's global resources will only be released once it is sure that no
 -- tables or cursors are open anymore.
@@ -867,7 +842,7 @@ rangeLookup resolve range t fromEntry = do
   -> IO () #-}
 -- | See 'Database.LSMTree.updates'.
 --
--- Does not enforce that mupsert and blobs should not occur in the same table.
+-- Does not enforce that upsert and BLOBs should not occur in the same table.
 updates ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
@@ -1199,21 +1174,21 @@ data SnapshotExistsError
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# SPECIALISE createSnapshot ::
+{-# SPECIALISE saveSnapshot ::
      SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table IO h
   -> IO () #-}
--- |  See 'Database.LSMTree.createSnapshot''.
-createSnapshot ::
+-- |  See 'Database.LSMTree.saveSnapshot'.
+saveSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
   -> Table m h
   -> m ()
-createSnapshot snap label tableType t = do
+saveSnapshot snap label tableType t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     withOpenTable t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
@@ -1312,27 +1287,27 @@ data SnapshotNotCompatibleError
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# SPECIALISE openSnapshot ::
-     Session IO h
-  -> OverrideDiskCachePolicy
+{-# SPECIALISE openTableFromSnapshot ::
+     OverrideDiskCachePolicy
+  -> Session IO h
+  -> SnapshotName
   -> SnapshotLabel
   -> SnapshotTableType
-  -> SnapshotName
   -> ResolveSerialisedValue
   -> IO (Table IO h) #-}
--- |  See 'Database.LSMTree.openSnapshot'.
-openSnapshot ::
+-- |  See 'Database.LSMTree.openTableFromSnapshot'.
+openTableFromSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => Session m h
-  -> OverrideDiskCachePolicy
+  => OverrideDiskCachePolicy
+  -> Session m h
+  -> SnapshotName
   -> SnapshotLabel -- ^ Expected label
   -> SnapshotTableType -- ^ Expected table type
-  -> SnapshotName
   -> ResolveSerialisedValue
   -> m (Table m h)
-openSnapshot sesh policyOveride label tableType snap resolve =
+openTableFromSnapshot policyOveride sesh snap label tableType resolve =
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
-    traceWith (sessionTracer sesh) $ TraceOpenSnapshot snap policyOveride
+    traceWith (sessionTracer sesh) $ TraceOpenTableFromSnapshot snap policyOveride
     withOpenSession sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
         let hfs     = sessionHasFS seshEnv
@@ -1413,7 +1388,7 @@ wrapFileCorruptedErrorAsSnapshotCorruptedError snapshotName =
      Session IO h
   -> SnapshotName
   -> IO Bool #-}
--- |  See 'Database.LSMTree.Common.doesSnapshotExist'.
+-- |  See 'Database.LSMTree.doesSnapshotExist'.
 doesSnapshotExist ::
      (MonadMask m, MonadSTM m)
   => Session m h
@@ -1431,7 +1406,7 @@ doesSnapshotDirExist snap seshEnv = do
      Session IO h
   -> SnapshotName
   -> IO () #-}
--- |  See 'Database.LSMTree.Common.deleteSnapshot'.
+-- |  See 'Database.LSMTree.deleteSnapshot'.
 deleteSnapshot ::
      (MonadMask m, MonadSTM m)
   => Session m h
@@ -1446,7 +1421,7 @@ deleteSnapshot sesh snap = do
       FS.removeDirectoryRecursive (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
 
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
--- |  See 'Database.LSMTree.Common.listSnapshots'.
+-- |  See 'Database.LSMTree.listSnapshots'.
 listSnapshots ::
      (MonadMask m, MonadSTM m)
   => Session m h

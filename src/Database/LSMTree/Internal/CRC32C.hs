@@ -4,6 +4,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
+-- Needed by cabal repl as Data.Digest.CRC32C is ambiguous
+{-# LANGUAGE PackageImports      #-}
+
 -- Needed by GHC <= 9.2 for newtype deriving Prim below
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE UnboxedTuples       #-}
@@ -65,7 +68,7 @@ import qualified Data.ByteString.Internal as BS.Internal
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Short as SBS
 import           Data.Char (ord)
-import           Data.Digest.CRC32C as CRC
+import           "crc32c" Data.Digest.CRC32C as CRC
 import           Data.Either (partitionEithers)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map

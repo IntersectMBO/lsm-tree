@@ -25,7 +25,7 @@ Logically, a page consists of a value of type
 type Page = [(Key, Operation, Maybe BlobRef)]
 ```
 where the operation can be insert (with a value), delete (with no value) or
-mupsert (with a value). The entries are sorted by key.
+upsert (with a value). The entries are sorted by key.
 
 The file is structured in a page-oriented way to support efficient I/O using
 random page-sized reads. By page-oriented we mean that the information is

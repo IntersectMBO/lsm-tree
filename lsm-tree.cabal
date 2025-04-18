@@ -9,7 +9,7 @@ description:
 
   *   Basic key–value operations, such as lookup, insert, and delete.
   *   Range lookups, which efficiently retrieve the values for all keys in a given range.
-  *   Monoidal upserts (or \"mupserts\") which combine the stored and new values.
+  *   Monoidal upserts which combine the stored and new values.
   *   BLOB storage which assocates a large auxiliary BLOB with a key.
   *   Durable on-disk persistence and rollback via named snapshots.
   *   Cheap table duplication where all duplicates can be independently accessed and modified.
@@ -21,7 +21,7 @@ description:
 
       This module exports a simplified API which picks sensible defaults for a number of configuration parameters.
 
-      It does not support mupserts or BLOBs, due to their unintuitive interaction, see [Mupserts and BLOBs](#mupsertsandblobs).
+      It does not support upserts or BLOBs, due to their unintuitive interaction, see [Upsert and BLOB](#upsertandblob).
 
       If you are looking at this package for the first time, it is strongly recommended that you start by reading this module.
 
@@ -29,11 +29,11 @@ description:
 
       This module exports the full API.
 
-  == Mupserts and BLOBs #mupsertsandblobs#
+  == Upsert and BLOB #upsertandblob#
 
-  The interaction between mupserts and BLOBs is unintuitive.
-  A mupsert updates the value associated with the key by combining the old and new value with a user-specified function.
-  However, this does not apply to any BLOB value associated with the key, which is simply overwritten by the new BLOB value.
+  The interaction between upserts and BLOBs is unintuitive.
+  A upsert updates the value associated with the key by combining the new and old values with a user-specified function.
+  However, any BLOB associated with the key is simply deleted.
 
   == Portability #portability#
 
@@ -67,7 +67,7 @@ description:
   *   The variable \(n\) refers to the number of /physical/ table entries.
       A /physical/ table entry is any key–operation pair, e.g., @Insert k v@ or @Delete k@, whereas a /logical/ table entry is determined by all physical entries with the same key.
       If the variable \(n\) is used to describe the complexity of an operation that involves multiple tables, it refers to the sum of all table entries.
-  *   The variable \(t\) refers to the number of open tables in the session.
+  *   The variable \(o\) refers to the number of open tables and cursors in the session.
   *   The variable \(s\) refers to the number of snapshots in the session.
   *   The variable \(b\) usually refers to the size of a batch of inputs\/outputs.
       Its precise meaning is explained for each occurrence.
@@ -87,7 +87,7 @@ description:
   +==========+========================+============================+================================================+
   | Session  | Create\/Open           | N\/A                       | \(O(1)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
-  |          | Close                  | @MergePolicyLazyLevelling@ | \(O(t \: T \: \log_T \frac{n}{B})\)            |
+  |          | Close                  | @MergePolicyLazyLevelling@ | \(O(o \: T \: \log_T \frac{n}{B})\)            |
   +----------+------------------------+----------------------------+------------------------------------------------+
   | Table    | Create                 | N\/A                       | \(O(1)\)                                       |
   +----------+------------------------+----------------------------+------------------------------------------------+
@@ -314,8 +314,6 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Database.LSMTree
-    Database.LSMTree.Common
-    Database.LSMTree.Internal
     Database.LSMTree.Internal.Arena
     Database.LSMTree.Internal.Assertions
     Database.LSMTree.Internal.BitMath
@@ -363,7 +361,9 @@ library
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Snapshot
     Database.LSMTree.Internal.Snapshot.Codec
+    Database.LSMTree.Internal.Types
     Database.LSMTree.Internal.UniqCounter
+    Database.LSMTree.Internal.Unsafe
     Database.LSMTree.Internal.Unsliced
     Database.LSMTree.Internal.Vector
     Database.LSMTree.Internal.Vector.Growing

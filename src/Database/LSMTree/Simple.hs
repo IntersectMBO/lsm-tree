@@ -152,14 +152,6 @@ import           Data.Maybe (isJust)
 import           Data.Typeable (TypeRep)
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
-import           Database.LSMTree.Internal (BlobRefInvalidError (..),
-                     CursorClosedError (..), SessionClosedError (..),
-                     SnapshotCorruptedError (..),
-                     SnapshotDoesNotExistError (..), SnapshotExistsError (..),
-                     SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableCorruptedError (..), TableTooLargeError (..),
-                     UnionCredits (..), UnionDebt (..))
-import qualified Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Config
                      (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
                      DiskCachePolicy (..), FencePointerIndexType (..),
@@ -180,6 +172,14 @@ import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
                      serialiseValueIdentity, serialiseValueIdentityUpToSlicing)
 import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import qualified Database.LSMTree.Internal.Snapshot as Internal
+import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
+                     CursorClosedError (..), SessionClosedError (..),
+                     SnapshotCorruptedError (..),
+                     SnapshotDoesNotExistError (..), SnapshotExistsError (..),
+                     SnapshotNotCompatibleError (..), TableClosedError (..),
+                     TableCorruptedError (..), TableTooLargeError (..),
+                     UnionCredits (..), UnionDebt (..))
+import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
@@ -191,28 +191,46 @@ import           System.FS.IO (HandleIO, ioHasFS)
 --------------------------------------------------------------------------------
 
 {- $setup
-
 >>> import Prelude hiding (lookup)
 >>> import Data.ByteString.Short (ShortByteString)
+>>> import Data.String (IsString)
 >>> import Data.Word (Word64)
 >>> import System.Directory (createDirectoryIfMissing, getTemporaryDirectory)
 >>> import System.FilePath ((</>))
->>> import System.FS.IO (ioHasFS)
 
->>> let mkSessionDirectory (n :: Int) = getTemporaryDirectory >>= \tmp -> let dir = tmp </> "lsm-tree-doctest" </> "sessions" </> show n in createDirectoryIfMissing True dir >> pure dir
->>> mySessionDirectory <- mkSessionDirectory 0
+>>> :{
+newtype Key = Key Word64
+  deriving stock (Eq, Show)
+  deriving newtype (Num, SerialiseKey)
+:}
+
+>>> :{
+newtype Value = Value ShortByteString
+  deriving stock (Eq, Show)
+  deriving newtype (IsString, SerialiseValue)
+:}
+
+>>> :{
+runExample :: (Session -> Table Key Value -> IO a) -> IO a
+runExample action = do
+  tmpDir <- getTemporaryDirectory
+  let sessionDir = tmpDir </> "doctest_Database_LSMTree_Simple"
+  createDirectoryIfMissing True sessionDir
+  withSession sessionDir $ \session ->
+    withTable session $ \table ->
+      action session table
+:}
 -}
 
 {- $example
 
 >>> :{
-withSession mySessionDirectory $ \session -> do
-  withTable @Word64 @ShortByteString session $ \table -> do
-    insert table 0 "Hello"
-    insert table 1 "World"
-    lookup table 0
+runExample $ \session table -> do
+  insert table 0 "Hello"
+  insert table 1 "World"
+  lookup table 0
 :}
-Just "Hello"
+Just (Value "Hello")
 -}
 
 --------------------------------------------------------------------------------
@@ -334,11 +352,11 @@ Run an action with access to a session opened from a session directory.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(t \: T \log_T \frac{n}{B})\).
+    \(O(o \: T \log_T \frac{n}{B})\).
 
-The variable \(t\) refers to the number of tables in the session.
+The variable \(o\) refers to the number of open tables and cursors in the session.
 
-If the session has any open tables, then 'closeTable' is called for each open table.
+If the session has any open tables, then 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
 Otherwise, the disk I\/O cost operation is \(O(1)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
@@ -407,11 +425,11 @@ Close a session.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['MergePolicyLazyLevelling']:
-    \(O(t \: T \log_T \frac{n}{B})\).
+    \(O(o \: T \log_T \frac{n}{B})\).
 
-The variable \(t\) refers to the number of tables in the session.
+The variable \(o\) refers to the number of open tables and cursors in the session.
 
-If the session has any open tables, then 'closeTable' is called for each open table.
+If the session has any open tables, then 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
 Otherwise, the disk I\/O cost operation is \(O(1)\).
 
 Closing is idempotent, i.e., closing a closed session does nothing.
@@ -1333,8 +1351,7 @@ saveSnapshot ::
     Table k v ->
     IO ()
 saveSnapshot snapName snapLabel (Table table) =
-    -- TODO: remove SnapshotTableType
-    Internal.createSnapshot snapName snapLabel Internal.SnapSimpleTable table
+    Internal.saveSnapshot snapName snapLabel Internal.SnapSimpleTable table
 
 {- |
 Run an action with access to a table from a snapshot.
@@ -1422,7 +1439,7 @@ openTableFromSnapshotWith ::
     SnapshotLabel ->
     IO (Table k v)
 openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
-    Table <$> Internal.openSnapshot session tableConfigOverride snapLabel Internal.SnapSimpleTable snapName const
+    Table <$> Internal.openTableFromSnapshot tableConfigOverride session snapName snapLabel Internal.SnapSimpleTable const
 
 {- |
 Delete the named snapshot.

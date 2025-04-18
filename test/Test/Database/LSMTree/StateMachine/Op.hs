@@ -40,7 +40,7 @@ data Op a b where
   OpFromRight          :: Op (Either a b) b
   OpComp               :: Op b c -> Op a b -> Op a c
   OpLookupResults      :: Op (V.Vector (Class.LookupResult v (WrapBlobRef h IO b))) (V.Vector (WrapBlobRef h IO b))
-  OpQueryResults       :: Op (V.Vector (Class.QueryResult k v (WrapBlobRef h IO b))) (V.Vector (WrapBlobRef h IO b))
+  OpEntrys             :: Op (V.Vector (Class.Entry k v (WrapBlobRef h IO b))) (V.Vector (WrapBlobRef h IO b))
 
 intOpId :: Op a b -> a -> Maybe b
 intOpId OpId            = Just
@@ -52,7 +52,7 @@ intOpId OpFromLeft      = either Just (const Nothing)
 intOpId OpFromRight     = either (const Nothing) Just
 intOpId (OpComp g f)    = intOpId g <=< intOpId f
 intOpId OpLookupResults = Just . V.mapMaybe getBlobRef
-intOpId OpQueryResults  = Just . V.mapMaybe getBlobRef
+intOpId OpEntrys        = Just . V.mapMaybe getBlobRef
 
 {-------------------------------------------------------------------------------
   'InterpretOp' instances
@@ -91,7 +91,7 @@ instance InterpretOp Op (Op.WrapRealized (IOSim s)) where
       OpFromRight          -> either (const Nothing) (Just . Op.WrapRealized) . Op.unwrapRealized
       OpComp g f           -> Op.intOp g <=< Op.intOp f
       OpLookupResults      -> Just  . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
-      OpQueryResults       -> Just . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
+      OpEntrys             -> Just . Op.WrapRealized . V.mapMaybe getBlobRef . Op.unwrapRealized
 
 {-------------------------------------------------------------------------------
   'Show' and 'Eq' instances
@@ -110,7 +110,7 @@ sameOp = go
     go OpFromRight          OpFromRight     = True
     go (OpComp g f)         (OpComp g' f')  = go g g' && go f f'
     go OpLookupResults      OpLookupResults = True
-    go OpQueryResults       OpQueryResults  = True
+    go OpEntrys             OpEntrys        = True
     go _                    _               = False
 
     _coveredAllCases :: Op a b -> ()
@@ -124,7 +124,7 @@ sameOp = go
         OpFromRight            -> ()
         OpComp{}               -> ()
         OpLookupResults{}      -> ()
-        OpQueryResults{}       -> ()
+        OpEntrys{}             -> ()
 
 
 instance Eq (Op a b)  where
@@ -146,7 +146,7 @@ instance Show (Op a b) where
       go OpFromRight     = showString "OpFromRight"
       go (OpComp g f)    = go g . showString " `OpComp` " . go f
       go OpLookupResults = showString "OpLookupResults"
-      go OpQueryResults  = showString "OpQueryResults"
+      go OpEntrys        = showString "OpEntrys"
 
 {-------------------------------------------------------------------------------
   'HasBlobRef' class
@@ -160,6 +160,6 @@ instance HasBlobRef (Class.LookupResult v) where
   getBlobRef Class.Found{}                   = Nothing
   getBlobRef (Class.FoundWithBlob _ blobref) = Just blobref
 
-instance HasBlobRef (Class.QueryResult k v) where
-  getBlobRef Class.FoundInQuery{}                     = Nothing
-  getBlobRef (Class.FoundInQueryWithBlob _ _ blobref) = Just blobref
+instance HasBlobRef (Class.Entry k v) where
+  getBlobRef Class.Entry{}                     = Nothing
+  getBlobRef (Class.EntryWithBlob _ _ blobref) = Just blobref

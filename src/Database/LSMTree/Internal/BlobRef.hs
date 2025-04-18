@@ -59,7 +59,7 @@ data RawBlobRef m h = RawBlobRef {
 -- them to obtain a normal strong reference while we do the I\/O to read the
 -- blob. This ensures the file is not closed under our feet.
 --
--- See 'Database.LSMTree.Common.BlobRef' for more info.
+-- See 'Database.LSMTree.BlobRef' for more info.
 --
 data WeakBlobRef m h = WeakBlobRef {
       weakBlobRefFile :: {-# NOUNPACK #-} !(WeakRef (BlobFile m h))

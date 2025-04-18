@@ -32,7 +32,6 @@ import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import           Data.Word
-import           Database.LSMTree.Internal as Internal
 import           Database.LSMTree.Internal.Arena
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef
@@ -67,7 +66,9 @@ import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.RunReader hiding (Entry)
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Types as Types
 import           Database.LSMTree.Internal.UniqCounter
+import           Database.LSMTree.Internal.Unsafe as Unsafe
 import           Database.LSMTree.Internal.Unsliced
 import           Database.LSMTree.Internal.Vector.Growing
 import           Database.LSMTree.Internal.WriteBuffer
@@ -105,22 +106,27 @@ propNoThunks x = do
   Public API
 -------------------------------------------------------------------------------}
 
--- | Also checks 'NoThunks' for the tables that are known to be open in the
--- 'Common.Session'.
+-- | Also checks 'NoThunks' for the tables that are known to be open in the session.
 instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
-      => NoThunks (Session' m ) where
-  showTypeOf (_ :: Proxy (Session' m)) = "Session'"
-  wNoThunks ctx (Session' s) = wNoThunks ctx s
+      => NoThunks (Types.Session m) where
+  showTypeOf (_ :: Proxy (Types.Session m)) = "Database.LSMTree.Session"
+  wNoThunks ctx (Types.Session s) = wNoThunks ctx s
+
+-- | Does not check 'NoThunks' for the session that this table belongs to.
+instance (NoThunksIOLike m, Typeable m, Typeable (PrimState m))
+      => NoThunks (Types.Table m k v b) where
+  showTypeOf (_ :: Proxy (Types.Table m k v b)) = "Database.LSMTree.Table"
+  wNoThunks ctx (Types.Table t) = wNoThunks ctx t
 
 {-------------------------------------------------------------------------------
-  Internal
+  Unsafe
 -------------------------------------------------------------------------------}
 
-deriving stock instance Generic (Internal.Session m h)
--- | Also checks 'NoThunks' for the 'Internal.Table's that are known to be
--- open in the 'Internal.Session'.
+deriving stock instance Generic (Unsafe.Session m h)
+-- | Also checks 'NoThunks' for the 'Unsafe.Table's that are known to be
+-- open in the 'Unsafe.Session'.
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
-                        => NoThunks (Internal.Session m h)
+                        => NoThunks (Unsafe.Session m h)
 
 deriving stock instance Generic (SessionState m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
@@ -130,12 +136,12 @@ deriving stock instance Generic (SessionEnv m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
                         => NoThunks (SessionEnv m h)
 
-deriving stock instance Generic (Internal.Table m h)
--- | Does not check 'NoThunks' for the 'Internal.Session' that this
--- 'Internal.Table' belongs to.
-deriving via AllowThunksIn '["tableSession"] (Table m h)
+deriving stock instance Generic (Unsafe.Table m h)
+-- | Does not check 'NoThunks' for the 'Unsafe.Session' that this
+-- 'Unsafe.Table' belongs to.
+deriving via AllowThunksIn '["tableSession"] (Unsafe.Table m h)
     instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
-          => NoThunks (Internal.Table m h)
+          => NoThunks (Unsafe.Table m h)
 
 deriving stock instance Generic (TableState m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
@@ -146,11 +152,11 @@ deriving via AllowThunksIn '["tableSessionEnv"] (TableEnv m h)
     instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
           => NoThunks (TableEnv m h)
 
--- | Does not check 'NoThunks' for the 'Internal.Session' that this
--- 'Internal.Cursor' belongs to.
-deriving stock instance Generic (Internal.Cursor m h)
+-- | Does not check 'NoThunks' for the 'Unsafe.Session' that this
+-- 'Unsafe.Cursor' belongs to.
+deriving stock instance Generic (Unsafe.Cursor m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))
-                        => NoThunks (Internal.Cursor m h)
+                        => NoThunks (Unsafe.Cursor m h)
 
 deriving stock instance Generic (CursorState m h)
 deriving anyclass instance (NoThunksIOLike m, Typeable m, Typeable h, Typeable (PrimState m))

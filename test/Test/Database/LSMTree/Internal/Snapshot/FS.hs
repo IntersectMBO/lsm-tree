@@ -11,7 +11,6 @@ import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.Internal
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Config.Override
                      (OverrideDiskCachePolicy (..))
@@ -20,6 +19,7 @@ import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import           Database.LSMTree.Internal.Unsafe
 import qualified System.FS.API as FS
 import           System.FS.API
 import           System.FS.Sim.Error hiding (genErrors)
@@ -218,9 +218,9 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     snapLabel = SnapshotLabel "label"
 
     createSnap t =
-        createSnapshot snapName snapLabel SnapFullTable t
+        saveSnapshot snapName snapLabel SnapFullTable t
 
     openSnap s =
-        openSnapshot s NoOverrideDiskCachePolicy snapLabel SnapFullTable snapName resolve
+        openTableFromSnapshot NoOverrideDiskCachePolicy s snapName snapLabel SnapFullTable resolve
 
     getConstructorName e = takeWhile (/= ' ') (show e)

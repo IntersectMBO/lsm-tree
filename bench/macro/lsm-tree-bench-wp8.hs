@@ -415,7 +415,7 @@ doSetup' gopts opts = do
     let name = LSM.toSnapshotName "bench"
 
     LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
-        tbl <- LSM.new @IO @K @V @B session (mkTableConfigSetup gopts opts benchTableConfig)
+        tbl <- LSM.newTableWith @IO @K @V @B (mkTableConfigSetup gopts opts benchTableConfig) session
 
         forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
             -- TODO: this procedure simply inserts all the keys into initial lsm tree
@@ -426,7 +426,7 @@ doSetup' gopts opts = do
                 | i <- NE.toList batch
                 ]
 
-        LSM.createSnapshot label name tbl
+        LSM.saveSnapshot name label tbl
 
 -------------------------------------------------------------------------------
 -- dry-run
@@ -583,8 +583,8 @@ doRun gopts opts = do
         -- reference version starts with empty (as it's not practical or
         -- necessary for testing to load the whole snapshot).
         tbl <- if check opts
-                then LSM.new  @IO @K @V @B session (mkTableConfigRun gopts benchTableConfig)
-                else LSM.openSnapshot @IO @K @V @B session (mkOverrideDiskCachePolicy gopts) label name
+                then LSM.newTableWith @IO @K @V @B (mkTableConfigRun gopts benchTableConfig) session
+                else LSM.openTableFromSnapshotWith @IO @K @V @B (mkOverrideDiskCachePolicy gopts) session name label
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference
@@ -765,7 +765,7 @@ pipelinedIteration h output !initialSize !batchSize
 
       -- At this point, after syncing, our peer is guaranteed to no longer be
       -- using tbl_n. They used it to generate tbl_n+1 (which they gave us).
-      LSM.close tbl_n
+      LSM.closeTable tbl_n
       output b $! applyUpdates delta (V.zip ls lrs)
       pure tbl_n1
 
@@ -868,8 +868,8 @@ updateToLookupResult :: LSM.Update v b -> LSM.LookupResult v ()
 updateToLookupResult (LSM.Insert v Nothing)  = LSM.Found v
 updateToLookupResult (LSM.Insert v (Just _)) = LSM.FoundWithBlob v ()
 updateToLookupResult  LSM.Delete             = LSM.NotFound
-updateToLookupResult (LSM.Mupsert _)         = error $
-                                               "Unexpected mupsert encountered"
+updateToLookupResult (LSM.Upsert _)         = error $
+                                               "Unexpected upsert encountered"
 
 -- | Return the adjacent batches where there is overlap between one batch's
 -- inserts and the next batch's lookups. Testing the pipelined version needs

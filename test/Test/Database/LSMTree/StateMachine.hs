@@ -84,10 +84,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Proxy (..), Typeable, cast)
 import qualified Data.Vector as V
-import qualified Database.LSMTree as R
-import           Database.LSMTree.Class (LookupResult (..), QueryResult (..))
-import qualified Database.LSMTree.Class as Class
-import           Database.LSMTree.Common (BlobRefInvalidError (..),
+import           Database.LSMTree (BlobRefInvalidError (..),
                      CursorClosedError (..), SessionClosedError (..),
                      SessionDirCorruptedError (..),
                      SessionDirDoesNotExistError (..),
@@ -96,12 +93,16 @@ import           Database.LSMTree.Common (BlobRefInvalidError (..),
                      SnapshotNotCompatibleError (..), TableClosedError (..),
                      TableCorruptedError (..),
                      TableUnionNotCompatibleError (..))
+import qualified Database.LSMTree as R
+import           Database.LSMTree.Class (Entry (..), LookupResult (..))
+import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
-import qualified Database.LSMTree.Internal as R.Internal
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
+import qualified Database.LSMTree.Internal.Types as R.Types
+import qualified Database.LSMTree.Internal.Unsafe as R.Unsafe
 import qualified Database.LSMTree.Model.IO as ModelIO
 import qualified Database.LSMTree.Model.Session as Model
 import           NoThunks.Class
@@ -421,13 +422,13 @@ acquire_RealImpl_MockFS tr = do
 data CheckFS = CheckFS | NoCheckFS
 
 release_RealImpl_MockFS ::
-     R.IOLike m
+     (R.IOLike m)
   => CheckFS
   -> (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
   -> m Property
 release_RealImpl_MockFS fsFlag (fsVar, session, _, _) = do
     sts <- getAllSessionTables session
-    forM_ sts $ \(SomeTable t) -> R.close t
+    forM_ sts $ \(SomeTable t) -> R.closeTable t
     scs <- getAllSessionCursors session
     forM_ scs $ \(SomeCursor c) -> R.closeCursor c
     mockfs1 <- atomically $ readTMVar fsVar
@@ -437,26 +438,29 @@ release_RealImpl_MockFS fsFlag (fsVar, session, _, _) = do
       CheckFS -> propNumOpenHandles 1 mockfs1 QC..&&. propNoOpenHandles mockfs2
       NoCheckFS -> QC.property ()
 
-data SomeTable m = SomeTable (forall k v b. R.Table m k v b)
-data SomeCursor m = SomeCursor (forall k v b. R.Cursor m k v b)
+data SomeTable m
+  = SomeTable (forall k v b. R.Table m k v b)
+
+data SomeCursor m
+  = SomeCursor (forall k v b. R.Cursor m k v b)
 
 getAllSessionTables ::
      (MonadSTM m, MonadThrow m, MonadMVar m)
   => R.Session m
   -> m [SomeTable m]
-getAllSessionTables (R.Internal.Session' s) = do
-    R.Internal.withOpenSession s $ \seshEnv -> do
-      ts <- readMVar (R.Internal.sessionOpenTables seshEnv)
-      pure ((\x -> SomeTable (R.Internal.Table' x))  <$> Map.elems ts)
+getAllSessionTables (R.Types.Session s) = do
+    R.Unsafe.withOpenSession s $ \seshEnv -> do
+      ts <- readMVar (R.Unsafe.sessionOpenTables seshEnv)
+      pure ((\x -> SomeTable (R.Types.Table x))  <$> Map.elems ts)
 
 getAllSessionCursors ::
      (MonadSTM m, MonadThrow m, MonadMVar m)
   => R.Session m
   -> m [SomeCursor m]
-getAllSessionCursors (R.Internal.Session' s) =
-    R.Internal.withOpenSession s $ \seshEnv -> do
-      cs <- readMVar (R.Internal.sessionOpenCursors seshEnv)
-      pure ((\x -> SomeCursor (R.Internal.Cursor' x))  <$> Map.elems cs)
+getAllSessionCursors (R.Types.Session s) =
+    R.Unsafe.withOpenSession s $ \seshEnv -> do
+      cs <- readMVar (R.Unsafe.sessionOpenCursors seshEnv)
+      pure ((\x -> SomeCursor (R.Types.Cursor x))  <$> Map.elems cs)
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
 createSystemTempDirectory prefix = do
@@ -584,7 +588,7 @@ keyValueBlobLabel :: R.SnapshotLabel
 keyValueBlobLabel = R.SnapshotLabel "Key Value Blob"
 
 instance R.ResolveValue Value where
-  resolveValue _ = (<>)
+  resolveSerialised _ = (<>)
 
 {-------------------------------------------------------------------------------
   Model state
@@ -687,7 +691,7 @@ data Action' h a where
   RangeLookup ::
        (C k v b, Ord k)
     => R.Range k -> Var h (WrapTable h IO k v b)
-    -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
+    -> Act' h (V.Vector (Entry k v (WrapBlobRef h IO b)))
   -- Cursor
   NewCursor ::
        C k v b
@@ -702,7 +706,7 @@ data Action' h a where
        C k v b
     => Int
     -> Var h (WrapCursor h IO k v b)
-    -> Act' h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))
+    -> Act' h (V.Vector (Entry k v (WrapBlobRef h IO b)))
   -- Updates
   Updates ::
        C k v b
@@ -726,15 +730,18 @@ data Action' h a where
     => Var h (V.Vector (WrapBlobRef h IO b))
     -> Act' h (V.Vector (WrapBlob b))
   -- Snapshots
-  CreateSnapshot ::
+  SaveSnapshot ::
        C k v b
     => Maybe SilentCorruption
-    -> R.SnapshotLabel -> R.SnapshotName -> Var h (WrapTable h IO k v b)
+    -> R.SnapshotName
+    -> R.SnapshotLabel
+    -> Var h (WrapTable h IO k v b)
     -> Act' h ()
-  OpenSnapshot   ::
+  OpenTableFromSnapshot ::
        C k v b
     => {-# UNPACK #-} !(PrettyProxy (k, v, b))
-    -> R.SnapshotLabel -> R.SnapshotName
+    -> R.SnapshotName
+    -> R.SnapshotLabel
     -> Act' h (WrapTable h IO k v b)
   DeleteSnapshot :: R.SnapshotName -> Act' h ()
   ListSnapshots  :: Act' h [R.SnapshotName]
@@ -798,50 +805,50 @@ instance ( Eq (Class.TableConfig h)
         (New (PrettyProxy :: PrettyProxy kvb) conf1)
         (New (PrettyProxy :: PrettyProxy kvb) conf2) =
           conf1 == conf2
-      go (Close var1)               (Close var2) =
-          Just var1 == cast var2
-      go (Lookups ks1 var1)         (Lookups ks2 var2) =
-          Just ks1 == cast ks2 && Just var1 == cast var2
-      go (RangeLookup range1 var1)  (RangeLookup range2 var2) =
-          range1 == range2 && var1 == var2
+      go (Close var1) (Close var2) =
+        Just var1 == cast var2
+      go (Lookups ks1 var1) (Lookups ks2 var2) =
+        Just ks1 == cast ks2 && Just var1 == cast var2
+      go (RangeLookup range1 var1) (RangeLookup range2 var2) =
+        range1 == range2 && var1 == var2
       go (NewCursor k1 var1) (NewCursor k2 var2) =
-          k1 == k2 && var1 == var2
+        k1 == k2 && var1 == var2
       go (CloseCursor var1) (CloseCursor var2) =
-          Just var1 == cast var2
+        Just var1 == cast var2
       go (ReadCursor n1 var1) (ReadCursor n2 var2) =
-          n1 == n2 && var1 == var2
-      go (Updates ups1 var1)        (Updates ups2 var2) =
-          Just ups1 == cast ups2 && Just var1 == cast var2
-      go (Inserts inss1 var1)       (Inserts inss2 var2) =
-          Just inss1 == cast inss2 && Just var1 == cast var2
-      go (Deletes ks1 var1)         (Deletes ks2 var2) =
-          Just ks1 == cast ks2 && Just var1 == cast var2
+        n1 == n2 && var1 == var2
+      go (Updates ups1 var1) (Updates ups2 var2) =
+        Just ups1 == cast ups2 && Just var1 == cast var2
+      go (Inserts inss1 var1) (Inserts inss2 var2) =
+        Just inss1 == cast inss2 && Just var1 == cast var2
+      go (Deletes ks1 var1) (Deletes ks2 var2) =
+        Just ks1 == cast ks2 && Just var1 == cast var2
       go (Mupserts mups1 var1) (Mupserts mups2 var2) =
-          Just mups1 == cast mups2 && Just var1 == cast var2
+        Just mups1 == cast mups2 && Just var1 == cast var2
       go (RetrieveBlobs vars1) (RetrieveBlobs vars2) =
-          Just vars1 == cast vars2
-      go (CreateSnapshot mcorr1 label1 name1 var1) (CreateSnapshot mcorr2 label2 name2 var2) =
-          mcorr1 == mcorr2 && label1 == label2 && name1 == name2 && Just var1 == cast var2
+        Just vars1 == cast vars2
+      go (SaveSnapshot mcorr1 name1 label1 var1) (SaveSnapshot mcorr2 name2 label2 var2) =
+        mcorr1 == mcorr2 && name1 == name2 && label1 == label2 && Just var1 == cast var2
       go
-        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label1 name1)
-        (OpenSnapshot (PrettyProxy :: PrettyProxy kvb) label2 name2) =
+        (OpenTableFromSnapshot (PrettyProxy :: PrettyProxy kvb) name1 label1)
+        (OpenTableFromSnapshot (PrettyProxy :: PrettyProxy kvb) name2 label2) =
           label1 == label2 && name1 == name2
       go (DeleteSnapshot name1) (DeleteSnapshot name2) =
-          name1 == name2
+        name1 == name2
       go ListSnapshots ListSnapshots =
-          True
+        True
       go (Duplicate var1) (Duplicate var2) =
-          Just var1 == cast var2
+        Just var1 == cast var2
       go (Union var1_1 var1_2) (Union var2_1 var2_2) =
-          Just var1_1 == cast var2_1 && Just var1_2 == cast var2_2
+        Just var1_1 == cast var2_1 && Just var1_2 == cast var2_2
       go (Unions vars1) (Unions vars2) =
-          Just vars1 == cast vars2
+        Just vars1 == cast vars2
       go (RemainingUnionDebt var1) (RemainingUnionDebt var2) =
-          Just var1 == cast var2
-      go (SupplyUnionCredits var1 credits1)  (SupplyUnionCredits var2 credits2) =
-          Just var1 == cast var2 && credits1 == credits2
+        Just var1 == cast var2
+      go (SupplyUnionCredits var1 credits1) (SupplyUnionCredits var2 credits2) =
+        Just var1 == cast var2 && credits1 == credits2
       go (SupplyPortionOfDebt var1 portion1) (SupplyPortionOfDebt var2 portion2) =
-          Just var1 == cast var2 && portion1 == portion2
+        Just var1 == cast var2 && portion1 == portion2
       go _ _ = False
 
       _coveredAllCases :: Action' h a -> ()
@@ -858,8 +865,8 @@ instance ( Eq (Class.TableConfig h)
           Deletes{} -> ()
           Mupserts{} -> ()
           RetrieveBlobs{} -> ()
-          CreateSnapshot{} -> ()
-          OpenSnapshot{} -> ()
+          SaveSnapshot{} -> ()
+          OpenTableFromSnapshot{} -> ()
           DeleteSnapshot{} -> ()
           ListSnapshots{} -> ()
           Duplicate{} -> ()
@@ -892,30 +899,37 @@ instance ( Eq (Class.TableConfig h)
 
   data instance ModelValue (ModelState h) a where
     -- handle-like
-    MTable :: Model.Table k v b
-                 -> Val h (WrapTable h IO k v b)
+    MTable ::
+      Model.Table k v b ->
+      Val h (WrapTable h IO k v b)
     MCursor :: Model.Cursor k v b -> Val h (WrapCursor h IO k v b)
-    MBlobRef :: Class.C_ b
-             => Model.BlobRef b -> Val h (WrapBlobRef h IO b)
+    MBlobRef ::
+      (Class.C_ b) =>
+      Model.BlobRef b ->
+      Val h (WrapBlobRef h IO b)
     -- values
-    MLookupResult :: (Class.C_ v, Class.C_ b)
-                  => LookupResult v (Val h (WrapBlobRef h IO b))
-                  -> Val h (LookupResult v (WrapBlobRef h IO b))
-    MQueryResult :: Class.C k v b
-                 => QueryResult k v (Val h (WrapBlobRef h IO b))
-                 -> Val h (QueryResult k v (WrapBlobRef h IO b))
-    MBlob :: (Show b, Typeable b, Eq b)
-          => WrapBlob b -> Val h (WrapBlob b)
+    MLookupResult ::
+      (Class.C_ v, Class.C_ b) =>
+      LookupResult v (Val h (WrapBlobRef h IO b)) ->
+      Val h (LookupResult v (WrapBlobRef h IO b))
+    MEntry ::
+      (Class.C k v b) =>
+      Entry k v (Val h (WrapBlobRef h IO b)) ->
+      Val h (Entry k v (WrapBlobRef h IO b))
+    MBlob ::
+      (Show b, Typeable b, Eq b) =>
+      WrapBlob b ->
+      Val h (WrapBlob b)
     MSnapshotName :: R.SnapshotName -> Val h R.SnapshotName
     MUnionDebt :: R.UnionDebt -> Val h R.UnionDebt
     MUnionCredits :: R.UnionCredits -> Val h R.UnionCredits
     MUnionCreditsPortion :: R.UnionCredits -> Val h R.UnionCredits
     MErr :: Model.Err -> Val h Model.Err
     -- combinators
-    MUnit   :: () -> Val h ()
-    MPair   :: (Val h a, Val h b) -> Val h (a, b)
+    MUnit :: () -> Val h ()
+    MPair :: (Val h a, Val h b) -> Val h (a, b)
     MEither :: Either (Val h a) (Val h b) -> Val h (Either a b)
-    MList   :: [Val h a] -> Val h [a]
+    MList :: [Val h a] -> Val h [a]
     MVector :: V.Vector (Val h a) -> Val h (V.Vector a)
 
   data instance Observable (ModelState h) a where
@@ -924,21 +938,25 @@ instance ( Eq (Class.TableConfig h)
     OCursor :: Obs h (WrapCursor h IO k v b)
     OBlobRef :: Obs h (WrapBlobRef h IO b)
     -- values
-    OLookupResult :: (Class.C_ v, Class.C_ b)
-                  => LookupResult v (Obs h (WrapBlobRef h IO b))
-                  -> Obs h (LookupResult v (WrapBlobRef h IO b))
-    OQueryResult :: Class.C k v b
-                 => QueryResult k v (Obs h (WrapBlobRef h IO b))
-                 -> Obs h (QueryResult k v (WrapBlobRef h IO b))
-    OBlob :: (Show b, Typeable b, Eq b)
-          => WrapBlob b -> Obs h (WrapBlob b)
+    OLookupResult ::
+      (Class.C_ v, Class.C_ b) =>
+      LookupResult v (Obs h (WrapBlobRef h IO b)) ->
+      Obs h (LookupResult v (WrapBlobRef h IO b))
+    OEntry ::
+      (Class.C k v b) =>
+      Entry k v (Obs h (WrapBlobRef h IO b)) ->
+      Obs h (Entry k v (WrapBlobRef h IO b))
+    OBlob ::
+      (Show b, Typeable b, Eq b) =>
+      WrapBlob b ->
+      Obs h (WrapBlob b)
     OUnionCredits :: R.UnionCredits -> Obs h R.UnionCredits
     OUnionCreditsPortion :: R.UnionCredits -> Obs h R.UnionCredits
     OId :: (Show a, Typeable a, Eq a) => a -> Obs h a
     -- combinators
-    OPair   :: (Obs h a, Obs h b) -> Obs h (a, b)
+    OPair :: (Obs h a, Obs h b) -> Obs h (a, b)
     OEither :: Either (Obs h a) (Obs h b) -> Obs h (Either a b)
-    OList   :: [Obs h a] -> Obs h [a]
+    OList :: [Obs h a] -> Obs h [a]
     OVector :: V.Vector (Obs h a) -> Obs h (V.Vector a)
 
   observeModel :: Val h a -> Obs h a
@@ -947,7 +965,7 @@ instance ( Eq (Class.TableConfig h)
       MCursor _              -> OCursor
       MBlobRef _             -> OBlobRef
       MLookupResult x        -> OLookupResult $ fmap observeModel x
-      MQueryResult x         -> OQueryResult $ fmap observeModel x
+      MEntry x               -> OEntry $ fmap observeModel x
       MSnapshotName x        -> OId x
       MBlob x                -> OBlob x
       MUnionDebt x           -> OId x
@@ -975,27 +993,27 @@ instance ( Eq (Class.TableConfig h)
 
   usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
   usedVars (Action _ action') = case action' of
-      New _ _                       -> []
-      Close tableVar                -> [SomeGVar tableVar]
-      Lookups _ tableVar            -> [SomeGVar tableVar]
-      RangeLookup _ tableVar        -> [SomeGVar tableVar]
-      NewCursor _ tableVar          -> [SomeGVar tableVar]
-      CloseCursor cursorVar         -> [SomeGVar cursorVar]
-      ReadCursor _ cursorVar        -> [SomeGVar cursorVar]
-      Updates _ tableVar            -> [SomeGVar tableVar]
-      Inserts _ tableVar            -> [SomeGVar tableVar]
-      Deletes _ tableVar            -> [SomeGVar tableVar]
-      Mupserts _ tableVar           -> [SomeGVar tableVar]
-      RetrieveBlobs blobsVar        -> [SomeGVar blobsVar]
-      CreateSnapshot _ _ _ tableVar -> [SomeGVar tableVar]
-      OpenSnapshot{}                -> []
-      DeleteSnapshot _              -> []
-      ListSnapshots                 -> []
-      Duplicate tableVar            -> [SomeGVar tableVar]
-      Union table1Var table2Var     -> [SomeGVar table1Var, SomeGVar table2Var]
-      Unions tableVars              -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
-      RemainingUnionDebt tableVar   -> [SomeGVar tableVar]
-      SupplyUnionCredits tableVar _ -> [SomeGVar tableVar]
+      New _ _                        -> []
+      Close tableVar                 -> [SomeGVar tableVar]
+      Lookups _ tableVar             -> [SomeGVar tableVar]
+      RangeLookup _ tableVar         -> [SomeGVar tableVar]
+      NewCursor _ tableVar           -> [SomeGVar tableVar]
+      CloseCursor cursorVar          -> [SomeGVar cursorVar]
+      ReadCursor _ cursorVar         -> [SomeGVar cursorVar]
+      Updates _ tableVar             -> [SomeGVar tableVar]
+      Inserts _ tableVar             -> [SomeGVar tableVar]
+      Deletes _ tableVar             -> [SomeGVar tableVar]
+      Mupserts _ tableVar            -> [SomeGVar tableVar]
+      RetrieveBlobs blobsVar         -> [SomeGVar blobsVar]
+      SaveSnapshot   _ _ _ tableVar  -> [SomeGVar tableVar]
+      OpenTableFromSnapshot{}        -> []
+      DeleteSnapshot _               -> []
+      ListSnapshots                  -> []
+      Duplicate tableVar             -> [SomeGVar tableVar]
+      Union table1Var table2Var      -> [SomeGVar table1Var, SomeGVar table2Var]
+      Unions tableVars               -> [SomeGVar tableVar | tableVar <- NE.toList tableVars]
+      RemainingUnionDebt tableVar    -> [SomeGVar tableVar]
+      SupplyUnionCredits tableVar _  -> [SomeGVar tableVar]
       SupplyPortionOfDebt tableVar _ -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
@@ -1083,7 +1101,7 @@ instance Eq (Obs h a) where
       (OCursor, OCursor) -> True
       (OBlobRef, OBlobRef) -> True
       (OLookupResult x, OLookupResult y) -> x == y
-      (OQueryResult x, OQueryResult y) -> x == y
+      (OEntry x, OEntry y) -> x == y
       (OBlob x, OBlob y) -> x == y
       (OUnionCredits x, OUnionCredits y) -> x == y
       (OUnionCreditsPortion x, OUnionCreditsPortion y) -> x == y
@@ -1100,7 +1118,7 @@ instance Eq (Obs h a) where
           OCursor{} -> ()
           OBlobRef{} -> ()
           OLookupResult{} -> ()
-          OQueryResult{} -> ()
+          OEntry{} -> ()
           OBlob{} -> ()
           OUnionCredits{} -> ()
           OUnionCreditsPortion{} -> ()
@@ -1173,59 +1191,59 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h IO) a
     -> Obs h a
   observeReal _proxy (Action _ action') result = case action' of
-      New{}                 -> OEither $ bimap OId (const OTable) result
-      Close{}               -> OEither $ bimap OId OId result
-      Lookups{}             -> OEither $
+      New{}                   -> OEither $ bimap OId (const OTable) result
+      Close{}                 -> OEither $ bimap OId OId result
+      Lookups{}               -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}         -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      NewCursor{}           -> OEither $ bimap OId (const OCursor) result
-      CloseCursor{}         -> OEither $ bimap OId OId result
-      ReadCursor{}          -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      Updates{}             -> OEither $ bimap OId OId result
-      Inserts{}             -> OEither $ bimap OId OId result
-      Deletes{}             -> OEither $ bimap OId OId result
-      Mupserts{}            -> OEither $ bimap OId OId result
-      RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
-      CreateSnapshot{}      -> OEither $ bimap OId OId result
-      OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
-      DeleteSnapshot{}      -> OEither $ bimap OId OId result
-      ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}           -> OEither $ bimap OId (const OTable) result
-      Union{}               -> OEither $ bimap OId (const OTable) result
-      Unions{}              -> OEither $ bimap OId (const OTable) result
-      RemainingUnionDebt{}  -> OEither $ bimap OId OId result
-      SupplyUnionCredits{}  -> OEither $ bimap OId OUnionCredits result
-      SupplyPortionOfDebt{} -> OEither $ bimap OId OUnionCreditsPortion result
+      RangeLookup{}           -> OEither $
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
+      NewCursor{}             -> OEither $ bimap OId (const OCursor) result
+      CloseCursor{}           -> OEither $ bimap OId OId result
+      ReadCursor{}            -> OEither $
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
+      Updates{}               -> OEither $ bimap OId OId result
+      Inserts{}               -> OEither $ bimap OId OId result
+      Deletes{}               -> OEither $ bimap OId OId result
+      Mupserts{}              -> OEither $ bimap OId OId result
+      RetrieveBlobs{}         -> OEither $ bimap OId (OVector . fmap OBlob) result
+      SaveSnapshot{}          -> OEither $ bimap OId OId result
+      OpenTableFromSnapshot{} -> OEither $ bimap OId (const OTable) result
+      DeleteSnapshot{}        -> OEither $ bimap OId OId result
+      ListSnapshots{}         -> OEither $ bimap OId (OList . fmap OId) result
+      Duplicate{}             -> OEither $ bimap OId (const OTable) result
+      Union{}                 -> OEither $ bimap OId (const OTable) result
+      Unions{}                -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{}    -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}    -> OEither $ bimap OId OUnionCredits result
+      SupplyPortionOfDebt{}   -> OEither $ bimap OId OUnionCreditsPortion result
 
   showRealResponse ::
        Proxy (RealMonad h IO)
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h IO) a)))
   showRealResponse _ (Action _ action') = case action' of
-      New{}                 -> Nothing
-      Close{}               -> Just Dict
-      Lookups{}             -> Nothing
-      RangeLookup{}         -> Nothing
-      NewCursor{}           -> Nothing
-      CloseCursor{}         -> Just Dict
-      ReadCursor{}          -> Nothing
-      Updates{}             -> Just Dict
-      Inserts{}             -> Just Dict
-      Deletes{}             -> Just Dict
-      Mupserts{}            -> Just Dict
-      RetrieveBlobs{}       -> Just Dict
-      CreateSnapshot{}      -> Just Dict
-      OpenSnapshot{}        -> Nothing
-      DeleteSnapshot{}      -> Just Dict
-      ListSnapshots{}       -> Just Dict
-      Duplicate{}           -> Nothing
-      Union{}               -> Nothing
-      Unions{}              -> Nothing
-      RemainingUnionDebt{}  -> Just Dict
-      SupplyUnionCredits{}  -> Just Dict
-      SupplyPortionOfDebt{} -> Just Dict
+      New{}                   -> Nothing
+      Close{}                 -> Just Dict
+      Lookups{}               -> Nothing
+      RangeLookup{}           -> Nothing
+      NewCursor{}             -> Nothing
+      CloseCursor{}           -> Just Dict
+      ReadCursor{}            -> Nothing
+      Updates{}               -> Just Dict
+      Inserts{}               -> Just Dict
+      Deletes{}               -> Just Dict
+      Mupserts{}              -> Just Dict
+      RetrieveBlobs{}         -> Just Dict
+      SaveSnapshot{}          -> Just Dict
+      OpenTableFromSnapshot{} -> Nothing
+      DeleteSnapshot{}        -> Just Dict
+      ListSnapshots{}         -> Just Dict
+      Duplicate{}             -> Nothing
+      Union{}                 -> Nothing
+      Unions{}                -> Nothing
+      RemainingUnionDebt{}    -> Just Dict
+      SupplyUnionCredits{}    -> Just Dict
+      SupplyPortionOfDebt{}   -> Just Dict
 
 instance ( Eq (Class.TableConfig h)
          , Class.IsTable h
@@ -1239,59 +1257,59 @@ instance ( Eq (Class.TableConfig h)
     -> Realized (RealMonad h (IOSim s)) a
     -> Obs h a
   observeReal _proxy (Action _ action') result = case action' of
-      New{}                 -> OEither $ bimap OId (const OTable) result
-      Close{}               -> OEither $ bimap OId OId result
-      Lookups{}             -> OEither $
+      New{}                   -> OEither $ bimap OId (const OTable) result
+      Close{}                 -> OEither $ bimap OId OId result
+      Lookups{}               -> OEither $
           bimap OId (OVector . fmap (OLookupResult . fmap (const OBlobRef))) result
-      RangeLookup{}         -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      NewCursor{}           -> OEither $ bimap OId (const OCursor) result
-      CloseCursor{}         -> OEither $ bimap OId OId result
-      ReadCursor{}          -> OEither $
-          bimap OId (OVector . fmap (OQueryResult . fmap (const OBlobRef))) result
-      Updates{}             -> OEither $ bimap OId OId result
-      Inserts{}             -> OEither $ bimap OId OId result
-      Deletes{}             -> OEither $ bimap OId OId result
-      Mupserts{}            -> OEither $ bimap OId OId result
-      RetrieveBlobs{}       -> OEither $ bimap OId (OVector . fmap OBlob) result
-      CreateSnapshot{}      -> OEither $ bimap OId OId result
-      OpenSnapshot{}        -> OEither $ bimap OId (const OTable) result
-      DeleteSnapshot{}      -> OEither $ bimap OId OId result
-      ListSnapshots{}       -> OEither $ bimap OId (OList . fmap OId) result
-      Duplicate{}           -> OEither $ bimap OId (const OTable) result
-      Union{}               -> OEither $ bimap OId (const OTable) result
-      Unions{}              -> OEither $ bimap OId (const OTable) result
-      RemainingUnionDebt{}  -> OEither $ bimap OId OId result
-      SupplyUnionCredits{}  -> OEither $ bimap OId OUnionCredits result
-      SupplyPortionOfDebt{} -> OEither $ bimap OId OUnionCreditsPortion result
+      RangeLookup{}           -> OEither $
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
+      NewCursor{}             -> OEither $ bimap OId (const OCursor) result
+      CloseCursor{}           -> OEither $ bimap OId OId result
+      ReadCursor{}            -> OEither $
+          bimap OId (OVector . fmap (OEntry . fmap (const OBlobRef))) result
+      Updates{}               -> OEither $ bimap OId OId result
+      Inserts{}               -> OEither $ bimap OId OId result
+      Deletes{}               -> OEither $ bimap OId OId result
+      Mupserts{}              -> OEither $ bimap OId OId result
+      RetrieveBlobs{}         -> OEither $ bimap OId (OVector . fmap OBlob) result
+      SaveSnapshot{}          -> OEither $ bimap OId OId result
+      OpenTableFromSnapshot{} -> OEither $ bimap OId (const OTable) result
+      DeleteSnapshot{}        -> OEither $ bimap OId OId result
+      ListSnapshots{}         -> OEither $ bimap OId (OList . fmap OId) result
+      Duplicate{}             -> OEither $ bimap OId (const OTable) result
+      Union{}                 -> OEither $ bimap OId (const OTable) result
+      Unions{}                -> OEither $ bimap OId (const OTable) result
+      RemainingUnionDebt{}    -> OEither $ bimap OId OId result
+      SupplyUnionCredits{}    -> OEither $ bimap OId OUnionCredits result
+      SupplyPortionOfDebt{}   -> OEither $ bimap OId OUnionCreditsPortion result
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
     -> LockstepAction (ModelState h) a
     -> Maybe (Dict (Show (Realized (RealMonad h (IOSim s)) a)))
   showRealResponse _ (Action _ action') = case action' of
-      New{}                 -> Nothing
-      Close{}               -> Just Dict
-      Lookups{}             -> Nothing
-      RangeLookup{}         -> Nothing
-      NewCursor{}           -> Nothing
-      CloseCursor{}         -> Just Dict
-      ReadCursor{}          -> Nothing
-      Updates{}             -> Just Dict
-      Inserts{}             -> Just Dict
-      Deletes{}             -> Just Dict
-      Mupserts{}            -> Just Dict
-      RetrieveBlobs{}       -> Just Dict
-      CreateSnapshot{}      -> Just Dict
-      OpenSnapshot{}        -> Nothing
-      DeleteSnapshot{}      -> Just Dict
-      ListSnapshots{}       -> Just Dict
-      Duplicate{}           -> Nothing
-      Union{}               -> Nothing
-      Unions{}              -> Nothing
-      RemainingUnionDebt{}  -> Just Dict
-      SupplyUnionCredits{}  -> Just Dict
-      SupplyPortionOfDebt{} -> Just Dict
+      New{}                   -> Nothing
+      Close{}                 -> Just Dict
+      Lookups{}               -> Nothing
+      RangeLookup{}           -> Nothing
+      NewCursor{}             -> Nothing
+      CloseCursor{}           -> Just Dict
+      ReadCursor{}            -> Nothing
+      Updates{}               -> Just Dict
+      Inserts{}               -> Just Dict
+      Deletes{}               -> Just Dict
+      Mupserts{}              -> Just Dict
+      RetrieveBlobs{}         -> Just Dict
+      SaveSnapshot{}          -> Just Dict
+      OpenTableFromSnapshot{} -> Nothing
+      DeleteSnapshot{}        -> Just Dict
+      ListSnapshots{}         -> Just Dict
+      Duplicate{}             -> Nothing
+      Union{}                 -> Nothing
+      Unions{}                -> Nothing
+      RemainingUnionDebt{}    -> Just Dict
+      SupplyUnionCredits{}    -> Just Dict
+      SupplyPortionOfDebt{}   -> Just Dict
 
 {-------------------------------------------------------------------------------
   RunModel
@@ -1348,7 +1366,7 @@ runModel lookUp (Action merrs action') = case action' of
           (Model.lookups ks (getTable $ lookUp tableVar))
           (pure ()) -- TODO(err)
     RangeLookup range tableVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
+      wrap (MVector . fmap (MEntry . fmap MBlobRef))
       . Model.runModelMWithInjectedErrors merrs
           (Model.rangeLookup range (getTable $ lookUp tableVar))
           (pure ()) -- TODO(err)
@@ -1363,7 +1381,7 @@ runModel lookUp (Action merrs action') = case action' of
           (Model.closeCursor (getCursor $ lookUp cursorVar))
           (pure ()) -- TODO(err)
     ReadCursor n cursorVar ->
-      wrap (MVector . fmap (MQueryResult . fmap MBlobRef))
+      wrap (MVector . fmap (MEntry . fmap MBlobRef))
       . Model.runModelMWithInjectedErrors merrs
           (Model.readCursor n (getCursor $ lookUp cursorVar))
           (pure ()) -- TODO(err)
@@ -1392,16 +1410,16 @@ runModel lookUp (Action merrs action') = case action' of
       . Model.runModelMWithInjectedErrors merrs
           (Model.retrieveBlobs (getBlobRefs . lookUp $ blobsVar))
           (pure ()) -- TODO(err)
-    CreateSnapshot mcorr label name tableVar ->
+    SaveSnapshot mcorr name label tableVar ->
       wrap MUnit
         . Model.runModelMWithInjectedErrors merrs
-            (do Model.createSnapshot label name (getTable $ lookUp tableVar)
+            (do Model.saveSnapshot name label (getTable $ lookUp tableVar)
                 forM_ mcorr $ \_ -> Model.corruptSnapshot name)
             (pure ()) -- TODO(err)
-    OpenSnapshot _ label name ->
+    OpenTableFromSnapshot _ name label ->
       wrap MTable
       . Model.runModelMWithInjectedErrors merrs
-          (Model.openSnapshot label name)
+          (Model.openTableFromSnapshot name label)
           (pure ())
     DeleteSnapshot name ->
       wrap MUnit
@@ -1537,15 +1555,15 @@ runIO action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
             (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
             (\_ -> pure ()) -- TODO(err)
-        CreateSnapshot mcorr label name tableVar ->
+        SaveSnapshot mcorr name label tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
-            (do Class.createSnapshot label name table
+          runRealWithInjectedErrors "SaveSnapshot" env merrs
+            (do Class.saveSnapshot name label table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
-        OpenSnapshot _ label name ->
-          runRealWithInjectedErrors "OpenSnapshot" env merrs
-            (WrapTable <$> Class.openSnapshot session label name)
+        OpenTableFromSnapshot _ name label ->
+          runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
+            (WrapTable <$> Class.openTableFromSnapshot session name label)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs
@@ -1648,15 +1666,15 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
             (fmap WrapBlob <$> Class.retrieveBlobs (Proxy @h) session (unwrapBlobRef <$> lookUp' blobRefsVar))
             (\_ -> pure ()) -- TODO(err)
-        CreateSnapshot mcorr label name tableVar ->
+        SaveSnapshot mcorr name label tableVar ->
           let table = unwrapTable $ lookUp' tableVar in
-          runRealWithInjectedErrors "CreateSnapshot" env merrs
-            (do Class.createSnapshot label name table
+          runRealWithInjectedErrors "SaveSnapshot" env merrs
+            (do Class.saveSnapshot name label table
                 forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
-        OpenSnapshot _ label name ->
-          runRealWithInjectedErrors "OpenSnapshot" env merrs
-            (WrapTable <$> Class.openSnapshot session label name)
+        OpenTableFromSnapshot _ name label ->
+          runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
+            (WrapTable <$> Class.openTableFromSnapshot session name label)
             (\(WrapTable t) -> Class.close t)
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs
@@ -1814,10 +1832,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         Deletes{} -> ()
         Mupserts{} -> ()
         RetrieveBlobs{} -> ()
-        CreateSnapshot{} -> ()
+        SaveSnapshot{} -> ()
         DeleteSnapshot{} -> ()
         ListSnapshots{} -> ()
-        OpenSnapshot{} -> ()
+        OpenTableFromSnapshot{} -> ()
         Duplicate{} -> ()
         Union{} -> ()
         Unions{} -> ()
@@ -1864,10 +1882,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     blobRefsVars :: [Var h (V.Vector (WrapBlobRef h IO b))]
     blobRefsVars = fmap (mapGVar (OpComp OpLookupResults)) lookupResultVars
-                ++ fmap (mapGVar (OpComp OpQueryResults))  queryResultVars
+                ++ fmap (mapGVar (OpComp OpEntrys))  queryResultVars
       where
         lookupResultVars :: [Var h (V.Vector (LookupResult  v (WrapBlobRef h IO b)))]
-        queryResultVars  :: [Var h (V.Vector (QueryResult k v (WrapBlobRef h IO b)))]
+        queryResultVars  :: [Var h (V.Vector (Entry k v (WrapBlobRef h IO b)))]
 
         lookupResultVars = fromRight <$> findVars ctx Proxy
         queryResultVars  = fromRight <$> findVars ctx Proxy
@@ -1894,7 +1912,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         ]
 
      ++ [ (2, fmap Some $ (Action <$> genErrors <*>) $
-            OpenSnapshot @k @v @b PrettyProxy <$> pure label <*> genUsedSnapshotName)
+            OpenTableFromSnapshot @k @v @b PrettyProxy <$> genUsedSnapshotName <*> pure label)
         | length tableVars <= 5 -- no more than 5 tables at once
         , not (null usedSnapshotNames)
         , let genErrors = QC.frequency [
@@ -1953,7 +1971,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , let genErrors = pure Nothing -- TODO: generate errors
         ]
      ++ [ (2,  fmap Some $ (Action <$> genErrors <*>) $
-            CreateSnapshot <$> genCorruption <*> pure label <*> genUnusedSnapshotName <*> genTableVar)
+            SaveSnapshot <$> genCorruption <*> genUnusedSnapshotName <*> pure label <*> genTableVar)
         | not (null unusedSnapshotNames)
           -- TODO: should errors and corruption be generated at the same time,
           -- or should they be mutually exclusive?
@@ -2052,14 +2070,14 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genUpdates :: Gen (V.Vector (k, R.Update v b))
     genUpdates = QC.liftArbitrary ((,) <$> QC.arbitrary <*> QC.oneof [
           R.Insert <$> QC.arbitrary <*> genBlob
-        , R.Mupsert <$> QC.arbitrary
+        , R.Upsert <$> QC.arbitrary
         , pure R.Delete
         ])
       where
         _coveredAllCases :: R.Update v b -> ()
         _coveredAllCases = \case
             R.Insert{} -> ()
-            R.Mupsert{} -> ()
+            R.Upsert{} -> ()
             R.Delete{} -> ()
 
     genInserts :: Gen (V.Vector (k, v, Maybe b))
@@ -2100,28 +2118,28 @@ shrinkActionWithVars _ctx _st (Action merrs action') =
 -- typeable.
 dictIsTypeable :: Typeable h => Action' h a -> Dict (Typeable a)
 dictIsTypeable = \case
-      New{}            -> Dict
-      Close{}          -> Dict
-      Lookups{}        -> Dict
-      RangeLookup{}    -> Dict
-      NewCursor{}      -> Dict
-      CloseCursor{}    -> Dict
-      ReadCursor{}     -> Dict
-      Updates{}        -> Dict
-      Inserts{}        -> Dict
-      Deletes{}        -> Dict
-      Mupserts{}       -> Dict
-      RetrieveBlobs{}  -> Dict
-      CreateSnapshot{} -> Dict
-      OpenSnapshot{}   -> Dict
-      DeleteSnapshot{} -> Dict
-      ListSnapshots{}  -> Dict
-      Duplicate{}      -> Dict
-      Union{}          -> Dict
-      Unions{}         -> Dict
-      RemainingUnionDebt{} -> Dict
-      SupplyUnionCredits{} -> Dict
-      SupplyPortionOfDebt{} -> Dict
+      New{}                   -> Dict
+      Close{}                 -> Dict
+      Lookups{}               -> Dict
+      RangeLookup{}           -> Dict
+      NewCursor{}             -> Dict
+      CloseCursor{}           -> Dict
+      ReadCursor{}            -> Dict
+      Updates{}               -> Dict
+      Inserts{}               -> Dict
+      Deletes{}               -> Dict
+      Mupserts{}              -> Dict
+      RetrieveBlobs{}         -> Dict
+      SaveSnapshot{}          -> Dict
+      OpenTableFromSnapshot{} -> Dict
+      DeleteSnapshot{}        -> Dict
+      ListSnapshots{}         -> Dict
+      Duplicate{}             -> Dict
+      Union{}                 -> Dict
+      Unions{}                -> Dict
+      RemainingUnionDebt{}    -> Dict
+      SupplyUnionCredits{}    -> Dict
+      SupplyPortionOfDebt{}   -> Dict
 
 shrinkAction'WithVars ::
      forall h a. (
@@ -2164,7 +2182,7 @@ shrinkAction'WithVars _ctx _st a = case a of
       | kvs' <- QC.shrink kvs
       ] <> [
         Some $ Updates (V.map f kvs) tableVar
-      | let f (k, v) = (k, R.Mupsert v)
+      | let f (k, v) = (k, R.Upsert v)
       ]
 
     Lookups ks tableVar -> [
@@ -2220,8 +2238,8 @@ instance InterpretOp Op (ModelValue (ModelState h)) where
     OpLookupResults      -> Just . MVector
                           . V.mapMaybe (\case MLookupResult x -> getBlobRef x)
                           . \case MVector x -> x
-    OpQueryResults       -> Just . MVector
-                          . V.mapMaybe (\case MQueryResult x -> getBlobRef x)
+    OpEntrys             -> Just . MVector
+                          . V.mapMaybe (\case MEntry x -> getBlobRef x)
                           . \case MVector x -> x
 
 {-------------------------------------------------------------------------------
@@ -2314,7 +2332,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
     -- === Tags
 
     updSnapshotted stats = case (action', result) of
-      (CreateSnapshot _ _ name _, MEither (Right (MUnit ()))) -> stats {
+      (SaveSnapshot _ name _ _, MEither (Right (MUnit ()))) -> stats {
           snapshotted = Set.insert name (snapshotted stats)
         }
       (DeleteSnapshot name, MEither (Right (MUnit ()))) -> stats {
@@ -2349,7 +2367,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
             numUpdates = countAll $ V.map (\k -> (k, R.Delete)) ks
           }
         (Mupserts mups _, MEither (Right (MUnit ()))) -> stats {
-            numUpdates = countAll $ V.map (second R.Mupsert) mups
+            numUpdates = countAll $ V.map (second R.Upsert) mups
           }
         _ -> stats
       where
@@ -2362,7 +2380,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                 R.Insert _ Nothing -> (i+1, iwb  , d  , m  )
                 R.Insert _ Just{}  -> (i  , iwb+1, d  , m  )
                 R.Delete{}         -> (i  , iwb  , d+1, m  )
-                R.Mupsert{}        -> (i  , iwb  , d  , m+1)
+                R.Upsert{}         -> (i  , iwb  , d  , m+1)
           in V.foldl' count (numUpdates stats) upds
 
     updSuccessActions stats = case result of
@@ -2382,7 +2400,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         New{}
           | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
-        OpenSnapshot{}
+        OpenTableFromSnapshot{}
           | MEither (Right (MTable table)) <- result -> initCount table
           | otherwise                                      -> stats
         Duplicate{}
@@ -2419,7 +2437,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         CloseCursor{}         -> stats
         ReadCursor{}          -> stats
         RetrieveBlobs{}       -> stats
-        CreateSnapshot{}      -> stats
+        SaveSnapshot{}        -> stats
         DeleteSnapshot{}      -> stats
         ListSnapshots{}       -> stats
       where
@@ -2456,7 +2474,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
     updParentTable stats = case (action', result) of
         (New{}, MEither (Right (MTable tbl))) ->
           insertParentTableNew tbl stats
-        (OpenSnapshot{}, MEither (Right (MTable tbl))) ->
+        (OpenTableFromSnapshot{}, MEither (Right (MTable tbl))) ->
           insertParentTableNew tbl stats
         (Duplicate ptblVar, MEither (Right (MTable tbl))) ->
           insertParentTableDerived [ptblVar] tbl stats
@@ -2520,8 +2538,8 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         CloseCursor{} -> stats
         ReadCursor{} -> stats
         RetrieveBlobs{} -> stats
-        CreateSnapshot{} -> stats
-        OpenSnapshot{} -> stats
+        SaveSnapshot{} -> stats
+        OpenTableFromSnapshot{} -> stats
         DeleteSnapshot{} -> stats
         ListSnapshots{} -> stats
         Duplicate{} -> stats
@@ -2587,14 +2605,14 @@ data Tag =
     -- | Delete a missing snapshot
   | DeleteMissingSnapshot
     -- | A corrupted snapshot was created successfully
-  | CreateSnapshotCorrupted R.SnapshotName
+  | SaveSnapshotCorrupted R.SnapshotName
     -- | An /un/corrupted snapshot was created successfully
-  | CreateSnapshotUncorrupted R.SnapshotName
+  | SaveSnapshotUncorrupted R.SnapshotName
     -- | A snapshot failed to open because we detected that the snapshot was
     -- corrupt
-  | OpenSnapshotDetectsCorruption R.SnapshotName
+  | OpenTableFromSnapshotDetectsCorruption R.SnapshotName
     -- | Opened a snapshot (successfully) for a table involving a union
-  | OpenSnapshotUnion
+  | OpenTableFromSnapshotUnion
   deriving stock (Show, Eq, Ord)
 
 -- | This is run for after every action
@@ -2613,27 +2631,27 @@ tagStep' (ModelState _stateBefore statsBefore,
     , tagOpenMissingSnapshot
     , tagDeleteExistingSnapshot
     , tagDeleteMissingSnapshot
-    , tagCreateSnapshotCorruptedOrUncorrupted
-    , tagOpenSnapshotDetectsCorruption
-    , tagOpenSnapshotUnion
+    , tagSaveSnapshotCorruptedOrUncorrupted
+    , tagOpenTableFromSnapshotDetectsCorruption
+    , tagOpenTableFromSnapshotUnion
     ]
   where
     tagSnapshotTwice
-      | CreateSnapshot _ _ name _ <- action'
+      | SaveSnapshot _ name _ _ <- action'
       , name `Set.member` snapshotted statsBefore
       = Just SnapshotTwice
       | otherwise
       = Nothing
 
     tagOpenExistingSnapshot
-      | OpenSnapshot _ _ name <- action'
+      | OpenTableFromSnapshot _ name _ <- action'
       , name `Set.member` snapshotted statsBefore
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
-      | OpenSnapshot _ _ name <- action'
+      | OpenTableFromSnapshot _ name _ <- action'
       , not (name `Set.member` snapshotted statsBefore)
       = Just OpenMissingSnapshot
       | otherwise
@@ -2653,27 +2671,27 @@ tagStep' (ModelState _stateBefore statsBefore,
       | otherwise
       = Nothing
 
-    tagCreateSnapshotCorruptedOrUncorrupted
-      | CreateSnapshot mcorr _ name _ <- action'
+    tagSaveSnapshotCorruptedOrUncorrupted
+      | SaveSnapshot mcorr name _ _ <- action'
       , MEither (Right (MUnit ())) <- result
       = Just $ case mcorr of
-          Just (_ :: SilentCorruption) -> CreateSnapshotCorrupted name
-          _                            -> CreateSnapshotUncorrupted name
+          Just (_ :: SilentCorruption) -> SaveSnapshotCorrupted name
+          _                            -> SaveSnapshotUncorrupted name
       | otherwise
       = Nothing
 
-    tagOpenSnapshotDetectsCorruption
-      | OpenSnapshot _ _ name <- action'
+    tagOpenTableFromSnapshotDetectsCorruption
+      | OpenTableFromSnapshot _ name _ <- action'
       , MEither (Left (MErr (Model.ErrSnapshotCorrupted _))) <- result
-      = Just (OpenSnapshotDetectsCorruption name)
+      = Just (OpenTableFromSnapshotDetectsCorruption name)
       | otherwise
       = Nothing
 
-    tagOpenSnapshotUnion
-      | OpenSnapshot{} <- action'
+    tagOpenTableFromSnapshotUnion
+      | OpenTableFromSnapshot{} <- action'
       , MEither (Right (MTable t)) <- result
       , Model.isUnionDescendant t == Model.IsUnionDescendant
-      = Just OpenSnapshotUnion
+      = Just OpenTableFromSnapshotUnion
       | otherwise
       = Nothing
 

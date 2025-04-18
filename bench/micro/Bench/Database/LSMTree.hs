@@ -14,14 +14,12 @@ import qualified Data.Vector as V
 import           Data.Void
 import           Data.Word
 import           Database.LSMTree hiding (withTable)
-import qualified Database.LSMTree.Common as Common
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import qualified Database.LSMTree.Internal.RawBytes as RB
-import           Database.LSMTree.Internal.Serialise.Class
 import           GHC.Generics (Generic)
-import           Prelude hiding (getContents)
+import           Prelude hiding (getContents, take)
 import           System.Directory (removeDirectoryRecursive)
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
@@ -35,9 +33,9 @@ benchmarks = bgroup "Bench.Database.LSMTree" [
       benchLargeValueVsSmallValueBlob
     , benchCursorScanVsRangeLookupScan
     , benchInsertBatches
-    , benchInsertsVsMupserts
-    , benchLookupsInsertsVsMupserts
-    , benchLookupInsertsVsLookupMupserts
+    , benchInsertsVsUpserts
+    , benchLookupsInsertsVsUpserts
+    , benchLookupInsertsVsLookupUpserts
     ]
 
 {-------------------------------------------------------------------------------
@@ -75,17 +73,13 @@ newtype V3 = V3 Word64
 
 type B3 = Void
 
--- Simple addition
-resolve :: V3 -> V3 -> V3
-resolve = (+)
-
 instance ResolveValue V3 where
-  resolveValue = resolveDeserialised resolve
+  resolve = (+)
 
-benchConfig :: Common.TableConfig
-benchConfig = Common.defaultTableConfig {
-      Common.confWriteBufferAlloc  = Common.AllocNumEntries (Common.NumEntries 20000)
-    , Common.confFencePointerIndex = Common.CompactIndex
+benchConfig :: TableConfig
+benchConfig = defaultTableConfig
+    { confWriteBufferAlloc  = AllocNumEntries (NumEntries 20000)
+    , confFencePointerIndex = CompactIndex
     }
 
 {-------------------------------------------------------------------------------
@@ -142,12 +136,12 @@ benchLargeValueVsSmallValueBlob =
       initialise inss = do
           (tmpDir, hfs, hbio) <- mkFiles
           s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-          t <- new s benchConfig
+          t <- newTableWith benchConfig s
           V.mapM_ (inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
-          close t
+          closeTable t
           closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
 
@@ -172,11 +166,11 @@ benchCursorScanVsRangeLookupScan =
           bgroup "cursor-scan-vs-range-lookup-scan" [
               bench "cursor-scan-full" $ whnfIO $ do
                 withCursor t $ \c -> do
-                  readCursor initialSize c
+                  take initialSize c
             , bench "cursor-scan-chunked" $ whnfIO $ do
                 withCursor t $ \c -> do
                   forM_ ([1 .. numChunks] :: [Int]) $ \_ -> do
-                    readCursor readSize c
+                    take readSize c
             , bench "range-scan-full" $ whnfIO $ do
                 rangeLookup t (FromToIncluding (K minBound) (K maxBound))
             , bench "range-scan-chunked" $ whnfIO $ do
@@ -227,12 +221,12 @@ benchCursorScanVsRangeLookupScan =
       initialise inss = do
           (tmpDir, hfs, hbio) <- mkFiles
           s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-          t <- new s benchConfig
+          t <- newTableWith benchConfig s
           V.mapM_ (inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
-          close t
+          closeTable t
           closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
 
@@ -251,9 +245,9 @@ benchInsertBatches =
       !initialSize = 100_000
       !batchSize = 256
 
-      _benchConfig :: Common.TableConfig
+      _benchConfig :: TableConfig
       _benchConfig = benchConfig {
-          Common.confWriteBufferAlloc = Common.AllocNumEntries (Common.NumEntries 1000)
+          confWriteBufferAlloc = AllocNumEntries (NumEntries 1000)
         }
 
       randomInserts :: Int -> V.Vector (K, V2, Maybe Void)
@@ -272,31 +266,31 @@ benchInsertBatches =
       initialise = do
           (tmpDir, hfs, hbio) <- mkFiles
           s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-          t <- new s _benchConfig
+          t <- newTableWith _benchConfig s
           pure (tmpDir, hfs, hbio, s, t)
 
       cleanup (tmpDir, hfs, hbio, s, t) = do
-          close t
+          closeTable t
           closeSession s
           cleanupFiles (tmpDir, hfs, hbio)
 
 {-------------------------------------------------------------------------------
-  Inserts vs. Mupserts
+  Inserts vs. Upserts
 -------------------------------------------------------------------------------}
 
--- | Compare inserts and mupserts. The logical contents of the resulting
+-- | Compare inserts and upserts. The logical contents of the resulting
 -- database are the same.
-benchInsertsVsMupserts :: Benchmark
-benchInsertsVsMupserts =
+benchInsertsVsUpserts :: Benchmark
+benchInsertsVsUpserts =
     env (pure $ snd $ randomEntriesGrouped 800_000 250) $ \ess ->
       env (pure $ V.map mkInserts ess) $ \inss ->
-        bgroup "inserts-vs-mupserts" [
+        bgroup "inserts-vs-upserts" [
           bench "inserts" $
             withEmptyTable $ \(_, _, _, _, t) ->
               V.mapM_ (inserts t) inss
-        , bench "mupserts" $
+        , bench "upserts" $
             withEmptyTable $ \(_, _, _, _, t) ->
-              V.mapM_ (mupserts t) ess
+              V.mapM_ (upserts t) ess
         ]
     where
       withEmptyTable =
@@ -311,18 +305,18 @@ benchInsertsVsMupserts =
             )
 
 {-------------------------------------------------------------------------------
-  Lookups plus Inserts vs. Mupserts
+  Lookups plus Inserts vs. Upserts
 -------------------------------------------------------------------------------}
 
--- | Compare lookups+inserts to mupserts. The former costs 2 LSMT operations,
---  while Mupserts only cost 1 LSMT operation. The number of operations do not
+-- | Compare lookups+inserts to upserts. The former costs 2 LSMT operations,
+--  while Upserts only cost 1 LSMT operation. The number of operations do not
 --  directly translate to the number of I\/O operations, but one can assume that
---  lookup+insert is roughly twice as costly as mupsert.
-benchLookupsInsertsVsMupserts :: Benchmark
-benchLookupsInsertsVsMupserts =
+--  lookup+insert is roughly twice as costly as upsert.
+benchLookupsInsertsVsUpserts :: Benchmark
+benchLookupsInsertsVsUpserts =
     env (pure $ snd $ randomEntriesGrouped 800_000 250) $ \ess ->
       env (pure $ V.map mkInserts ess) $ \inss ->
-        bgroup "lookups-inserts-vs-mupserts" [
+        bgroup "lookups-inserts-vs-upserts" [
           bench "lookups-inserts" $
             withTable inss $ \(_, _, _, _, t) ->
               -- Insert the same keys again, but we sum the existing values in
@@ -333,12 +327,12 @@ benchLookupsInsertsVsMupserts =
                 lrs <- lookups t (V.map fst es)
                 let ins' = V.zipWith f es lrs
                 inserts t ins'
-        , bench "mupserts" $
+        , bench "upserts" $
             withTable inss $ \(_, _, _, _, t) ->
               -- Insert the same keys again, but we sum the existing values in
               -- the table with the values we are going to insert: submit
-              -- mupserts with the insert values.
-              V.forM_ ess $ \es -> mupserts t es
+              -- upserts with the insert values.
+              V.forM_ ess $ \es -> upserts t es
         ]
   where
     f (k, v) = \case
@@ -359,20 +353,20 @@ benchLookupsInsertsVsMupserts =
           )
 
 {-------------------------------------------------------------------------------
-  Lookup Inserts vs. Lookup Mupserts
+  Lookup Inserts vs. Lookup Upserts
 -------------------------------------------------------------------------------}
 
--- | Compare lookups after inserts against lookups after mupserts.
-benchLookupInsertsVsLookupMupserts :: Benchmark
-benchLookupInsertsVsLookupMupserts =
+-- | Compare lookups after inserts against lookups after upserts.
+benchLookupInsertsVsLookupUpserts :: Benchmark
+benchLookupInsertsVsLookupUpserts =
     env (pure $ snd $ randomEntriesGrouped 80_000 250) $ \ess ->
       env (pure $ V.map mkInserts ess) $ \inss ->
-        bgroup "lookup-inserts-vs-lookup-mupserts" [
+        bgroup "lookup-inserts-vs-lookup-upserts" [
           bench "lookup-inserts" $
             withInsertTable inss $ \(_, _, _, _, t) -> do
                 V.forM_ ess $ \es -> lookups t (V.map fst es)
-        , bench "lookup-mupserts" $
-            withMupsertTable ess $ \(_, _, _, _, t) -> do
+        , bench "lookup-upserts" $
+            withUpsertTable ess $ \(_, _, _, _, t) -> do
                 V.forM_ ess $ \es -> lookups t (V.map fst es)
         ]
   where
@@ -393,14 +387,14 @@ benchLookupInsertsVsLookupMupserts =
               cleanupFiles (tmpDir, hfs, hbio)
           )
 
-    withMupsertTable ess =
+    withUpsertTable ess =
         perRunEnvWithCleanup
-          -- Mupsert the same key 10 times. The results in a logical database
+          -- Upsert the same key 10 times. The results in a logical database
           -- containing the original keys with the original value *10.
           (do (tmpDir, hfs, hbio) <- mkFiles
               (s, t) <- mkTable hfs hbio benchConfig
               V.forM_ [1..10] $ \(_::Int) ->
-                V.mapM_ (mupserts t) ess
+                V.mapM_ (upserts t) ess
               pure (tmpDir, hfs, hbio, s, t)
           )
           (\(tmpDir, hfs, hbio, s, t) -> do
@@ -458,7 +452,7 @@ mkTable ::
         )
 mkTable hfs hbio conf = do
     sesh <- openSession nullTracer hfs hbio (FS.mkFsPath [])
-    t <- new sesh conf
+    t <- newTableWith conf sesh
     pure (sesh, t)
 
 cleanupTable ::
@@ -467,5 +461,5 @@ cleanupTable ::
      )
   -> IO ()
 cleanupTable (s, t) = do
-    close t
+    closeTable t
     closeSession s

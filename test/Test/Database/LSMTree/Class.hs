@@ -19,7 +19,6 @@ import qualified Data.Vector.Algorithms.Merge as VA
 import           Data.Word (Word64)
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class
-import           Database.LSMTree.Common (toSnapshotName)
 import           Database.LSMTree.Extras.Generators ()
 import qualified Database.LSMTree.Model.IO as ModelIO
 import qualified System.FS.API as FS
@@ -96,13 +95,8 @@ type Blob = BS.ByteString
 
 newtype Value = Value BS.ByteString
   deriving stock (Eq, Show)
-  deriving newtype (Arbitrary, SerialiseValue)
-
-instance ResolveValue Value where
-  resolveValue = resolveDeserialised resolve
-
-resolve :: Value -> Value -> Value
-resolve (Value x) (Value y) = Value (x <> y)
+  deriving newtype (Arbitrary, Semigroup, SerialiseValue)
+  deriving ResolveValue via (R.ResolveViaSemigroup Value)
 
 label :: SnapshotLabel
 label = SnapshotLabel "Word64 ByteString ByteString"
@@ -176,7 +170,7 @@ rangeLookupWithBlobs :: forall h m k v b.
   => h m k v b
   -> Session h m
   -> Range k
-  -> m (V.Vector (QueryResult k v b))
+  -> m (V.Vector (Entry k v b))
 rangeLookupWithBlobs tbl ses r = do
     res <- rangeLookup tbl r
     getCompose <$> retrieveBlobsTrav (Proxy.Proxy @h) ses (Compose res)
@@ -190,7 +184,7 @@ readCursorWithBlobs :: forall h m k v b proxy.
   -> Session h m
   -> Cursor h m k v b
   -> Int
-  -> m (V.Vector (QueryResult k v b))
+  -> m (V.Vector (Entry k v b))
 readCursorWithBlobs tbl ses cursor n = do
     res <- readCursor tbl n cursor
     getCompose <$> retrieveBlobsTrav tbl ses (Compose res)
@@ -204,7 +198,7 @@ readCursorAllWithBlobs :: forall h m k v b proxy.
   -> Session h m
   -> Cursor h m k v b
   -> CursorReadSchedule
-  -> m [V.Vector (QueryResult k v b)]
+  -> m [V.Vector (Entry k v b)]
 readCursorAllWithBlobs tbl ses cursor = go . getCursorReadSchedule
   where
     go [] = error "readCursorAllWithBlobs: finite infinite list"
@@ -348,7 +342,7 @@ prop_readCursorInsert h ups ns k v = ioProperty $ do
       res <- withCursor Nothing tbl $ \cursor ->
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       return $ V.find (\r -> queryResultKey r == k) res
-           === Just (FoundInQuery k v)
+           === Just (Entry k v)
 
 -- | You can't read what you deleted.
 prop_readCursorDelete ::
@@ -420,15 +414,15 @@ evalRange :: Ord k => Range k -> k -> Bool
 evalRange (FromToExcluding lo hi) x = lo <= x && x < hi
 evalRange (FromToIncluding lo hi) x = lo <= x && x <= hi
 
-queryResultKey :: QueryResult k v b -> k
-queryResultKey (FoundInQuery k _)             = k
-queryResultKey (FoundInQueryWithBlob k _ _  ) = k
+queryResultKey :: Entry k v b -> k
+queryResultKey (Entry k _)             = k
+queryResultKey (EntryWithBlob k _ _  ) = k
 
-queryResultFromLookup :: k -> LookupResult v b -> Maybe (QueryResult k v b)
+queryResultFromLookup :: k -> LookupResult v b -> Maybe (Entry k v b)
 queryResultFromLookup k = \case
    NotFound -> Nothing
-   Found v -> Just (FoundInQuery k v)
-   FoundWithBlob v b -> Just (FoundInQueryWithBlob k v b)
+   Found v -> Just (Entry k v)
+   FoundWithBlob v b -> Just (EntryWithBlob k v b)
 
 -- | A range lookup behaves like many point lookups.
 prop_lookupRangeLikeLookups ::
@@ -463,11 +457,11 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
 
       res' <- rangeLookupWithBlobs tbl ses r
 
-      let p :: QueryResult Key Value b -> Bool
+      let p :: Entry Key Value b -> Bool
           p rlr = queryResultKey rlr /= k
 
       if evalRange r k
-      then return $ vsortOn queryResultKey (V.cons (FoundInQuery k v) (V.filter p res)) === res'
+      then return $ vsortOn queryResultKey (V.cons (Entry k v) (V.filter p res)) === res'
       else return $ res === res'
 
   where
@@ -654,9 +648,9 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
       res <- lookupsWithBlobs tbl1 ses $ V.fromList testKeys
 
-      let name = toSnapshotName "foo"
+      let name = R.toSnapshotName "foo"
 
-      createSnapshot label name tbl1
+      saveSnapshot name label tbl1
       updates tbl1 (V.fromList ups')
 
       withTableFromSnapshot @h ses label name$ \tbl2 -> do
@@ -673,8 +667,8 @@ prop_snapshotNoChanges2 :: forall h.
     -> [(Key, Update Value Blob)] -> [Key] -> Property
 prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
     withSessionAndTableNew h ups $ \sess tbl0 -> do
-      let name = toSnapshotName "foo"
-      createSnapshot label name tbl0
+      let name = R.toSnapshotName "foo"
+      saveSnapshot name label tbl0
 
       withTableFromSnapshot @h sess label name $ \tbl1 ->
         withTableFromSnapshot @h sess label name $ \tbl2 -> do

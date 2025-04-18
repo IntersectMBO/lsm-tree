@@ -20,10 +20,19 @@ if [ "${SKIP_CABAL_BUILD}" = "" ]; then
     fi
 fi
 cabal-docspec \
-    --extra-package directory \
-    --extra-package primitive \
-    --extra-package lsm-tree:prototypes \
+    -Wno-cpphs \
+    -Wno-missing-module-file \
+    -Wno-skipped-property \
+    -XDerivingStrategies \
+    -XDerivingVia \
+    -XGeneralisedNewtypeDeriving \
     -XOverloadedStrings \
-    -XNumericUnderscores \
+    -XRankNTypes \
     -XTypeApplications \
-    -XScopedTypeVariables
+    -XTypeFamilies \
+    -XNumericUnderscores \
+    -XInstanceSigs \
+    --extra-package directory \
+    --extra-package lsm-tree:prototypes \
+    --extra-package lsm-tree:blockio-api \
+    --extra-package lsm-tree:blockio-sim

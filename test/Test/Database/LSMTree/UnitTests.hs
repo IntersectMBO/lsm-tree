@@ -43,7 +43,7 @@ unit_blobs :: (String -> IO ()) -> Assertion
 unit_blobs info =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      table <- new @_ @ByteString @(ResolveAsFirst ByteString) @ByteString sess defaultTableConfig
+      table <- newTable @_ @ByteString @(ResolveAsFirst ByteString) @ByteString sess
       inserts table [("key1", ResolveAsFirst "value1", Just "blob1")]
 
       res <- lookups table ["key1"]
@@ -61,32 +61,32 @@ unit_closed_table :: Assertion
 unit_closed_table =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      table <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      table <- newTable @_ @Key1 @Value1 @Blob1 sess
       inserts table [(Key1 42, Value1 42, Nothing)]
       r1 <- lookups table [Key1 42]
       V.map ignoreBlobRef r1 @?= [Found (Value1 42)]
-      close table
-      -- Expect ErrTableClosed for operations after close
+      closeTable table
+      -- Expect ErrTableClosed for operations after closeTable
       assertException ErrTableClosed $
         lookups table [Key1 42] >> pure ()
       -- But closing again is idempotent
-      close table
+      closeTable table
 
 unit_closed_cursor :: Assertion
 unit_closed_cursor =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      table <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      table <- newTable @_ @Key1 @Value1 @Blob1 sess
       inserts table [(Key1 42, Value1 42, Nothing), (Key1 43, Value1 43, Nothing)]
       cur <- newCursor table
       -- closing the table should not affect the cursor
-      close table
-      r1 <- readCursor 1 cur
-      V.map ignoreBlobRef r1 @?= [FoundInQuery (Key1 42) (Value1 42)]
+      closeTable table
+      r1 <- next cur
+      fmap ignoreBlobRef r1 @?= Just (Entry (Key1 42) (Value1 42))
       closeCursor cur
       -- Expect ErrCursorClosed for operations after closeCursor
       assertException ErrCursorClosed $
-        readCursor 1 cur >> pure ()
+        next cur >> pure ()
       -- But closing again is idempotent
       closeCursor cur
 
@@ -98,8 +98,8 @@ unit_twoTableTypes =
             defaultTableConfig {
               confWriteBufferAlloc = AllocNumEntries (NumEntries 10)
             }
-      table1 <- new @_ @Key1 @Value1 @Blob1 sess tableConfig
-      table2 <- new @_ @Key2 @Value2 @Blob2 sess tableConfig
+      table1 <- newTableWith @_ @Key1 @Value1 @Blob1 tableConfig sess
+      table2 <- newTableWith @_ @Key2 @Value2 @Blob2 tableConfig sess
 
       kvs1 <- QC.generate (Map.fromList <$> QC.vectorOf 100 QC.arbitrary)
       kvs2 <- QC.generate (Map.fromList <$> QC.vectorOf 100 QC.arbitrary)
@@ -110,10 +110,10 @@ unit_twoTableTypes =
       inserts table1 ins1
       inserts table2 ins2
 
-      createSnapshot label1 snap1 table1
-      createSnapshot label2 snap2 table2
-      table1' <- openSnapshot @_ @Key1 @Value1 @Blob1 sess NoOverrideDiskCachePolicy label1 snap1
-      table2' <- openSnapshot @_ @Key2 @Value2 @Blob2 sess NoOverrideDiskCachePolicy label2 snap2
+      saveSnapshot snap1 label1 table1
+      saveSnapshot snap2 label2 table2
+      table1' <- openTableFromSnapshot @_ @Key1 @Value1 @Blob1 sess snap1 label1
+      table2' <- openTableFromSnapshot @_ @Key2 @Value2 @Blob2 sess snap2 label2
 
       vs1 <- lookups table1' ((\(k,_,_)->k) <$> ins1)
       vs2 <- lookups table2' ((\(k,_,_)->k) <$> ins2)
@@ -129,23 +129,23 @@ unit_snapshots :: Assertion
 unit_snapshots =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      table <- new @_ @Key1 @Value1 @Blob1 sess defaultTableConfig
+      table <- newTable @_ @Key1 @Value1 @Blob1 sess
 
       assertException (ErrSnapshotDoesNotExist snap2) $
         deleteSnapshot sess snap2
 
-      createSnapshot label1 snap1 table
+      saveSnapshot snap1 label1 table
       assertException (ErrSnapshotExists snap1) $
-        createSnapshot label1 snap1 table
+        saveSnapshot snap1 label1 table
 
       assertException (ErrSnapshotWrongLabel snap1
                         (SnapshotLabel "Key2 Value2 Blob2")
                         (SnapshotLabel "Key1 Value1 Blob1")) $ do
-        _ <- openSnapshot @_ @Key2 @Value2 @Blob2 sess NoOverrideDiskCachePolicy label2 snap1
+        _ <- openTableFromSnapshot @_ @Key2 @Value2 @Blob2 sess snap1 label2
         return ()
 
       assertException (ErrSnapshotDoesNotExist snap2) $ do
-        _ <- openSnapshot @_ @Key1 @Value1 @Blob1 sess NoOverrideDiskCachePolicy label2 snap2
+        _ <- openTableFromSnapshot @_ @Key1 @Value1 @Blob1 sess snap2 label2
         return ()
   where
     snap1, snap2 :: SnapshotName
@@ -157,11 +157,11 @@ unit_unions_1 :: Assertion
 unit_unions_1 =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
-    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+    withTable @_ @Key1 @Value1 @Blob1 sess $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
-      bracket (unions $ table :| []) close $ \table' ->
-        bracket (duplicate table) close $ \table'' -> do
+      bracket (unions $ table :| []) closeTable $ \table' ->
+        bracket (duplicate table) closeTable $ \table'' -> do
           inserts table' [(Key1 17, Value1 43, Nothing)]
           inserts table'' [(Key1 17, Value1 44, Nothing)]
 
@@ -182,7 +182,7 @@ unit_union_credits :: Assertion
 unit_union_credits =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
-    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+    withTable @_ @Key1 @Value1 @Blob1 sess $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
       -- The table is not the result of a union, so the debt is always 0,
@@ -198,10 +198,10 @@ unit_union_credit_0 :: Assertion
 unit_union_credit_0 =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
-    withTable @_ @Key1 @Value1 @Blob1 sess defaultTableConfig $ \table -> do
+    withTable @_ @Key1 @Value1 @Blob1 sess $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
-      bracket (table `union` table) close $ \table' -> do
+      bracket (table `union` table) closeTable $ \table' -> do
         -- Supplying 0 credits works and returns 0 leftovers.
         UnionCredits leftover <- supplyUnionCredits table' (UnionCredits 0)
         leftover @?= 0
@@ -220,7 +220,7 @@ unit_union_blobref_invalidation :: Assertion
 unit_union_blobref_invalidation =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
-      t1 <- new @_ @Key1 @Value1 @Blob1 sess config
+      t1 <- newTableWith @_ @Key1 @Value1 @Blob1 config sess
       for_ ([0..99] :: [Word64]) $ \i ->
         inserts t1 [(Key1 i, Value1 i, Just (Blob1 i))]
       t2 <- t1 `union` t1
@@ -231,22 +231,16 @@ unit_union_blobref_invalidation =
       -- progress original table (supplying merge credits would be most direct),
       -- so merges complete
       inserts t1 (fmap (\i -> (Key1 i, Value1 i, Nothing)) [1000..2000])
-      -- close it, so it doesn't hold open extra references
-      close t1
+      -- closeTable it, so it doesn't hold open extra references
+      closeTable t1
 
       -- try to resolve the blob refs we obtained earlier
-      _blobs <- retrieveBlobs sess (V.mapMaybe getBlobRef res)
+      _blobs <- retrieveBlobs sess (V.mapMaybe R.getBlob res)
       return ()
   where
     config = defaultTableConfig {
         confWriteBufferAlloc = AllocNumEntries (NumEntries 4)
       }
-
-getBlobRef :: LookupResult v b -> Maybe b
-getBlobRef = \case
-  NotFound          -> Nothing
-  Found _           -> Nothing
-  FoundWithBlob _ b -> Just b
 
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())

@@ -109,8 +109,7 @@ lookup (WB !m) !k = Map.lookup k m
   RangeQueries
 -------------------------------------------------------------------------------}
 
--- | We return 'Entry' instead of either @QueryResult@,
--- so we can properly combine lookup results.
+-- | We return 'Entry' so we can properly combine lookup results.
 --
 -- Note: 'Delete's are not filtered out.
 --

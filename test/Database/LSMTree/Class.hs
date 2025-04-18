@@ -20,14 +20,14 @@ import           Data.Kind (Constraint, Type)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Typeable (Proxy (..))
 import qualified Data.Vector as V
-import           Database.LSMTree as Types (LookupResult (..), QueryResult (..),
-                     ResolveAsFirst (..), ResolveValue (..), Update (..),
-                     resolveDeserialised)
+import           Database.LSMTree as Types (Entry (..), LookupResult (..),
+                     ResolveAsFirst (..), ResolveValue (..), Update (..))
 import qualified Database.LSMTree as R
 import           Database.LSMTree.Class.Common as Common
-import qualified Database.LSMTree.Internal as RI (SessionEnv (..), Table (..),
-                     Table' (..), withOpenSession)
 import qualified Database.LSMTree.Internal.Paths as RIP
+import qualified Database.LSMTree.Internal.Types as RT (Table (..))
+import qualified Database.LSMTree.Internal.Unsafe as RU (SessionEnv (..),
+                     Table (..), withOpenSession)
 import           Test.Util.FS (flipRandomBitInRandomFileHardlinkSafe)
 import           Test.Util.QC (Choice)
 
@@ -69,7 +69,7 @@ class (IsSession (Session h)) => IsTable h where
            )
         => h m k v b
         -> Range k
-        -> m (V.Vector (QueryResult k v (BlobRef h m b)))
+        -> m (V.Vector (Entry k v (BlobRef h m b)))
 
     newCursor ::
            ( IOLike m
@@ -94,7 +94,7 @@ class (IsSession (Session h)) => IsTable h where
         => proxy h
         -> Int
         -> Cursor h m k v b
-        -> m (V.Vector (QueryResult k v (BlobRef h m b)))
+        -> m (V.Vector (Entry k v (BlobRef h m b)))
 
     retrieveBlobs ::
            ( IOLike m
@@ -137,12 +137,12 @@ class (IsSession (Session h)) => IsTable h where
         -> V.Vector (k, v)
         -> m ()
 
-    createSnapshot ::
+    saveSnapshot ::
            ( IOLike m
            , C k v b
            )
-        => SnapshotLabel
-        -> SnapshotName
+        => SnapshotName
+        -> SnapshotLabel
         -> h m k v b
         -> m ()
 
@@ -154,13 +154,13 @@ class (IsSession (Session h)) => IsTable h where
         -> h m k v b
         -> m ()
 
-    openSnapshot ::
+    openTableFromSnapshot ::
            ( IOLike m
            , C k v b
            )
         => Session h m
-        -> SnapshotLabel
         -> SnapshotName
+        -> SnapshotLabel
         -> m (h m k v b)
 
     duplicate ::
@@ -215,7 +215,7 @@ withTableFromSnapshot :: forall h m k v b a.
   -> SnapshotName
   -> (h m k v b -> m a)
   -> m a
-withTableFromSnapshot sesh label snap = bracket (openSnapshot sesh label snap) close
+withTableFromSnapshot sesh label snap = bracket (openTableFromSnapshot sesh snap label) close
 
 withTableDuplicate :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
@@ -259,10 +259,10 @@ rCorruptSnapshot ::
    -> SnapshotName
    -> R.Table m k v b
    -> m ()
-rCorruptSnapshot choice name (RI.Table' t) =
-   RI.withOpenSession (RI.tableSession t) $ \seshEnv ->
-      let hfs = RI.sessionHasFS seshEnv
-          root = RI.sessionRoot seshEnv
+rCorruptSnapshot choice name (RT.Table t) =
+   RU.withOpenSession (RU.tableSession t) $ \seshEnv ->
+      let hfs = RU.sessionHasFS seshEnv
+          root = RU.sessionRoot seshEnv
           namedSnapDir = RIP.getNamedSnapshotDir (RIP.namedSnapshotDir root name)
        in void $ flipRandomBitInRandomFileHardlinkSafe hfs choice namedSnapDir
 
@@ -272,28 +272,28 @@ instance IsTable R.Table where
     type BlobRef R.Table = R.BlobRef
     type Cursor R.Table = R.Cursor
 
-    new = R.new
-    close = R.close
+    new = flip R.newTableWith
+    close = R.closeTable
     lookups = R.lookups
     updates = R.updates
     inserts = R.inserts
     deletes = R.deletes
-    mupserts = R.mupserts
+    mupserts = R.upserts
 
     rangeLookup = R.rangeLookup
     retrieveBlobs _ = R.retrieveBlobs
 
-    newCursor = maybe R.newCursor R.newCursorAtOffset
+    newCursor = maybe R.newCursor (flip R.newCursorAtOffset)
     closeCursor _ = R.closeCursor
-    readCursor _ = R.readCursor
+    readCursor _ = R.take
 
-    createSnapshot = R.createSnapshot
+    saveSnapshot = R.saveSnapshot
     corruptSnapshot = rCorruptSnapshot
-    openSnapshot sesh snap = R.openSnapshot sesh R.NoOverrideDiskCachePolicy snap
+    openTableFromSnapshot = R.openTableFromSnapshot
 
     duplicate = R.duplicate
 
-    union = R.union
-    unions = R.unions
+    union = R.incrementalUnion
+    unions = R.incrementalUnions
     remainingUnionDebt = R.remainingUnionDebt
     supplyUnionCredits = R.supplyUnionCredits

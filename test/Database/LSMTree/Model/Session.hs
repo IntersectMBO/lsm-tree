@@ -47,7 +47,7 @@ module Database.LSMTree.Model.Session (
   , Range (..)
   , LookupResult (..)
   , lookups
-  , QueryResult (..)
+  , Entry (..)
   , rangeLookup
     -- ** Cursor
   , Cursor
@@ -68,8 +68,8 @@ module Database.LSMTree.Model.Session (
   , invalidateBlobRefs
     -- * Snapshots
   , SnapshotName
-  , createSnapshot
-  , openSnapshot
+  , saveSnapshot
+  , openTableFromSnapshot
   , corruptSnapshot
   , deleteSnapshot
   , listSnapshots
@@ -102,12 +102,12 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import qualified Data.Vector as V
 import           Data.Word
-import           Database.LSMTree.Common (SerialiseKey (..),
-                     SerialiseValue (..), SnapshotLabel (..), SnapshotName,
-                     UnionCredits (..), UnionDebt (..))
-import           Database.LSMTree.Model.Table (LookupResult (..),
-                     QueryResult (..), Range (..), ResolveSerialisedValue (..),
-                     Update (..), getResolve, noResolve)
+import           Database.LSMTree (SerialiseKey (..), SerialiseValue (..),
+                     SnapshotLabel (..), SnapshotName, UnionCredits (..),
+                     UnionDebt (..))
+import           Database.LSMTree.Model.Table (Entry (..), LookupResult (..),
+                     Range (..), ResolveSerialisedValue (..), Update (..),
+                     getResolve, noResolve)
 import qualified Database.LSMTree.Model.Table as Model
 
 {-------------------------------------------------------------------------------
@@ -416,7 +416,7 @@ rangeLookup ::
      )
   => Range k
   -> Table k v b
-  -> m (V.Vector (Model.QueryResult k v (BlobRef b)))
+  -> m (V.Vector (Model.Entry k v (BlobRef b)))
 rangeLookup r t = do
     (updc, table) <- guardTableIsOpen t
     pure $ liftBlobRefs (SomeTableID updc (tableID t)) $ Model.rangeLookup r table
@@ -484,7 +484,7 @@ mupserts ::
   -> V.Vector (k, v)
   -> Table k v b
   -> m ()
-mupserts r = updates r . fmap (fmap Model.Mupsert)
+mupserts r = updates r . fmap (fmap Model.Upsert)
 
 {-------------------------------------------------------------------------------
   Blobs
@@ -575,16 +575,16 @@ data Snapshot = Snapshot
   }
   deriving stock Show
 
-createSnapshot ::
+saveSnapshot ::
      ( MonadState Model m
      , MonadError Err m
      , C k v b
      )
-  => SnapshotLabel
-  -> SnapshotName
+  => SnapshotName
+  -> SnapshotLabel
   -> Table k v b
   -> m ()
-createSnapshot label name t@Table{..} = do
+saveSnapshot name label t@Table{..} = do
     (_updc, table) <- guardTableIsOpen t
     snaps <- gets snapshots
     when (Map.member name snaps) $
@@ -598,16 +598,16 @@ createSnapshot label name t@Table{..} = do
         snapshots = Map.insert name snap (snapshots m)
       })
 
-openSnapshot ::
+openTableFromSnapshot ::
      forall k v b m.(
        MonadState Model m
      , MonadError Err m
      , C k v b
      )
-  => SnapshotLabel
-  -> SnapshotName
+  => SnapshotName
+  -> SnapshotLabel
   -> m (Table k v b)
-openSnapshot label name = do
+openTableFromSnapshot name label = do
     snaps <- gets snapshots
     case Map.lookup name snaps of
       Nothing ->
@@ -625,7 +625,7 @@ openSnapshot label name = do
             -- errors. The model simply does not allow this to occur: if we fail
             -- to cast modelled tables, then we consider it to be a bug in the
             -- test setup, and so we use @error@ instead of @throwError@.
-            error "openSnapshot: snapshot opened at wrong type"
+            error "openTableFromSnapshot: snapshot opened at wrong type"
           Just table' ->
             newTableWith conf snapshotIsUnion table'
 
@@ -730,7 +730,7 @@ readCursor ::
      )
   => Int
   -> Cursor k v b
-  -> m (V.Vector (Model.QueryResult k v (BlobRef b)))
+  -> m (V.Vector (Model.Entry k v (BlobRef b)))
 readCursor n c = do
     cursor <- guardCursorIsOpen c
     let (qrs, cursor') = Model.readCursor n cursor

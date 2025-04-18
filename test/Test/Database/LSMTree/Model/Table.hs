@@ -5,8 +5,8 @@ module Test.Database.LSMTree.Model.Table (tests) where
 
 import qualified Data.ByteString as BS
 import qualified Data.Vector as V
-import           Database.LSMTree (ResolveValue (..), resolveDeserialised)
-import           Database.LSMTree.Common
+import           Database.LSMTree (ResolveValue (..), ResolveViaSemigroup (..),
+                     SerialiseKey (..), SerialiseValue (..))
 import           Database.LSMTree.Model.Table (LookupResult (..), Table,
                      Update (..), lookups)
 import qualified Database.LSMTree.Model.Table as Model
@@ -29,13 +29,8 @@ type Key = BS.ByteString
 
 newtype Value = Value BS.ByteString
   deriving stock (Eq, Show)
-  deriving newtype (Arbitrary, SerialiseValue)
-
-instance ResolveValue Value where
-    resolveValue = resolveDeserialised resolve
-
-resolve :: Value -> Value -> Value
-resolve (Value x) (Value y) = Value (x <> y)
+  deriving newtype (Arbitrary, Semigroup, SerialiseValue)
+  deriving ResolveValue via (ResolveViaSemigroup Value)
 
 type Blob = BS.ByteString
 
@@ -73,7 +68,7 @@ prop_insertInsert k v1 v2 tbl =
 -- Note: the order of merge.
 prop_upsertInsert :: Key -> Value -> Value -> Tbl -> Property
 prop_upsertInsert k v1 v2 tbl =
-    updates (V.fromList [(k, Insert v1 Nothing), (k, Mupsert v2)]) tbl
+    updates (V.fromList [(k, Insert v1 Nothing), (k, Upsert v2)]) tbl
       === inserts (V.singleton (k, resolve v2 v1, Nothing)) tbl
 
 -- | Upsert is the same as lookup followed by an insert.
