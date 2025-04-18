@@ -1,7 +1,7 @@
-cabal-version:   3.4
-name:            lsm-tree
-version:         0.1.0.0
-synopsis:        Log-structured merge-trees
+cabal-version:      3.4
+name:               lsm-tree
+version:            0.1.0.0
+synopsis:           Log-structured merge-trees
 description:
   This package contains an efficient implementation of on-disk key–value storage, implemented as a log-structured merge-tree or LSM-tree.
   An LSM-tree is a data structure for key–value mappings, similar to "Data.Map", but optimized for large tables with a high insertion volume.
@@ -195,21 +195,29 @@ description:
       \"Constructing and analyzing the LSM compaction design space.\"
       [doi:10.14778/3476249.3476274](https://doi.org/10.14778/3476249.3476274)
 
-license:         Apache-2.0
-license-file:    LICENSE
+license:            Apache-2.0
+license-file:       LICENSE
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:      TODO: MAINTAINER EMAIL
+maintainer:         TODO: MAINTAINER EMAIL
 copyright:
   (c) 2023 Input Output Global, Inc. (IOG)
   (c) 2023-2025 INTERSECT
 
-category:        Database
-build-type:      Simple
-extra-doc-files: CHANGELOG.md
+category:           Database
+build-type:         Simple
 tested-with:
   GHC ==8.10 || ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
+
+extra-doc-files:    CHANGELOG.md
+extra-source-files:
+  xxhash/include/HsXXHash.h
+  xxhash/xxHash-0.8.2/xxhash.h
+
+license-files:
+  bloomfilter/LICENSE-bloomfilter
+  xxhash/xxHash-0.8.2/LICENSE-xxHash
 
 source-repository head
   type:     git
