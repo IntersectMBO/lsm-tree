@@ -26,7 +26,7 @@ fi >&2
 hs_files=$(
     git ls-files \
         --exclude-standard --no-deleted --deduplicate \
-        'src/**/*.hs'
+        'src/*.hs' 'src/**/*.hs'
 )
 absent=$(
     "$absence_finder" $hs_files
