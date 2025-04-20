@@ -1,12 +1,12 @@
 #! /usr/bin/env sh
 
+absence_allowed_file=scripts/io-specialisations/absence-allowed
+absence_finder=scripts/io-specialisations/find-absent.sh
+
 set -e
 
 IFS='
 '
-
-absence_allowed_file=scripts/io-specialisations/absence-allowed
-absence_finder=scripts/io-specialisations/find-absent.sh
 
 export LC_COLLATE=C LC_TYPE=C
 
