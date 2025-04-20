@@ -9,7 +9,7 @@
 #     set. For example, the following command will check all Haskell
 #     source files of the main library:
 #
-#         scripts/find-missing-io-specialisations.sh src/**/*.hs
+#         scripts/io-specialisations/find-absent.sh src/**/*.hs
 #
 #   * The results of this utility are not reliable, but should generally
 #     be correct for “reasonably styled” code. One important restriction
@@ -40,7 +40,7 @@ specialise='SPECIALI[SZ]E'
 pragma_types="($specialise|INLINE)"
 hic='[[:alnum:]_#]' # Haskell identifier character
 
-LC_COLLATE=C LC_CTYPE=C sed -En '
+LC_COLLATE=C LC_CTYPE=C sed -En -e '
     :start
     # Process the first line of a module header
     /^module / {
@@ -94,7 +94,7 @@ LC_COLLATE=C LC_CTYPE=C sed -En '
             s/([^ ]* '"$hic"'*\n'"$hic"'+).*(=>|->)( |\n)*/\1 /
             # Handle the case of a monadic result type
             /^[^ ]* '"$hic"'*\n[^ ]+ m / {
-                # Handle the case of a missing pragma
+                # Handle the case of pragma absence
                 /^[^ ]* ('"$hic"'*)\n\1 / !{
                     s/([^ ]*) '"$hic"'*\n([^ ]+).*/\1.\2/p
                     s/\.[^.]+$/ /
