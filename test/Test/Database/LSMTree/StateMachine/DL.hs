@@ -68,7 +68,7 @@ dl_example = do
     var3 <- action $ Action Nothing $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
           confMergePolicy = MergePolicyLazyLevelling
         , confSizeRatio = Four
-        , confWriteBufferAlloc = AllocNumEntries (NumEntries 4)
+        , confWriteBufferAlloc = AllocNumEntries 4
         , confBloomFilterAlloc = AllocFixed 10
         , confFencePointerIndex = OrdinaryIndex
         , confDiskCachePolicy = DiskCacheNone

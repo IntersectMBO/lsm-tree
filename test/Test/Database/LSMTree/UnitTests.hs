@@ -96,7 +96,7 @@ unit_twoTableTypes =
     withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
       let tableConfig =
             defaultTableConfig {
-              confWriteBufferAlloc = AllocNumEntries (NumEntries 10)
+              confWriteBufferAlloc = AllocNumEntries 10
             }
       table1 <- newTableWith @_ @Key1 @Value1 @Blob1 tableConfig sess
       table2 <- newTableWith @_ @Key2 @Value2 @Blob2 tableConfig sess
@@ -239,7 +239,7 @@ unit_union_blobref_invalidation =
       return ()
   where
     config = defaultTableConfig {
-        confWriteBufferAlloc = AllocNumEntries (NumEntries 4)
+        confWriteBufferAlloc = AllocNumEntries 4
       }
 
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()

@@ -113,7 +113,7 @@ import           Database.LSMTree.Internal.Config.Override
 import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
                      FileFormat (..))
 import qualified Database.LSMTree.Internal.Cursor as Cursor
-import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..))
+import           Database.LSMTree.Internal.Entry (Entry)
 import           Database.LSMTree.Internal.IncomingRun (IncomingRun (..))
 import           Database.LSMTree.Internal.Lookup (TableCorruptedError (..),
                      lookupsIO, lookupsIOWithWriteBuffer)
@@ -1734,7 +1734,7 @@ supplyUnionCredits resolve t credits = do
             pure (max 0 credits)  -- all leftovers (but never negative)
           Union mt _ -> do
             let conf = tableConfig t
-            let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
+            let AllocNumEntries x = confWriteBufferAlloc conf
             -- We simply use the write buffer size as merge credit threshold, as
             -- the regular level merges also do.
             -- TODO: pick a more suitable threshold or make configurable?

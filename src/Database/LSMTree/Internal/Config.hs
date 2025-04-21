@@ -31,7 +31,6 @@ module Database.LSMTree.Internal.Config (
 
 import           Control.DeepSeq (NFData (..))
 import           Data.Word (Word64)
-import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (IndexType)
 import qualified Database.LSMTree.Internal.Index as Index
                      (IndexType (Compact, Ordinary))
@@ -85,7 +84,7 @@ defaultTableConfig =
     TableConfig
       { confMergePolicy       = MergePolicyLazyLevelling
       , confSizeRatio         = Four
-      , confWriteBufferAlloc  = AllocNumEntries (NumEntries 20_000)
+      , confWriteBufferAlloc  = AllocNumEntries 20_000
       , confBloomFilterAlloc  = defaultBloomFilterAlloc
       , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
@@ -141,7 +140,7 @@ data WriteBufferAlloc =
     --
     -- NOTE: if the sizes of values vary greatly, this can lead to wonky runs on
     -- disk, and therefore unpredictable performance.
-    AllocNumEntries !NumEntries
+    AllocNumEntries !Int
   deriving stock (Show, Eq)
 
 instance NFData WriteBufferAlloc where

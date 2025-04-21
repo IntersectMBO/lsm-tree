@@ -240,7 +240,6 @@ runOptsP = pure RunOpts
 
 deriving stock instance Read LSM.DiskCachePolicy
 deriving stock instance Read LSM.BloomFilterAlloc
-deriving stock instance Read LSM.NumEntries
 
 -------------------------------------------------------------------------------
 -- measurements

@@ -15,7 +15,6 @@ import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
 import           Database.LSMTree.Internal.MergingRun
 import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
@@ -159,7 +158,6 @@ testAll test = [
     , test (Proxy @MergePolicy)
     , test (Proxy @SizeRatio)
     , test (Proxy @WriteBufferAlloc)
-    , test (Proxy @NumEntries)
     , test (Proxy @BloomFilterAlloc)
     , test (Proxy @FencePointerIndexType)
     , test (Proxy @DiskCachePolicy)
