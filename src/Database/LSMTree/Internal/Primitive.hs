@@ -3,7 +3,9 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
 module Database.LSMTree.Internal.Primitive (
-    indexWord8ArrayAsWord16
+    byteSwapInt
+  , indexWord8ArrayAsInt
+  , indexWord8ArrayAsWord16
   , indexWord8ArrayAsWord32
   , indexWord8ArrayAsWord64
   ) where
@@ -11,6 +13,15 @@ module Database.LSMTree.Internal.Primitive (
 import           Data.Primitive.ByteArray (ByteArray (..))
 import           GHC.Exts
 import           GHC.Word
+
+{-# INLINE byteSwapInt #-}
+byteSwapInt :: Int -> Int
+byteSwapInt (I# i#) = I# (word2Int# (byteSwap# (int2Word# i#)))
+
+{-# INLINE indexWord8ArrayAsInt #-}
+indexWord8ArrayAsInt :: ByteArray -> Int -> Int
+indexWord8ArrayAsInt (ByteArray !ba#) (I# !off#) =
+  I# (indexWord8ArrayAsInt# ba# off#)
 
 {-# INLINE indexWord8ArrayAsWord16 #-}
 indexWord8ArrayAsWord16 :: ByteArray -> Int -> Word16

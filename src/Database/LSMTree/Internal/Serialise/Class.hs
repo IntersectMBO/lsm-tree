@@ -28,7 +28,7 @@ import qualified Data.Vector.Primitive as VP
 import           Data.Void (Void, absurd)
 import           Data.Word
 import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
-import           Database.LSMTree.Internal.Primitive (indexWord8ArrayAsWord64)
+import           Database.LSMTree.Internal.Primitive
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Vector
@@ -134,6 +134,22 @@ requireBytesExactly tyName expected actual x
       . showString " bytes, but got "
       . showInt actual
       $ ""
+
+{-------------------------------------------------------------------------------
+  Int
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey Int where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int" 8 len $ byteSwapInt (indexWord8ArrayAsInt ba off)
+
+instance SerialiseValue Int where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int" 8 len $ indexWord8ArrayAsInt ba off
 
 {-------------------------------------------------------------------------------
   Word64

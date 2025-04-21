@@ -602,6 +602,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.WriteBufferBlobs.FS
     Test.Database.LSMTree.Internal.WriteBufferReader.FS
     Test.Database.LSMTree.Model.Table
+    Test.Database.LSMTree.Parallel
     Test.Database.LSMTree.Resolve
     Test.Database.LSMTree.StateMachine
     Test.Database.LSMTree.StateMachine.DL

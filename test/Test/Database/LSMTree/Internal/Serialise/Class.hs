@@ -18,7 +18,8 @@ import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Serialise.Class"
-    [ testGroup "Word64"          (allProperties @Word64 True)
+    [ testGroup "Int"             (allProperties @Int False)
+    , testGroup "Word64"          (allProperties @Word64 True)
     , testGroup "ByteString"      (allProperties @ByteString True)
     , testGroup "LazyByteString"  (allProperties @LazyByteString True)
     , testGroup "ShortByteString" (allProperties @ShortByteString True)
