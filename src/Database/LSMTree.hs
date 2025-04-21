@@ -1449,7 +1449,11 @@ withUnions tables =
   bracket (unions tables) closeTable
 
 {- |
-Create a table that contains the left-biased union of the entries of the given tables.
+Create a table that contains the union of the entries of the given tables.
+
+If the given key is a member of a single input table, then the same key and value occur in the output table.
+Otherwise, the values for duplicate keys are combined using 'resolve' from left to right.
+If the 'resolve' function behaves like 'const', then this computes a left-biased union.
 
 The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
@@ -1651,7 +1655,7 @@ _withInternalTables (Table (table :: Internal.Table m h) :| tables) action =
 Get the amount of remaining union debt.
 This includes the union debt of any table that was part of the union's input.
 
-The worst-case disk I\/O complexity of this operation is \(O\(1)\).
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
 -}
 {-# SPECIALISE
   remainingUnionDebt ::
@@ -1668,6 +1672,12 @@ remainingUnionDebt (Table table) =
 
 {- |
 Supply the given amount of union credits.
+
+This reduces the union debt by /at least/ the number of supplied union credits.
+It is therefore advisable to query 'remainingUnionDebt' every once in a while to see what the current debt is.
+
+This function returns any surplus of union credits as /leftover/ credits when a union has finished.
+In particular, if the returned number of credits is positive, then the union is finished.
 
 The worst-case disk I\/O complexity of this operation is \(O(b)\),
 where the variable \(b\) refers to the amount of credits supplied.

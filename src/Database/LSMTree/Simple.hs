@@ -1099,6 +1099,12 @@ remainingUnionDebt (Table table) =
 {- |
 Supply the given amount of union credits.
 
+This reduces the union debt by /at least/ the number of supplied union credits.
+It is therefore advisable to query 'remainingUnionDebt' every once in a while to see what the current debt is.
+
+This function returns any surplus of union credits as /leftover/ credits when a union has finished.
+In particular, if the returned number of credits is positive, then the union is finished.
+
 The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
 where the variable \(b\) refers to the amount of credits supplied.
 
