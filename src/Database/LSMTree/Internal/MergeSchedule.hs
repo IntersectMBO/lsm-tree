@@ -3,11 +3,6 @@
 {-# LANGUAGE UnboxedTuples #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
-#if !(MIN_VERSION_GLASGOW_HASKELL(9,0,0,0))
--- Fix for ghc 8.10.x with deriving newtype Prim
-{-# LANGUAGE DataKinds     #-}
-#endif
-
 -- TODO: establish that this implementation matches up with the ScheduledMerges
 -- prototype. See lsm-tree#445.
 module Database.LSMTree.Internal.MergeSchedule (

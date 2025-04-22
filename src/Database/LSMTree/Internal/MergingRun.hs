@@ -479,9 +479,7 @@ pattern CreditsPair :: SpentCredits -> UnspentCredits -> Int
 pattern CreditsPair sc uc <- (unpackCreditsPair -> (sc, uc))
   where
     CreditsPair sc uc = packCreditsPair sc uc
-#if MIN_VERSION_GLASGOW_HASKELL(9,2,0,0)
 {-# INLINE CreditsPair #-}
-#endif
 {-# COMPLETE CreditsPair #-}
 
 {-# INLINE packCreditsPair #-}

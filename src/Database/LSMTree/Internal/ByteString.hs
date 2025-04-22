@@ -54,7 +54,7 @@ tryGetByteArray :: BS.ByteString -> Either String (ByteArray, Int)
 tryGetByteArray (BS.Internal.BS (Foreign.ForeignPtr addr# contents) n) =
     case contents of
       Foreign.PlainPtr mba# ->
-        case mutableByteArrayContentsShim# mba# `eqAddr#` addr# of
+        case mutableByteArrayContents# mba# `eqAddr#` addr# of
           0# -> Left "non-zero offset into ByteArray"
           _  -> -- safe, ByteString's content is considered immutable
                 Right $ case unsafeFreezeByteArray# mba# realWorld# of
@@ -63,23 +63,11 @@ tryGetByteArray (BS.Internal.BS (Foreign.ForeignPtr addr# contents) n) =
         Left ("unsupported MallocPtr (length " <> show n <> ")")
       Foreign.PlainForeignPtr {} ->
         Left ("unsupported PlainForeignPtr (length " <> show n <> ")")
-#if __GLASGOW_HASKELL__ >= 902
       Foreign.FinalPtr | n == 0 ->
         -- We can also handle empty bytestrings ('BS.empty' uses 'FinalPtr').
         Right (emptyByteArray, 0)
       Foreign.FinalPtr ->
         Left ("unsupported FinalPtr (length "  <> show n <> ")")
-#endif
-
--- | Copied from the @primitive@ package
-mutableByteArrayContentsShim# :: MutableByteArray# s -> Addr#
-{-# INLINE mutableByteArrayContentsShim# #-}
-mutableByteArrayContentsShim# x =
-#if __GLASGOW_HASKELL__ >= 902
-  mutableByteArrayContents# x
-#else
-  byteArrayContents# (unsafeCoerce# x)
-#endif
 
 -- | Copy of 'SBS.shortByteString', but with bounds (unchecked).
 --

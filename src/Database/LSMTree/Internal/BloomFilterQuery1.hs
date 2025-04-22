@@ -42,37 +42,13 @@ type RunIx = Int
 --
 newtype RunIxKeyIx = MkRunIxKeyIx Word32
   deriving stock Eq
-#if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)
   deriving newtype P.Prim
-#else
-instance P.Prim RunIxKeyIx where
-    sizeOfType# _ = 4#
-    alignmentOfType# _ = 4#
-
-    indexByteArray# ba i =
-      MkRunIxKeyIx (P.indexByteArray# ba i)
-    readByteArray# ba i s =
-      case P.readByteArray# ba i s of
-        (# s', w #) -> (# s', MkRunIxKeyIx w #)
-    writeByteArray# ba i (MkRunIxKeyIx w) s =
-      P.writeByteArray# ba i w s
-
-    indexOffAddr# ba i =
-      MkRunIxKeyIx (P.indexOffAddr# ba i)
-    readOffAddr# ba i s =
-      case P.readOffAddr# ba i s of
-        (# s', w #) -> (# s', MkRunIxKeyIx w #)
-    writeOffAddr# ba i (MkRunIxKeyIx w) s =
-      P.writeOffAddr# ba i w s
-#endif
 
 pattern RunIxKeyIx :: RunIx -> KeyIx -> RunIxKeyIx
 pattern RunIxKeyIx r k <- (unpackRunIxKeyIx -> (r, k))
   where
     RunIxKeyIx r k = packRunIxKeyIx r k
-#if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)
 {-# INLINE RunIxKeyIx #-}
-#endif
 {-# COMPLETE RunIxKeyIx #-}
 
 packRunIxKeyIx :: Int -> Int -> RunIxKeyIx

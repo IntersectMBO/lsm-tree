@@ -158,7 +158,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest", "macOS-latest", "windows-latest"]
-        ghc-version: ["8.10", "9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
+        ghc-version: ["9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
         cabal-version: ["3.12"]
         # The inclusion of these default keys in the matrix ensures that any
         # entry under include that assigns these keys creates a new matrix entry
@@ -166,16 +166,8 @@ jobs:
         cabal-project-file: [""]
         cabal-documentation: [false]
 
-        exclude:
-          # GHC 8.10 is not supported on macOS wit ARM CPU
-          - ghc-version: "8.10"
-            os: "macOS-latest"
-
         include:
           # Include builds for various special cases
-          - name: "Build on macOS with Intel CPU and GHC 8.10"
-            os: "macOS-13"
-            ghc-version: "8.10"
           - name: "Build with +serialblockio"
             os: "ubuntu-latest"
             cabal-flags: "+serialblockio"
