@@ -153,17 +153,17 @@ data Bloom a = Bloom {
     , numHashes :: {-# UNPACK #-} !Int
     , bitArray  :: {-# UNPACK #-} !BitArray
     }
-  deriving Eq
+  deriving stock Eq
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
 bloomInvariant Bloom { numBlocks, bitArray = BitArray.BitArray pa } =
-    fromIntegral numBlocks * 8 == sizeofPrimArray pa
+    numBlocks * 8 == sizeofPrimArray pa
 
 instance Show (Bloom a) where
     show mb = "Bloom { " ++ show numBits ++ " bits } "
       where
-        numBits = blocksToBits (fromIntegral (numBlocks mb))
+        numBits = blocksToBits (numBlocks mb)
 
 instance NFData (Bloom a) where
     rnf !_ = ()

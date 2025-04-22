@@ -45,7 +45,7 @@ import           GHC.ST (ST (ST))
 -- so that multiple accesses within a single block will use only one cache line.
 --
 newtype BitArray = BitArray (PrimArray Word64)
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | The number of 512-bit blocks for the given number of bits. This rounds
 -- up to the nearest multiple of 512.
