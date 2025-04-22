@@ -407,7 +407,7 @@ test-suite xxhash-tests
 
 -- this fork doesn't work on 32bit systems
 library bloomfilter
-  import:          language
+  import:          language, warnings
   visibility:      private
   hs-source-dirs:  bloomfilter/src
   build-depends:
@@ -431,7 +431,7 @@ library bloomfilter
     Data.BloomFilter.Classic.Calc
     Data.BloomFilter.Classic.Internal
 
-  ghc-options:     -O2 -Wall
+  ghc-options:     -O2
 
 test-suite bloomfilter-tests
   import:         language, warnings

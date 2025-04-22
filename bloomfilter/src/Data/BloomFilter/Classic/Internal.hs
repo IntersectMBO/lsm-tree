@@ -167,7 +167,7 @@ data Bloom a = Bloom {
     , numHashes :: {-# UNPACK #-} !Int
     , bitArray  :: {-# UNPACK #-} !BitArray
     }
-  deriving Eq
+  deriving stock Eq
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
@@ -305,7 +305,6 @@ word64ToWordShim# x# = x#
 --
 -- See 'evalHashes'.
 data Hashes a = Hashes !Hash !Hash
-  deriving Show
 type role Hashes nominal
 
 instance Prim (Hashes a) where

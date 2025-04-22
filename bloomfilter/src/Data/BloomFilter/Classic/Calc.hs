@@ -43,7 +43,7 @@ data BloomPolicy = BloomPolicy {
        policyBits   :: !Double,
        policyHashes :: !Int
      }
-  deriving Show
+  deriving stock Show
 
 policyForFPR :: FPR -> BloomPolicy
 policyForFPR fpr | fpr <= 0 || fpr >= 1 =
@@ -96,7 +96,7 @@ data BloomSize = BloomSize {
                    -- | The number of hash functions to use.
                    sizeHashes :: !Int
                  }
-  deriving Show
+  deriving stock Show
 
 sizeForFPR :: FPR -> NumEntries -> BloomSize
 sizeForFPR = sizeForPolicy . policyForFPR

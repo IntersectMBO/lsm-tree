@@ -169,7 +169,7 @@ data Bloom a = Bloom {
     , numHashes :: {-# UNPACK #-} !Int
     , bitArray  :: {-# UNPACK #-} !BitArray
     }
-  deriving Eq
+  deriving stock Eq
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool

@@ -32,7 +32,7 @@ import           GHC.ST (ST (ST))
 --
 -- This vector's offset and length are multiples of 64
 newtype BitArray = BitArray (PrimArray Word64)
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 {-# INLINE unsafeIndex #-}
 unsafeIndex :: BitArray -> Int -> Bool

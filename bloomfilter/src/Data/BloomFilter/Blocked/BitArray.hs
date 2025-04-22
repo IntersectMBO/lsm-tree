@@ -46,7 +46,7 @@ import           GHC.ST (ST (ST))
 -- so that multiple accesses within a single block will use only one cache line.
 --
 newtype BitArray = BitArray (PrimArray Word64)
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | Blocks are 512 bits, 64 bytes.
 newtype NumBlocks = NumBlocks Int
