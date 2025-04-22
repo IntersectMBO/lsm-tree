@@ -23,7 +23,6 @@ module Data.BloomFilter.Hash (
 
 import           Control.Monad (forM_)
 import           Control.Monad.ST (ST, runST)
-import           Data.Array.Byte (ByteArray (..))
 import           Data.Bits (unsafeShiftR)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -72,7 +71,7 @@ instance Hashable LBS.ByteString where
         forM_ (LBS.toChunks lbs) $ \bs ->
         update s bs
 
-instance Hashable ByteArray where
+instance Hashable P.ByteArray where
     hashSalt64 salt ba = XXH3.xxh3_64bit_withSeed_ba ba 0 (P.sizeofByteArray ba) salt
 
 instance Hashable Word64 where
@@ -105,8 +104,8 @@ instance (Hashable a, Hashable b) => Hashable (a, b) where
         update s (hash64 x)
         update s (hash64 y)
 
--- | Hash a (part of) 'ByteArray'.
-hashByteArray :: ByteArray -> Int -> Int -> Word64 -> Word64
+-- | Hash a (part of) 'P.ByteArray'.
+hashByteArray :: P.ByteArray -> Int -> Int -> Word64 -> Word64
 hashByteArray = XXH3.xxh3_64bit_withSeed_ba
 
 -------------------------------------------------------------------------------
