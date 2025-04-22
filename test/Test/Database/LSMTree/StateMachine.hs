@@ -275,10 +275,10 @@ instance Arbitrary R.TableConfig where
 instance Arbitrary R.WriteBufferAlloc where
   arbitrary = QC.scale (max 30) $ do
       QC.Positive x <- QC.arbitrary
-      pure (R.AllocNumEntries (R.NumEntries x))
+      pure (R.AllocNumEntries x)
 
-  shrink (R.AllocNumEntries (R.NumEntries x)) =
-      [ R.AllocNumEntries (R.NumEntries x')
+  shrink (R.AllocNumEntries x) =
+      [ R.AllocNumEntries x'
       | QC.Positive x' <- QC.shrink (QC.Positive x)
       ]
 

@@ -36,7 +36,6 @@ import           Data.Primitive (Prim)
 import           Data.Primitive.PrimVar
 import           Database.LSMTree.Internal.Assertions (assert)
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
                      MergeDebt (..), MergingRun)
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -227,7 +226,7 @@ supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
 -- maybe co-prime?
 creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
 creditThresholdForLevel conf (LevelNo _i) =
-    let AllocNumEntries (NumEntries x) = confWriteBufferAlloc conf
+    let AllocNumEntries x = confWriteBufferAlloc conf
     in  MR.CreditThreshold (MR.UnspentCredits (MergeCredits x))
 
 -- | Deposit nominal credits in the local credits var, ensuring the total

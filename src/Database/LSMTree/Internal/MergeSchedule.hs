@@ -516,7 +516,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
       else
         updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es' reg tc''
   where
-    AllocNumEntries maxn = confWriteBufferAlloc conf
+    AllocNumEntries (NumEntries -> maxn) = confWriteBufferAlloc conf
 
 {-# SPECIALISE addWriteBufferEntries ::
      HasFS IO h
@@ -848,7 +848,7 @@ mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
 -- The @size@ of a tiering run at each level is allowed to be
 -- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^level@.
 --
--- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelTiering . LevelNo <$> [0, 1, 2, 3, 4]
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries 2) LevelTiering . LevelNo <$> [0, 1, 2, 3, 4]
 -- [0,2,8,32,128]
 --
 -- The @size@ of a levelling run at each level is allowed to be
@@ -856,7 +856,7 @@ mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
 -- levelling run can take take up a whole level, so the maximum size of a run is
 -- @sizeRatio*@ larger than the maximum size of a tiering run on the same level.
 --
--- >>> unNumEntries . maxRunSize Four (AllocNumEntries (NumEntries 2)) LevelLevelling . LevelNo <$> [0, 1, 2, 3, 4]
+-- >>> unNumEntries . maxRunSize Four (AllocNumEntries 2) LevelLevelling . LevelNo <$> [0, 1, 2, 3, 4]
 -- [0,8,32,128,512]
 maxRunSize ::
      SizeRatio
@@ -868,10 +868,10 @@ maxRunSize _ _ _ (LevelNo ln)
   | ln < 0  = error "maxRunSize: non-positive level number"
   | ln == 0 = NumEntries 0
 
-maxRunSize sizeRatio (AllocNumEntries bufferSize) LevelTiering ln =
+maxRunSize sizeRatio (AllocNumEntries (NumEntries -> bufferSize)) LevelTiering ln =
     NumEntries $ maxRunSizeTiering (sizeRatioInt sizeRatio) bufferSize ln
 
-maxRunSize sizeRatio (AllocNumEntries bufferSize) LevelLevelling ln =
+maxRunSize sizeRatio (AllocNumEntries (NumEntries -> bufferSize)) LevelLevelling ln =
     NumEntries $ maxRunSizeLevelling (sizeRatioInt sizeRatio) bufferSize ln
 
 maxRunSizeTiering, maxRunSizeLevelling :: Int -> NumEntries -> LevelNo -> Int
@@ -966,7 +966,7 @@ supplyCredits conf deposit levels =
 
 maxMergeDebt :: TableConfig -> MergePolicyForLevel -> LevelNo -> MergeDebt
 maxMergeDebt TableConfig {
-               confWriteBufferAlloc = AllocNumEntries bufferSize,
+               confWriteBufferAlloc = AllocNumEntries (NumEntries -> bufferSize),
                confSizeRatio
              } mergePolicy ln =
     let !sizeRatio = sizeRatioInt confSizeRatio in
@@ -989,7 +989,7 @@ maxMergeDebt TableConfig {
 -- in a run that gets moved to this level.
 nominalDebtForLevel :: TableConfig -> LevelNo -> NominalDebt
 nominalDebtForLevel TableConfig {
-                      confWriteBufferAlloc = AllocNumEntries !bufferSize,
+                      confWriteBufferAlloc = AllocNumEntries (NumEntries -> !bufferSize),
                       confSizeRatio
                     } ln =
     NominalDebt (maxRunSizeTiering (sizeRatioInt confSizeRatio) bufferSize ln)

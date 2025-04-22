@@ -15,7 +15,6 @@ import           Database.LSMTree.Internal.Config (BloomFilterAlloc (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..),
                      TableConfig (..), WriteBufferAlloc (..),
                      defaultTableConfig)
-import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),
                      NominalDebt (..))
@@ -212,7 +211,7 @@ enumerateTableConfig =
       )
     | (_, policy) <- [(blank, MergePolicyLazyLevelling)]
     , (_, ratio ) <- [(blank, Four)]
-    , (_, allocs) <- fmap (AllocNumEntries . NumEntries) <$> [(blank, magicNumber1)]
+    , (_, allocs) <- fmap AllocNumEntries <$> [(blank, magicNumber1)]
     , (d, bloom ) <- enumerateBloomFilterAlloc
     , (e, fence ) <- [("I0", CompactIndex), ("I1", OrdinaryIndex)]
     , (f, cache ) <- enumerateDiskCachePolicy

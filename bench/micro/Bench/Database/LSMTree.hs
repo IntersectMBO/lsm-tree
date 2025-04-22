@@ -78,7 +78,7 @@ instance ResolveValue V3 where
 
 benchConfig :: TableConfig
 benchConfig = defaultTableConfig
-    { confWriteBufferAlloc  = AllocNumEntries (NumEntries 20000)
+    { confWriteBufferAlloc  = AllocNumEntries 20000
     , confFencePointerIndex = CompactIndex
     }
 
@@ -247,7 +247,7 @@ benchInsertBatches =
 
       _benchConfig :: TableConfig
       _benchConfig = benchConfig {
-          confWriteBufferAlloc = AllocNumEntries (NumEntries 1000)
+          confWriteBufferAlloc = AllocNumEntries 1000
         }
 
       randomInserts :: Int -> V.Vector (K, V2, Maybe Void)

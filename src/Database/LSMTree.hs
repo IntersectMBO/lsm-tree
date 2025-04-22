@@ -107,7 +107,6 @@ module Database.LSMTree (
   MergePolicy (MergePolicyLazyLevelling),
   SizeRatio (Four),
   WriteBufferAlloc (AllocNumEntries),
-  NumEntries (..),
   BloomFilterAlloc (AllocFixed, AllocRequestFPR),
   defaultBloomFilterAlloc,
   FencePointerIndexType (OrdinaryIndex, CompactIndex),
@@ -198,7 +197,6 @@ import           Database.LSMTree.Internal.Config
                      defaultBloomFilterAlloc, defaultTableConfig)
 import           Database.LSMTree.Internal.Config.Override
                      (OverrideDiskCachePolicy (..))
-import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Paths (SnapshotName,
                      isValidSnapshotName, toSnapshotName)

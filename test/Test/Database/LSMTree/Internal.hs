@@ -48,7 +48,7 @@ testTableConfig :: TableConfig
 testTableConfig = defaultTableConfig {
       -- Write buffer size is small on purpose, so that the test actually
       -- flushes and merges.
-      confWriteBufferAlloc = AllocNumEntries (NumEntries 3)
+      confWriteBufferAlloc = AllocNumEntries 3
     }
 
 newSession ::
@@ -62,7 +62,7 @@ newSession (Positive (Small bufferSize)) es =
       withTable session conf (updates const es')
   where
     conf = testTableConfig {
-        confWriteBufferAlloc = AllocNumEntries (NumEntries bufferSize)
+        confWriteBufferAlloc = AllocNumEntries bufferSize
       }
     es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
 
@@ -79,7 +79,7 @@ restoreSession (Positive (Small bufferSize)) es =
         withTable session2 conf (updates const es')
   where
     conf = testTableConfig {
-        confWriteBufferAlloc = AllocNumEntries (NumEntries bufferSize)
+        confWriteBufferAlloc = AllocNumEntries bufferSize
       }
     es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
 

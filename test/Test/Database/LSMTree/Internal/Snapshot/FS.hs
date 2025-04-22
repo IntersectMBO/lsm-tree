@@ -206,7 +206,7 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     namedSnapDir = namedSnapshotDir (SessionRoot root) snapName
 
     conf = defaultTableConfig {
-        confWriteBufferAlloc  = AllocNumEntries (NumEntries bufferSize)
+        confWriteBufferAlloc  = AllocNumEntries bufferSize
       , confFencePointerIndex = CompactIndex
       }
     es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es

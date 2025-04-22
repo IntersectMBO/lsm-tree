@@ -33,7 +33,6 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C
 import qualified Database.LSMTree.Internal.CRC32C as FS
-import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.MergeSchedule
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
@@ -342,23 +341,15 @@ instance Encode WriteBufferAlloc where
   encode (AllocNumEntries numEntries) =
          encodeListLen 2
       <> encodeWord 0
-      <> encode numEntries
+      <> encodeInt numEntries
 
 instance DecodeVersioned WriteBufferAlloc where
-  decodeVersioned v@V0 = do
+  decodeVersioned V0 = do
       _ <- decodeListLenOf 2
       tag <- decodeWord
       case tag of
-        0 -> AllocNumEntries <$> decodeVersioned v
+        0 -> AllocNumEntries <$> decodeInt
         _ -> fail ("[WriteBufferAlloc] Unexpected tag: " <> show tag)
-
--- NumEntries
-
-instance Encode NumEntries where
-  encode (NumEntries x) = encodeInt x
-
-instance DecodeVersioned NumEntries where
-  decodeVersioned V0 = NumEntries <$> decodeInt
 
 -- RunParams and friends
 
