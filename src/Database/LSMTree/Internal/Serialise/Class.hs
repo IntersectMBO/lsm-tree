@@ -25,13 +25,14 @@ import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
+import           Data.Int (Int16, Int32, Int64, Int8)
 import           Data.Monoid (Sum (..))
 import qualified Data.Primitive as P
 import qualified Data.Vector.Primitive as VP
 import           Data.Void (Void, absurd)
-import           Data.Word
+import           Data.Word (Word16, Word32, Word64, Word8)
 import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
-import           Database.LSMTree.Internal.Primitive (indexWord8ArrayAsWord64)
+import           Database.LSMTree.Internal.Primitive
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Vector
@@ -143,20 +144,143 @@ requireBytesExactly tyName expected actual x
       $ ""
 
 {-------------------------------------------------------------------------------
-  Word64
+  Int
 -------------------------------------------------------------------------------}
 
-instance SerialiseKey Word64 where
-  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwap64 x
+instance SerialiseKey Int8 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim x
 
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
-    requireBytesExactly "Word64" 8 len $ byteSwap64 (indexWord8ArrayAsWord64 ba off)
+    requireBytesExactly "Int8" 1 len $ indexInt8Array ba off
+
+instance SerialiseValue Int8 where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int8" 1 len $ indexInt8Array ba off
+
+instance SerialiseKey Int16 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt16 x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int16" 2 len $ byteSwapInt16 (indexWord8ArrayAsInt16 ba off)
+
+instance SerialiseValue Int16 where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int16" 2 len $ indexWord8ArrayAsInt16 ba off
+
+instance SerialiseKey Int32 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt32 x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int32" 4 len $ byteSwapInt32 (indexWord8ArrayAsInt32 ba off)
+
+instance SerialiseValue Int32 where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int32" 4 len $ indexWord8ArrayAsInt32 ba off
+
+instance SerialiseKey Int64 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt64 x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int64" 8 len $ byteSwapInt64 (indexWord8ArrayAsInt64 ba off)
+
+instance SerialiseValue Int64 where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int64" 8 len $ indexWord8ArrayAsInt64 ba off
+
+instance SerialiseKey Int where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int" 8 len $ byteSwapInt (indexWord8ArrayAsInt ba off)
+
+instance SerialiseValue Int where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Int" 8 len $ indexWord8ArrayAsInt ba off
+
+{-------------------------------------------------------------------------------
+  Word
+-------------------------------------------------------------------------------}
+
+instance SerialiseKey Word8 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim  x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word8" 1 len  (indexWord8Array ba off)
+
+instance SerialiseKeyOrderPreserving Word8
+
+instance SerialiseValue Word8 where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word8" 1 len $ indexWord8Array ba off
+
+
+instance SerialiseKey Word16 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord16 x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word16" 2 len $ byteSwapWord16 (indexWord8ArrayAsWord16 ba off)
+
+instance SerialiseKeyOrderPreserving Word16
+
+instance SerialiseValue Word16 where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word16" 2 len $ indexWord8ArrayAsWord16 ba off
+
+instance SerialiseKey Word32 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord32 x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word32" 4 len $ byteSwapWord32 (indexWord8ArrayAsWord32 ba off)
+
+instance SerialiseKeyOrderPreserving Word32
+
+instance SerialiseValue Word32 where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word32" 4 len $ indexWord8ArrayAsWord32 ba off
+
+instance SerialiseKey Word64 where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord64 x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word64" 8 len $ byteSwapWord64 (indexWord8ArrayAsWord64 ba off)
+
+instance SerialiseKeyOrderPreserving Word64
 
 instance SerialiseValue Word64 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ indexWord8ArrayAsWord64 ba off
+
+instance SerialiseKey Word where
+  serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord x
+
+  deserialiseKey (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word" 8 len $ byteSwapWord (indexWord8ArrayAsWord ba off)
+
+instance SerialiseKeyOrderPreserving Word
+
+instance SerialiseValue Word where
+  serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
+
+  deserialiseValue (RawBytes (VP.Vector off len ba)) =
+    requireBytesExactly "Word" 8 len $ indexWord8ArrayAsWord ba off
 
 {-------------------------------------------------------------------------------
   String
