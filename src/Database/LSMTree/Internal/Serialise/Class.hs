@@ -7,7 +7,6 @@ module Database.LSMTree.Internal.Serialise.Class (
     SerialiseKey (..)
   , serialiseKeyIdentity
   , serialiseKeyIdentityUpToSlicing
-  , serialiseKeyMinimalSize
   , SerialiseKeyOrderPreserving
   , serialiseKeyPreservesOrdering
     -- * SerialiseValue
@@ -66,10 +65,6 @@ serialiseKeyIdentityUpToSlicing ::
   => RawBytes -> k -> RawBytes -> Bool
 serialiseKeyIdentityUpToSlicing prefix x suffix =
     deserialiseKey (packSlice prefix (serialiseKey x) suffix) == x
-
--- | Test the __Minimal size__ law for the 'SerialiseKey' class.
-serialiseKeyMinimalSize :: SerialiseKey k => k -> Bool
-serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 8
 
 -- | Order-preserving serialisation of keys
 --

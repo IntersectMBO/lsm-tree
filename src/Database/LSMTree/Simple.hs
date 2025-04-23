@@ -160,7 +160,7 @@ import           Database.LSMTree.Internal.Config
                      DiskCachePolicy (..), FencePointerIndexType (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..),
                      TableConfig (..), WriteBufferAlloc (..),
-                     defaultTableConfig)
+                     defaultTableConfig, serialiseKeyMinimalSize)
 import           Database.LSMTree.Internal.Config.Override
                      (OverrideDiskCachePolicy (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
@@ -172,7 +172,7 @@ import qualified Database.LSMTree.Internal.Serialise as Internal
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
                      SerialiseKeyOrderPreserving, SerialiseValue (..),
                      packSlice, serialiseKeyIdentity,
-                     serialiseKeyIdentityUpToSlicing, serialiseKeyMinimalSize,
+                     serialiseKeyIdentityUpToSlicing,
                      serialiseKeyPreservesOrdering, serialiseValueIdentity,
                      serialiseValueIdentityUpToSlicing)
 import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
