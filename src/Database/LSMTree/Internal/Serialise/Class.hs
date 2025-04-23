@@ -162,12 +162,18 @@ instance SerialiseValue Word64 where
   String
 -------------------------------------------------------------------------------}
 
--- | Placeholder instance, not optimised
+-- | \( O(n) \) (de-)serialisation, where \(n\) is the number of characters in
+-- the string.
+--
+-- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
 instance SerialiseKey String where
   serialiseKey = serialiseKey . BSC.pack
   deserialiseKey = BSC.unpack . deserialiseKey
 
--- | Placeholder instance, not optimised
+-- | \( O(n) \) (de-)serialisation, where \(n\) is the number of characters in
+-- the string.
+--
+-- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
 instance SerialiseValue String where
   serialiseValue = serialiseValue . BSC.pack
   deserialiseValue = BSC.unpack . deserialiseValue
@@ -176,59 +182,71 @@ instance SerialiseValue String where
   ByteString
 -------------------------------------------------------------------------------}
 
--- | Placeholder instance, not optimised
+-- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
+--
+-- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
 instance SerialiseKey LBS.ByteString where
   serialiseKey = serialiseKey . LBS.toStrict
   deserialiseKey = B.toLazyByteString . RB.builder
 
--- | Placeholder instance, not optimised
-instance SerialiseKey BS.ByteString where
-  serialiseKey = RB.fromShortByteString . SBS.toShort
-  deserialiseKey = LBS.toStrict . deserialiseKey
+instance SerialiseKeyOrderPreserving LBS.ByteString
 
--- | Placeholder instance, not optimised
+-- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
+--
+-- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
 instance SerialiseValue LBS.ByteString where
   serialiseValue = serialiseValue . LBS.toStrict
   deserialiseValue = B.toLazyByteString . RB.builder
 
--- | Placeholder instance, not optimised
+-- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
+instance SerialiseKey BS.ByteString where
+  serialiseKey = serialiseKey . SBS.toShort
+  deserialiseKey = SBS.fromShort . deserialiseKey
+
+instance SerialiseKeyOrderPreserving BS.ByteString
+
+-- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
 instance SerialiseValue BS.ByteString where
-  serialiseValue = RB.fromShortByteString . SBS.toShort
-  deserialiseValue = LBS.toStrict . deserialiseValue
+  serialiseValue = serialiseValue . SBS.toShort
+  deserialiseValue = SBS.fromShort . deserialiseValue
 
-{-------------------------------------------------------------------------------
- ShortByteString
--------------------------------------------------------------------------------}
-
+-- | \( O(1) \) serialisation, \( O(n) \) deserialisation
 instance SerialiseKey SBS.ShortByteString where
   serialiseKey = RB.fromShortByteString
   deserialiseKey = byteArrayToSBS . RB.force
 
+instance SerialiseKeyOrderPreserving SBS.ShortByteString
+
+-- | \( O(1) \) serialisation, \( O(n) \) deserialisation
 instance SerialiseValue SBS.ShortByteString where
   serialiseValue = RB.fromShortByteString
   deserialiseValue = byteArrayToSBS . RB.force
 
 {-------------------------------------------------------------------------------
- ByteArray
+  ByteArray
 -------------------------------------------------------------------------------}
 
--- | The 'Ord' instance of 'ByteArray' is not lexicographic, so there cannot be
--- an order-preserving instance of 'SerialiseKey'.
--- Use 'ShortByteString' instead.
+-- | \( O(1) \) serialisation, \( O(n) \) deserialisation
+instance SerialiseKey P.ByteArray where
+  serialiseKey ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
+  deserialiseKey = RB.force
+
+-- | \( O(1) \) serialisation, \( O(n) \) deserialisation
 instance SerialiseValue P.ByteArray where
   serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
   deserialiseValue = RB.force
 
 {-------------------------------------------------------------------------------
-Void
+  Void
 -------------------------------------------------------------------------------}
 
--- | The 'deserialiseValue' of this instance throws. (as does e.g. 'Word64' instance on invalid input.)
+-- | The 'deserialiseValue' of this instance throws. (as does e.g. 'Word64'
+-- instance on invalid input.)
 --
 -- This instance is useful for tables without blobs.
 instance SerialiseValue Void where
   serialiseValue = absurd
-  deserialiseValue = error "panic"
+  deserialiseValue = error "deserialiseValue: Void can not be deserialised"
 
 {-------------------------------------------------------------------------------
   Sum
