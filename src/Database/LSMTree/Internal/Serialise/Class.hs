@@ -22,9 +22,9 @@ module Database.LSMTree.Internal.Serialise.Class (
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as B
-import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short.Internal as SBS
+import qualified Data.ByteString.UTF8 as UTF8
 import           Data.Int (Int16, Int32, Int64, Int8)
 import           Data.Monoid (Sum (..))
 import qualified Data.Primitive as P
@@ -287,20 +287,22 @@ instance SerialiseValue Word where
 -------------------------------------------------------------------------------}
 
 -- | \( O(n) \) (de-)serialisation, where \(n\) is the number of characters in
--- the string.
+-- the string. The string is encoded using UTF8.
 --
 -- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
 instance SerialiseKey String where
-  serialiseKey = serialiseKey . BSC.pack
-  deserialiseKey = BSC.unpack . deserialiseKey
+  serialiseKey = serialiseKey . UTF8.fromString
+  deserialiseKey = UTF8.toString . deserialiseKey
+
+instance SerialiseKeyOrderPreserving String
 
 -- | \( O(n) \) (de-)serialisation, where \(n\) is the number of characters in
 -- the string.
 --
 -- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
 instance SerialiseValue String where
-  serialiseValue = serialiseValue . BSC.pack
-  deserialiseValue = BSC.unpack . deserialiseValue
+  serialiseValue = serialiseValue . UTF8.fromString
+  deserialiseValue = UTF8.toString . deserialiseValue
 
 {-------------------------------------------------------------------------------
   ByteString

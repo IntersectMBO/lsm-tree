@@ -21,7 +21,7 @@ import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Serialise.Class" [
-      testGroup "String" (allProperties @String Nothing)
+      testGroup "String" (allProperties @String (Just Dict))
 
       -- Int
     , testGroup "Int8"  (allProperties @Int8  Nothing)

@@ -343,6 +343,7 @@ library
     , lsm-tree:kmerge
     , primitive               ^>=0.9
     , text                    ^>=2.1.1
+    , utf8-string             ^>=1.0
     , vector                  ^>=0.13
     , vector-algorithms       ^>=0.9
 
