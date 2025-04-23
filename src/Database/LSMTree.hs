@@ -126,11 +126,13 @@ module Database.LSMTree (
   -- * Key\/Value Serialisation #key_value_serialisation#
   RawBytes (RawBytes),
   SerialiseKey (serialiseKey, deserialiseKey),
+  SerialiseKeyOrderPreserving,
   SerialiseValue (serialiseValue, deserialiseValue),
 
   -- ** Key\/Value Serialisation Property Tests #key_value_serialisation_property_tests#
   serialiseKeyIdentity,
   serialiseKeyIdentityUpToSlicing,
+  serialiseKeyPreservesOrdering,
   serialiseKeyMinimalSize,
   serialiseValueIdentity,
   serialiseValueIdentityUpToSlicing,
@@ -205,9 +207,11 @@ import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
-                     SerialiseValue (..), packSlice, serialiseKeyIdentity,
+                     SerialiseKeyOrderPreserving, SerialiseValue (..),
+                     packSlice, serialiseKeyIdentity,
                      serialiseKeyIdentityUpToSlicing, serialiseKeyMinimalSize,
-                     serialiseValueIdentity, serialiseValueIdentityUpToSlicing)
+                     serialiseKeyPreservesOrdering, serialiseValueIdentity,
+                     serialiseValueIdentityUpToSlicing)
 import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import qualified Database.LSMTree.Internal.Snapshot as Internal
 import           Database.LSMTree.Internal.Types (BlobRef (..), Cursor (..),

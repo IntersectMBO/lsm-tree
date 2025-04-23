@@ -3,14 +3,18 @@
 -- | Public API for serialisation of keys, blobs and values
 --
 module Database.LSMTree.Internal.Serialise.Class (
+    -- * SerialiseKey
     SerialiseKey (..)
   , serialiseKeyIdentity
   , serialiseKeyIdentityUpToSlicing
-  , serialiseKeyPreservesOrdering
   , serialiseKeyMinimalSize
+  , SerialiseKeyOrderPreserving
+  , serialiseKeyPreservesOrdering
+    -- * SerialiseValue
   , SerialiseValue (..)
   , serialiseValueIdentity
   , serialiseValueIdentityUpToSlicing
+    -- * RawBytes
   , RawBytes (..)
   , packSlice
     -- * Errors
@@ -34,22 +38,17 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Vector
 import           Numeric (showInt)
 
+{-------------------------------------------------------------------------------
+  SerialiseKey
+-------------------------------------------------------------------------------}
+
 -- | Serialisation of keys.
 --
--- Instances should satisfy the following:
+-- Instances should satisfy the following laws:
 --
 -- [Identity] @'deserialiseKey' ('serialiseKey' x) == x@
 -- [Identity up to slicing] @'deserialiseKey' ('packSlice' prefix ('serialiseKey' x) suffix) == x@
 --
--- Instances /may/ satisfy the following:
---
--- [Ordering-preserving] @x \`'compare'\` y == 'serialiseKey' x \`'compare'\` 'serialiseKey' y@
---
--- Raw bytes are lexicographically ordered, so in particular this means that
--- values should be serialised into big-endian formats. This constraint mainly
--- exists for range queries, where the range is specified in terms of
--- unserialised values, but the internal implementation works on the serialised
--- representation.
 class SerialiseKey k where
   serialiseKey :: k -> RawBytes
   -- TODO: 'deserialiseKey' is only strictly necessary for range queries.
@@ -68,33 +67,46 @@ serialiseKeyIdentityUpToSlicing ::
 serialiseKeyIdentityUpToSlicing prefix x suffix =
     deserialiseKey (packSlice prefix (serialiseKey x) suffix) == x
 
--- | Test the __Ordering-preserving__ law for the 'SerialiseKey' class
-serialiseKeyPreservesOrdering :: (Ord k, SerialiseKey k) => k -> k -> Bool
-serialiseKeyPreservesOrdering x y = x `compare` y == serialiseKey x `compare` serialiseKey y
-
 -- | Test the __Minimal size__ law for the 'SerialiseKey' class.
 serialiseKeyMinimalSize :: SerialiseKey k => k -> Bool
 serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 8
 
+-- | Order-preserving serialisation of keys
+--
+-- Internally, the library sorts key\/value pairs using the ordering of
+-- /serialised/ keys. Range lookups and cursor reads return key\/value according
+-- to this ordering. As such, if serialisation does not preserve the ordering of
+-- /unserialised/ keys, then range lookups and cursor reads will return
+-- /unserialised/ keys out of order.
+--
+-- Instances that prevent keys from being returned out of order should satisfy
+-- the following law:
+--
+-- [Ordering-preserving] @x \`'compare'\` y == 'serialiseKey' x \`'compare'\` 'serialiseKey' y@
+--
+-- Serialised keys (raw bytes) are lexicographically ordered, which means that
+-- keys should be serialised into big-endian formats to satisfy the
+-- __Ordering-preserving__ law,
+--
+class SerialiseKey k => SerialiseKeyOrderPreserving k where
+
+-- | Test the __Ordering-preserving__ law for the 'SerialiseKeyOrderPreserving' class
+serialiseKeyPreservesOrdering :: (Ord k, SerialiseKey k) => k -> k -> Bool
+serialiseKeyPreservesOrdering x y = x `compare` y == serialiseKey x `compare` serialiseKey y
+
+{-------------------------------------------------------------------------------
+  SerialiseValue
+-------------------------------------------------------------------------------}
+
 -- | Serialisation of values and blobs.
 --
--- Instances should satisfy the following:
+-- Instances should satisfy the following laws:
 --
 -- [Identity] @'deserialiseValue' ('serialiseValue' x) == x@
 -- [Identity up to slicing] @'deserialiseValue' ('packSlice' prefix ('serialiseValue' x) suffix) == x@
 class SerialiseValue v where
   serialiseValue :: v -> RawBytes
   deserialiseValue :: RawBytes -> v
-
-
--- | An instance for 'Sum' which is transparent to the serialisation of @a@.
---
--- Note: If you want to serialize @Sum a@ differently than @a@, then you should
--- create another @newtype@ over 'Sum' and define your alternative serialization.
-instance SerialiseValue a => SerialiseValue (Sum a) where
-  serialiseValue (Sum v) = serialiseValue v
-
-  deserialiseValue = Sum . deserialiseValue
 
 -- | Test the __Identity__ law for the 'SerialiseValue' class
 serialiseValueIdentity :: (Eq v, SerialiseValue v) => v -> Bool
@@ -222,3 +234,16 @@ Void
 instance SerialiseValue Void where
   serialiseValue = absurd
   deserialiseValue = error "panic"
+
+{-------------------------------------------------------------------------------
+  Sum
+-------------------------------------------------------------------------------}
+
+-- | An instance for 'Sum' which is transparent to the serialisation of @a@.
+--
+-- Note: If you want to serialize @Sum a@ differently than @a@, then you should
+-- create another @newtype@ over 'Sum' and define your alternative serialization.
+instance SerialiseValue a => SerialiseValue (Sum a) where
+  serialiseValue (Sum v) = serialiseValue v
+
+  deserialiseValue = Sum . deserialiseValue
