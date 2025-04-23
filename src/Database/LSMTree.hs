@@ -134,6 +134,7 @@ module Database.LSMTree (
   serialiseKeyMinimalSize,
   serialiseValueIdentity,
   serialiseValueIdentityUpToSlicing,
+  packSlice,
 
   -- * Monoidal Value Resolution #monoidal_value_resolution#
   ResolveValue (..),
@@ -204,7 +205,7 @@ import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
-                     SerialiseValue (..), serialiseKeyIdentity,
+                     SerialiseValue (..), packSlice, serialiseKeyIdentity,
                      serialiseKeyIdentityUpToSlicing, serialiseKeyMinimalSize,
                      serialiseValueIdentity, serialiseValueIdentityUpToSlicing)
 import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
