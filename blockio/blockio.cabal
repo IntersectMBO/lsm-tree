@@ -1,0 +1,175 @@
+cabal-version:   3.4
+name:            blockio
+version:         0.1.0.0
+synopsis:        Abstract interface for batched, asynchronous I/O
+description:
+  This packages defines an abstract interface for batched, asynchronous I\/O,
+  for use with the abstract interface for file system I\/O defined by the
+  [fs-api](https://hackage.haskell.org/package/fs-api) package.
+
+  The /sim/ sub-library of this package defines /simulated/ batched, asynchronous I\/O
+  for use with the [fs-sim](https://hackage.haskell.org/package/fs-sim) package.
+
+license:         Apache-2.0
+license-files:
+  LICENSE
+  NOTICE
+
+author:
+  Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
+
+maintainer:      TODO: MAINTAINER EMAIL
+copyright:
+  (c) 2023 Input Output Global, Inc. (IOG)
+  (c) 2023-2025 INTERSECT
+
+category:        System
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+tested-with:     GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
+
+source-repository head
+  type:     git
+  location: https://github.com/IntersectMBO/lsm-tree
+  subdir:   blockio
+
+-- TODO: this tag obviously does not exist yet because the package has not
+-- been published
+source-repository this
+  type:     git
+  location: https://github.com/IntersectMBO/lsm-tree
+  tag:      blockio-0.1.0.0
+  subdir:   blockio
+
+common warnings
+  ghc-options:
+    -Wall -Wcompat -Wincomplete-uni-patterns
+    -Wincomplete-record-updates -Wpartial-fields -Widentities
+    -Wredundant-constraints -Wmissing-export-lists
+    -Wno-unticked-promoted-constructors -Wunused-packages
+
+  ghc-options: -Werror=missing-deriving-strategies
+
+common language
+  default-language:   GHC2021
+  default-extensions:
+    DeriveAnyClass
+    DerivingStrategies
+    DerivingVia
+    LambdaCase
+
+flag serialblockio
+  description: Use serial HasBlockIO regardless of the operating system
+  default:     False
+  manual:      True
+
+library
+  import:          language, warnings
+  hs-source-dirs:  src
+  exposed-modules:
+    System.FS.BlockIO.API
+    System.FS.BlockIO.IO
+    System.FS.BlockIO.Serial
+
+  build-depends:
+    , base        >=4.16  && <4.22
+    , deepseq     ^>=1.4  || ^>=1.5
+    , fs-api      ^>=0.3
+    , io-classes  ^>=1.6  || ^>=1.7
+    , primitive   ^>=0.9
+    , vector      ^>=0.13
+
+  if os(linux)
+    hs-source-dirs: src-linux
+    other-modules:  System.FS.BlockIO.Internal
+    build-depends:
+      , blockio:fcntl-nocache
+      , unix                   ^>=2.8
+
+    if !flag(serialblockio)
+      other-modules: System.FS.BlockIO.Async
+      build-depends: blockio-uring ^>=0.1
+
+  elif os(osx)
+    hs-source-dirs: src-macos
+    build-depends:
+      , blockio:fcntl-nocache
+      , unix                   ^>=2.8
+
+    other-modules:  System.FS.BlockIO.Internal
+
+  elif os(windows)
+    hs-source-dirs: src-windows
+    build-depends:  Win32 ^>=2.14
+    other-modules:  System.FS.BlockIO.Internal
+
+  if flag(serialblockio)
+    cpp-options: -DSERIALBLOCKIO
+
+library fcntl-nocache
+  import:             language, warnings
+  visibility:         private
+  hs-source-dirs:     src-fcntl-nocache
+
+  if os(windows)
+    buildable: False
+
+  exposed-modules:    System.Posix.Fcntl.NoCache
+  build-depends:      base <5
+  build-tool-depends: hsc2hs:hsc2hs
+
+test-suite test
+  import:         language, warnings
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        Main.hs
+  other-modules:  Test.System.Posix.Fcntl.NoCache
+  build-depends:
+    , async
+    , base              <5
+    , blockio
+    , bytestring
+    , fs-api
+    , primitive
+    , QuickCheck        ^>=2.15.0.1
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , temporary
+    , vector
+
+  if !os(windows)
+    build-depends: blockio:fcntl-nocache
+
+  ghc-options:    -threaded
+
+library sim
+  import:          language, warnings
+  visibility:      public
+  hs-source-dirs:  src-sim
+  exposed-modules: System.FS.BlockIO.Sim
+  build-depends:
+    , base                   >=4.16      && <4.22
+    , blockio
+    , bytestring             ^>=0.11.4.0 || ^>=0.12.1.0
+    , fs-api                 ^>=0.3
+    , fs-sim                 ^>=0.3
+    , io-classes             ^>=1.6      || ^>=1.7
+    , io-classes:strict-stm
+    , primitive              ^>=0.9
+
+test-suite test-sim
+  import:         language, warnings
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test-sim
+  main-is:        Main.hs
+  build-depends:
+    , base                   <5
+    , blockio
+    , blockio:sim
+    , fs-api
+    , fs-sim
+    , io-classes:strict-stm
+    , QuickCheck
+    , tasty
+    , tasty-quickcheck

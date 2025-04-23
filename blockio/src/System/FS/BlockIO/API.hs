@@ -1,11 +1,5 @@
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE UnboxedTuples              #-}
+{-# LANGUAGE TypeFamilies  #-}
+{-# LANGUAGE UnboxedTuples #-}
 
 module System.FS.BlockIO.API (
     -- * HasBlockIO
