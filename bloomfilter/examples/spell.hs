@@ -12,11 +12,8 @@ import           Prelude hiding (notElem)
 main :: IO ()
 main = do
     files <- getArgs
-    dictionary <- readFile "/usr/share/dict/words" `catchIO` \_ -> return "yes no"
+    dictionary <- readFile "/usr/share/dict/words"
     let !bloom = easyList 0.01 (words dictionary)
     forM_ files $ \file -> do
         ws <- words <$> readFile file
         forM_ ws $ \w -> when (w `notElem` bloom) $ putStrLn w
-
-catchIO :: IO a -> (IOException -> IO a) -> IO a
-catchIO = catch

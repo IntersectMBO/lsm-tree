@@ -463,9 +463,9 @@ test-suite bloomfilter-primes
     , base    <5
     , primes  ^>=0.2.1.0
 
-test-suite bloomfilter-spell
+executable bloomfilter-spell
   import:         language
-  type:           exitcode-stdio-1.0
+  scope:          private
   hs-source-dirs: bloomfilter/examples
   main-is:        spell.hs
   build-depends:
