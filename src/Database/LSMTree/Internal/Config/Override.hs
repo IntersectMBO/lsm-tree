@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 -- Definitions for override table config options.
 module Database.LSMTree.Internal.Config.Override (
     -- $override-policy
