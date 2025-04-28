@@ -1,7 +1,11 @@
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Test.Database.LSMTree.UnitTests (tests) where
+module Test.Database.LSMTree.UnitTests (
+    tests
+    -- * Utilities
+  , ignoreBlobRef
+  ) where
 
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
