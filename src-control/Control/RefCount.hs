@@ -252,9 +252,7 @@ releaseRef ref@Ref{refobj} = do
     decrementRefCounter (getRefCounter refobj)
 
 {-# COMPLETE DeRef #-}
-#if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)
 {-# INLINE DeRef #-}
-#endif
 -- | Get the object in a 'Ref'. Be careful with retaining the object for too
 -- long, since the object must not be used after 'releaseRef' is called.
 --

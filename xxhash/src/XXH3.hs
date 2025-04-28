@@ -35,11 +35,7 @@ import           FFI
 
 {-# INLINE withFP #-}
 withFP :: ForeignPtr a -> (P.Ptr a -> IO b) -> IO b
-#if MIN_VERSION_GLASGOW_HASKELL(9,0,0,0)
 withFP = unsafeWithForeignPtr
-#else
-withFP = withForeignPtr
-#endif
 
 -------------------------------------------------------------------------------
 -- OneShot

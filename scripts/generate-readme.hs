@@ -1,7 +1,7 @@
 #!/usr/bin/env cabal
 {- cabal:
 build-depends:
-    , base          >=4.12
+    , base          >=4.16
     , bytestring    >=0.11
     , Cabal-syntax ^>=3.10  || ^>=3.12
     , pandoc       ^>=3.6.4

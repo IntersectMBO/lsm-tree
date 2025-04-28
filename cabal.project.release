@@ -22,11 +22,6 @@ constraints: bloomfilter <0
 -- we could add a conditional on (+serialblockio) to remove this import automatically.
 import: cabal.project.blockio-uring
 
--- TODO: fix assembly error in text-2.1.2
-if (impl(ghc < 9.0) && os(windows))
-  package text
-    flags: -simdutf
-
 -- bugfix hGetBufExactly and hGetBufExactlyAt
 source-repository-package
   type: git

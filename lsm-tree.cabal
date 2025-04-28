@@ -208,7 +208,7 @@ copyright:
 category:           Database
 build-type:         Simple
 tested-with:
-  GHC ==8.10 || ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
+  GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
 
 extra-doc-files:    CHANGELOG.md
 extra-source-files:
@@ -239,64 +239,7 @@ common wno-x-partial
     ghc-options: -Wno-x-partial
 
 common language
-  -- This is at the top-level so that `cabal check` does not complain.
-  default-language:   Haskell2010
-
-  -- For newer GHC's, override Haskell2010 with GHC2021
-  if impl(ghc >=9.2.1)
-    default-language: GHC2021
-
-  else
-    -- NOTE: FieldSelectors is not supported on ghc-8.10.7, so it is the only
-    -- language extension that is missing compared to GHC2021
-    default-extensions:
-      BangPatterns
-      BinaryLiterals
-      ConstrainedClassMethods
-      ConstraintKinds
-      DeriveDataTypeable
-      DeriveFoldable
-      DeriveFunctor
-      DeriveGeneric
-      DeriveLift
-      DeriveTraversable
-      DoAndIfThenElse
-      EmptyCase
-      EmptyDataDecls
-      EmptyDataDeriving
-      ExistentialQuantification
-      ExplicitForAll
-      FlexibleContexts
-      FlexibleInstances
-      ForeignFunctionInterface
-      GADTSyntax
-      GeneralisedNewtypeDeriving
-      HexFloatLiterals
-      ImplicitPrelude
-      ImportQualifiedPost
-      InstanceSigs
-      KindSignatures
-      MonomorphismRestriction
-      MultiParamTypeClasses
-      NamedFieldPuns
-      NamedWildCards
-      NoExplicitNamespaces
-      NumericUnderscores
-      PatternGuards
-      PolyKinds
-      PostfixOperators
-      RankNTypes
-      RelaxedPolyRec
-      ScopedTypeVariables
-      StandaloneDeriving
-      StandaloneKindSignatures
-      StarIsType
-      TraditionalRecordSyntax
-      TupleSections
-      TypeApplications
-      TypeOperators
-      TypeSynonymInstances
-
+  default-language:   GHC2021
   default-extensions:
     DeriveAnyClass
     DerivingStrategies
@@ -382,7 +325,7 @@ library
     Database.LSMTree.Simple
 
   build-depends:
-    , base                    >=4.14      && <4.22
+    , base                    >=4.16      && <4.22
     , bitvec                  ^>=1.1
     , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
     , cborg                   ^>=0.2.10.0
@@ -454,7 +397,7 @@ library bloomfilter
   visibility:      private
   hs-source-dirs:  bloomfilter/src
   build-depends:
-    , base             >=4.5       && <5
+    , base             >=4.16      && <5
     , bitvec           ^>=1.1.5.0
     , bytestring       >=0.9
     , data-array-byte
@@ -528,7 +471,7 @@ library extras
     Database.LSMTree.Extras.UTxO
 
   build-depends:
-    , base                    >=4.14 && <4.22
+    , base                    >=4.16 && <4.22
     , bitvec
     , bytestring
     , containers
@@ -811,7 +754,7 @@ benchmark rocksdb-bench-wp8
   hs-source-dirs: bench/macro
   main-is:        rocksdb-bench-wp8.hs
 
-  if !((os(linux) && flag(rocksdb)) && impl(ghc >=9.2.0))
+  if !(os(linux) && flag(rocksdb))
     buildable: False
 
   build-depends:
@@ -836,7 +779,7 @@ library rocksdb
   exposed-modules: RocksDB
   other-modules:   RocksDB.FFI
 
-  if !((os(linux) && flag(rocksdb)) && impl(ghc >=9.2.0))
+  if !(os(linux) && flag(rocksdb))
     buildable: False
 
   -- Ubuntu 22.04 doesn't have pkgconfig files for rocksdb
@@ -864,7 +807,7 @@ test-suite kmerge-test
   hs-source-dirs: test
   main-is:        kmerge-test.hs
   build-depends:
-    , base              >=4.14 && <4.22
+    , base              >=4.16 && <4.22
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -883,7 +826,7 @@ benchmark kmerge-bench
   main-is:        kmerge-test.hs
   cpp-options:    -DKMERGE_BENCHMARKS
   build-depends:
-    , base              >=4.14 && <4.22
+    , base              >=4.16 && <4.22
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -901,7 +844,7 @@ test-suite map-range-test
   hs-source-dirs: test
   main-is:        map-range-test.hs
   build-depends:
-    , base              >=4.14 && <4.22
+    , base              >=4.16 && <4.22
     , bytestring
     , containers
     , lsm-tree
@@ -963,7 +906,7 @@ library blockio-api
     System.FS.BlockIO.Serial
 
   build-depends:
-    , base        >=4.14  && <4.22
+    , base        >=4.16  && <4.22
     , deepseq     ^>=1.4  || ^>=1.5
     , fs-api      ^>=0.3
     , io-classes  ^>=1.6  || ^>=1.7
@@ -1004,7 +947,7 @@ test-suite blockio-api-test
   main-is:        Main.hs
   build-depends:
     , async
-    , base                  >=4.14      && <4.22
+    , base                  >=4.16      && <4.22
     , bytestring
     , fs-api
     , lsm-tree:blockio-api
@@ -1024,7 +967,7 @@ library blockio-sim
   hs-source-dirs:  blockio-sim/src
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
-    , base                   >=4.14 && <4.22
+    , base                   >=4.16 && <4.22
     , bytestring
     , fs-api                 ^>=0.3
     , fs-sim                 ^>=0.3
@@ -1039,7 +982,7 @@ test-suite blockio-sim-test
   hs-source-dirs: blockio-sim/test
   main-is:        Main.hs
   build-depends:
-    , base                   >=4.14 && <4.22
+    , base                   >=4.16 && <4.22
     , fs-api
     , fs-sim
     , io-classes:strict-stm
@@ -1068,7 +1011,7 @@ library control
     Control.RefCount
 
   build-depends:
-    , base                   >=4.14 && <4.22
+    , base                   >=4.16 && <4.22
     , deepseq                ^>=1.4 || ^>=1.5
     , io-classes             ^>=1.6 || ^>=1.7
     , io-classes:strict-stm
