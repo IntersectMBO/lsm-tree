@@ -129,6 +129,7 @@ unsafePinnedByteArrayToByteString off@(I# off#) len ba@(ByteArray ba#) =
     addr# = plusAddr# (byteArrayContents# ba#) off#
     fp = Foreign.ForeignPtr addr# (Foreign.PlainPtr (unsafeCoerce# ba#))
 
+-- | \( O(1) \) conversion.
 byteArrayToSBS :: ByteArray -> ShortByteString
 #if MIN_VERSION_bytestring(0,12,0)
 byteArrayToSBS ba             = SBS.ShortByteString ba

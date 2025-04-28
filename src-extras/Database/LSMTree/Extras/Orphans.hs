@@ -49,6 +49,8 @@ instance SerialiseKey Word256 where
     requireBytesExactly "Word256" 32 len $
       byteSwapWord256 $ indexWord8ArrayAsWord256 ba off
 
+instance SerialiseKeyOrderPreserving Word256
+
 instance SerialiseValue Word256 where
   serialiseValue w256 =
     RB.RawBytes $ mkPrimVector 0 32 $ P.runByteArray $ do
@@ -105,6 +107,8 @@ instance SerialiseKey Word128 where
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word128" 16 len $
       byteSwapWord128 $ indexWord8ArrayAsWord128 ba off
+
+instance SerialiseKeyOrderPreserving Word128
 
 instance SerialiseValue Word128 where
   serialiseValue w128 =
