@@ -168,8 +168,8 @@ wordAndBitIndex (BlockIx blockIx) (BitIx blockBitIx) =
     -- and the bit index.
     -- * There are 8 Word64s in each 64byte block.
     -- * Use 3 bits (bits 6..8) to select the Word64 within the block
-    wordIx    = fromIntegral blockIx `shiftL` 3
-              + (blockBitIx `shiftR` 6) .&. 7
+    wordIx    = fromIntegral blockIx `shiftL` 3 -- * 8
+              + (blockBitIx `shiftR` 6) .&. 7 -- `div` 64, `mod` 8
 
     -- Bits 0..5 of blockBitIx select the bit within Word64
     wordBitIx = blockBitIx .&. 63
