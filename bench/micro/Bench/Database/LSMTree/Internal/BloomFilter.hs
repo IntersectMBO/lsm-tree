@@ -38,10 +38,10 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.BloomFilter" [
         ]
     , env (constructionEnv 2_500_000) $ \ m ->
       bgroup "construction" [
-          bench "easyList 0.1" $
+          bench "FPR = 0.1" $
             whnf (constructBloom 0.1) m
 
-        , bench "easyList 0.9" $
+        , bench "FPR = 0.9" $
             whnf (constructBloom 0.9) m
         ]
     ]
