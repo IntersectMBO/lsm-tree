@@ -122,7 +122,7 @@ hGetByteArrayExactly ::
   -> Int
   -> m P.ByteArray
 hGetByteArrayExactly hfs h len = do
-    buf <- P.newByteArray 16
+    buf <- P.newByteArray len
     _   <- hGetBufExactly hfs h buf 0 (fromIntegral len)
     P.unsafeFreezeByteArray buf
 
