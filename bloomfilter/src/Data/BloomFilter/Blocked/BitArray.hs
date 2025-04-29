@@ -172,7 +172,7 @@ wordAndBitIndex (BlockIx blockIx) (BitIx blockBitIx) =
               + (blockBitIx `shiftR` 6) .&. 7 -- `div` 64, `mod` 8
 
     -- Bits 0..5 of blockBitIx select the bit within Word64
-    wordBitIx = blockBitIx .&. 63
+    wordBitIx = blockBitIx .&. 63 -- `mod` 64
 
 {-# INLINE unsafeTestBit #-}
 -- like testBit but using unsafeShiftL instead of shiftL
