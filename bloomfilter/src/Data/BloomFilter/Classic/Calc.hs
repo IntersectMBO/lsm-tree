@@ -36,7 +36,7 @@ type NumEntries   = Int
 --    size of the bloom filter in bits. In general the bits per entry can be
 --    fractional. The final bloom filter size in will be rounded to a whole
 --    number of bits.
--- 2. The number of hashes 'policyNumHashes'.
+-- 2. The number of hashes 'policyHashes'.
 -- 3. The expected FPR for the policy using 'policyFPR'.
 --
 data BloomPolicy = BloomPolicy {
