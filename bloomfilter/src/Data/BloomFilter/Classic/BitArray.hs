@@ -73,7 +73,7 @@ new s = do
 
     -- this may overflow, but so be it (2^64 bits is a lot)
     roundUpTo64 :: Int -> Int
-    roundUpTo64 i = unsafeShiftR (i + 63) 6
+    roundUpTo64 i = unsafeShiftR (i + 63) 6 -- `div` 64, rounded up
 
 serialise :: BitArray -> (ByteArray, Int, Int)
 serialise bitArray =
