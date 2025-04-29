@@ -128,6 +128,7 @@ prop_calc_policy_bits proxy (BitsPerEntry lb, BitsPerEntry ub) t
   where
     (~~~) = withinTolerance t
 
+-- | Compare @sizeHashes . sizeForBits@ against @numHashFunctions@
 prop_calc_size_hashes_bits :: BloomFilter bloom => Proxy bloom
                            -> BitsPerEntry -> NumEntries -> Property
 prop_calc_size_hashes_bits proxy (BitsPerEntry c) (NumEntries numEntries) =
@@ -136,6 +137,7 @@ prop_calc_size_hashes_bits proxy (BitsPerEntry c) (NumEntries numEntries) =
                        (fromIntegral numEntries)
   === fromIntegral (B.sizeHashes bsize)
 
+-- | Compare @sizeForFPR@ against @falsePositiveRate@ with some tolerance for deviations
 prop_calc_size_fpr_fpr :: BloomFilter bloom => Proxy bloom
                        -> FPR -> NumEntries -> Property
 prop_calc_size_fpr_fpr proxy (FPR fpr) (NumEntries numEntries) =
@@ -147,6 +149,7 @@ prop_calc_size_fpr_fpr proxy (FPR fpr) (NumEntries numEntries) =
   where
     (~~~) = withinTolerance 1e-6
 
+-- | Compare @sizeForBits@ against @falsePositiveRate@ with some tolerance for deviations
 prop_calc_size_fpr_bits :: BloomFilter bloom => Proxy bloom
                         -> BitsPerEntry -> NumEntries -> Property
 prop_calc_size_fpr_bits proxy (BitsPerEntry c) (NumEntries numEntries) =
