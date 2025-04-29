@@ -196,7 +196,10 @@ description:
       [doi:10.14778/3476249.3476274](https://doi.org/10.14778/3476249.3476274)
 
 license:            Apache-2.0
-license-file:       LICENSE
+license-files:
+  LICENSE
+  NOTICE
+
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
@@ -222,6 +225,13 @@ license-files:
 source-repository head
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
+
+-- TODO: this tag obviously does not exist yet because the package has not
+-- been published
+source-repository this
+  type:     git
+  location: https://github.com/IntersectMBO/lsm-tree
+  tag:      lsm-tree-0.1.0.0
 
 common warnings
   ghc-options:
