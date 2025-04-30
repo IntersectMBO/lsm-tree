@@ -62,6 +62,7 @@ module Data.BloomFilter.Classic (
     MBloom,
     new,
     insert,
+    read,
 
     -- ** Conversion
     freeze,
@@ -78,13 +79,12 @@ import           Data.Word (Word64)
 
 import qualified Data.BloomFilter.Classic.BitVec64 as V
 import           Data.BloomFilter.Classic.Calc
-import           Data.BloomFilter.Classic.Internal (Bloom (..), bloomInvariant)
-import           Data.BloomFilter.Classic.Mutable (MBloom (..), insert, new)
-import qualified Data.BloomFilter.Classic.Mutable as MB
+import           Data.BloomFilter.Classic.Internal hiding (deserialise)
+import qualified Data.BloomFilter.Classic.Internal as Internal
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
 
-import           Prelude hiding (elem, notElem)
+import           Prelude hiding (elem, notElem, read)
 
 -- | Create an immutable Bloom filter, using the given setup function
 -- which executes in the 'ST' monad.
@@ -107,6 +107,11 @@ create bloomsize body =
       mb <- new bloomsize
       body mb
       unsafeFreeze mb
+
+-- | Insert a value into a mutable Bloom filter.  Afterwards, a
+-- membership query for the same value is guaranteed to return @True@.
+insert :: Hashable a => MBloom s a -> a -> ST s ()
+insert !mb !x = insertHashes mb (makeHashes x)
 
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
@@ -179,6 +184,12 @@ notElem elt ub = notElemHashes (makeHashes elt) ub
 notElemHashes :: CheapHashes a -> Bloom a -> Bool
 notElemHashes !ch !ub = not (elemHashes ch ub)
 
+-- | Query a mutable Bloom filter for membership.  If the value is
+-- present, return @True@.  If the value is not present, there is
+-- /still/ some possibility that @True@ will be returned.
+read :: Hashable a => a -> MBloom s a -> ST s Bool
+read elt mb = readHashes (makeHashes elt) mb
+
 -- | Return the size of the Bloom filter.
 size :: Bloom a -> BloomSize
 size Bloom { numBits, numHashes } =
@@ -241,7 +252,7 @@ deserialise :: PrimMonad m
             -> m (Bloom a)
 deserialise bloomsize fill = do
     mbloom <- stToPrim $ new bloomsize
-    MB.deserialise mbloom fill
+    Internal.deserialise mbloom fill
     stToPrim $ unsafeFreeze mbloom
 
 -- $overview
