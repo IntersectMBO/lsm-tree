@@ -1,4 +1,4 @@
-#! /usr/bin/env sh
+#!/bin/sh
 
 # Usage notes:
 #
@@ -36,11 +36,31 @@
 #         current module or the most recently found such directive is
 #         considered to not be relevant for the remainder of the module.
 
+# Find sed:
+case "$(uname)" in
+    Darwin)
+        sed="$(which gsed)"
+        if [ "${sed}" = "" ]; then
+            printf 'This script requires GNU sed, which can be installed with Homebrew:\n\n' >&2
+            printf '  brew install gsed\n\n' >&2
+            exit 1
+        fi
+        ;;
+    *)
+        sed="$(which sed)"
+        ;;
+esac
+
+sed=$(which gsed)
+if [ "${sed}" = "" ]; then
+    sed=$(which sed)
+fi
+
 specialise='SPECIALI[SZ]E'
 pragma_types="($specialise|INLINE)"
 hic='[[:alnum:]_#]' # Haskell identifier character
 
-LC_COLLATE=C LC_CTYPE=C sed -En -e '
+LC_COLLATE=C LC_CTYPE=C $sed -En -e '
     :start
     # Process the first line of a module header
     /^module / {
