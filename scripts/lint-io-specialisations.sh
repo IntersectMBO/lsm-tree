@@ -1,7 +1,7 @@
 #! /usr/bin/env sh
 
-absence_allowed_file=scripts/io-specialisations/absence-allowed
-absence_finder=scripts/io-specialisations/find-absent.sh
+absence_allowed_file=scripts/lint-io-specialisations/absence-allowed
+absence_finder=scripts/lint-io-specialisations/find-absent.sh
 
 set -e
 
