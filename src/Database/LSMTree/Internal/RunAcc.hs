@@ -38,7 +38,6 @@ import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import           Data.BloomFilter (Bloom, MBloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Data.Word (Word64)
@@ -167,7 +166,7 @@ addSmallKeyOp ::
 addSmallKeyOp racc@RunAcc{..} k e =
   assert (PageAcc.entryWouldFitInPage k e) $ do
     modifyPrimVar entryCount (+1)
-    MBloom.insert mbloom k
+    Bloom.insert mbloom k
 
     pageBoundaryNeeded <-
         -- Try adding the key/op to the page accumulator to see if it fits. If
@@ -213,7 +212,7 @@ addLargeKeyOp ::
 addLargeKeyOp racc@RunAcc{..} k e =
   assert (not (PageAcc.entryWouldFitInPage k e)) $ do
     modifyPrimVar entryCount (+1)
-    MBloom.insert mbloom k
+    Bloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
     -- new large key/op will need more than one page to itself.
@@ -267,7 +266,7 @@ addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
   assert (RawPage.rawPageOverflowPages page > 0) $
   assert (RawPage.rawPageOverflowPages page == length overflowPages) $ do
     modifyPrimVar entryCount (+1)
-    MBloom.insert mbloom k
+    Bloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
     -- new large key/op will need more than one page to itself.
@@ -331,7 +330,7 @@ instance NFData RunBloomFilterAlloc where
 
 newMBloom :: NumEntries -> RunBloomFilterAlloc -> ST s (MBloom s a)
 newMBloom (NumEntries nentries) alloc =
-    MBloom.new (Bloom.sizeForPolicy (policy alloc) nentries)
+    Bloom.new (Bloom.sizeForPolicy (policy alloc) nentries)
   where
     --TODO: it'd be possible to turn the RunBloomFilterAlloc into a BloomPolicy
     -- without the NumEntries, and cache the policy, avoiding recalculating the

@@ -26,7 +26,6 @@ import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Classic.Mutable as MBloom
 import           Data.BloomFilter.Hash (Hashable)
 import           Data.Foldable (Foldable (..))
 import           Data.Proxy (Proxy (..))
@@ -290,7 +289,7 @@ type BloomMaker a = [a] -> Bloom a
 mkBloomFromAlloc :: Hashable a => RunBloomFilterAlloc -> BloomMaker a
 mkBloomFromAlloc alloc xs = runST $ do
     mb <- newMBloom n alloc
-    mapM_ (MBloom.insert mb) xs
+    mapM_ (Bloom.insert mb) xs
     Bloom.unsafeFreeze mb
   where
     n = LSMT.NumEntries $ length xs
