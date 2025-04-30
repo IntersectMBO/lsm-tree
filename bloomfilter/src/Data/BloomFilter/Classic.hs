@@ -111,12 +111,12 @@ create bloomsize body =
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
-freeze MBloom { numBits, numHashes, bitArray } = do
-    bitArray' <- V.freeze bitArray
+freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
+    bitArray <- V.freeze mbBitArray
     let !bf = Bloom {
-                numHashes,
-                numBits,
-                bitArray = bitArray'
+                numBits   = mbNumBits,
+                numHashes = mbNumHashes,
+                bitArray
               }
     assert (bloomInvariant bf) $ pure bf
 
@@ -124,12 +124,12 @@ freeze MBloom { numBits, numHashes, bitArray } = do
 -- filter /must not/ be modified afterwards, or a runtime crash may
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
-unsafeFreeze MBloom { numBits, numHashes, bitArray } = do
-    bitArray' <- V.unsafeFreeze bitArray
+unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
+    bitArray <- V.unsafeFreeze mbBitArray
     let !bf = Bloom {
-                numHashes,
-                numBits,
-                bitArray = bitArray'
+                numBits   = mbNumBits,
+                numHashes = mbNumHashes,
+                bitArray
               }
     assert (bloomInvariant bf) $ pure bf
 
@@ -137,11 +137,11 @@ unsafeFreeze MBloom { numBits, numHashes, bitArray } = do
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
 thaw Bloom { numBits, numHashes, bitArray } = do
-    bitArray' <- V.thaw bitArray
+    mbBitArray <- V.thaw bitArray
     pure MBloom {
-      numBits,
-      numHashes,
-      bitArray = bitArray'
+      mbNumBits   = numBits,
+      mbNumHashes = numHashes,
+      mbBitArray
     }
 
 -- | Query an immutable Bloom filter for membership.  If the value is
