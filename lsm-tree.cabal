@@ -337,6 +337,7 @@ library
   build-depends:
     , base                    >=4.16      && <4.22
     , bitvec                  ^>=1.1
+    , blockio                 ^>=0.1
     , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
     , cborg                   ^>=0.2.10.0
     , containers              ^>=0.6      || ^>=0.7
@@ -347,7 +348,6 @@ library
     , fs-api                  ^>=0.3
     , io-classes              ^>=1.6      || ^>=1.7
     , io-classes:strict-mvar
-    , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:kmerge
@@ -484,6 +484,7 @@ library extras
   build-depends:
     , base                    >=4.16 && <4.22
     , bitvec
+    , blockio
     , bytestring
     , containers
     , contra-tracer
@@ -493,7 +494,6 @@ library extras
     , io-classes:strict-mvar
     , io-classes:strict-stm
     , lsm-tree
-    , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:kmerge
@@ -562,7 +562,6 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.StateMachine.Op
     Test.Database.LSMTree.UnitTests
     Test.FS
-    Test.System.Posix.Fcntl.NoCache
     Test.Util.Arbitrary
     Test.Util.FS
     Test.Util.FS.Error
@@ -578,6 +577,8 @@ test-suite lsm-tree-test
     , barbies
     , base                    <5
     , bitvec
+    , blockio
+    , blockio:sim
     , bytestring
     , cborg
     , constraints
@@ -595,8 +596,6 @@ test-suite lsm-tree-test
     , io-classes:strict-stm
     , io-sim
     , lsm-tree
-    , lsm-tree:blockio-api
-    , lsm-tree:blockio-sim
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:extras
@@ -626,9 +625,6 @@ test-suite lsm-tree-test
     , vector-algorithms
     , wide-word
 
-  if !os(windows)
-    build-depends: lsm-tree:fcntl-nocache
-
   ghc-options:    -threaded
 
 benchmark lsm-tree-micro-bench
@@ -649,6 +645,7 @@ benchmark lsm-tree-micro-bench
 
   build-depends:
     , base                  <5
+    , blockio
     , bytestring
     , containers
     , contra-tracer
@@ -657,7 +654,6 @@ benchmark lsm-tree-micro-bench
     , directory
     , fs-api
     , lsm-tree
-    , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:extras
@@ -692,11 +688,11 @@ benchmark lsm-tree-bench-lookups
   main-is:        lsm-tree-bench-lookups.hs
   build-depends:
     , base                  <5
+    , blockio
     , deepseq
     , fs-api
     , io-classes
     , lsm-tree
-    , lsm-tree:blockio-api
     , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:extras
@@ -735,6 +731,7 @@ benchmark lsm-tree-bench-wp8
   build-depends:
     , async
     , base                  <5
+    , blockio
     , bytestring
     , clock
     , containers
@@ -742,7 +739,6 @@ benchmark lsm-tree-bench-wp8
     , deepseq
     , fs-api
     , lsm-tree
-    , lsm-tree:blockio-api
     , lsm-tree:extras
     , lsm-tree:mcg
     , optparse-applicative
@@ -901,117 +897,6 @@ test-suite lsm-prototypes-tests
     , base
     , lsm-tree:prototypes
     , tasty
-
-flag serialblockio
-  description: Use serial HasBlockIO regardless of the operating system
-  default:     False
-  manual:      True
-
-library blockio-api
-  import:          language, warnings, wno-x-partial
-  visibility:      private
-  hs-source-dirs:  blockio-api/src
-  exposed-modules:
-    System.FS.BlockIO.API
-    System.FS.BlockIO.IO
-    System.FS.BlockIO.Serial
-
-  build-depends:
-    , base        >=4.16  && <4.22
-    , deepseq     ^>=1.4  || ^>=1.5
-    , fs-api      ^>=0.3
-    , io-classes  ^>=1.6  || ^>=1.7
-    , primitive   ^>=0.9
-    , vector      ^>=0.13
-
-  if os(linux)
-    hs-source-dirs: blockio-api/src-linux
-    other-modules:  System.FS.BlockIO.Internal
-    build-depends:
-      , lsm-tree:fcntl-nocache
-      , unix                    ^>=2.8
-
-    if !flag(serialblockio)
-      other-modules: System.FS.BlockIO.Async
-      build-depends: blockio-uring ^>=0.1
-
-  elif os(osx)
-    hs-source-dirs: blockio-api/src-macos
-    build-depends:
-      , lsm-tree:fcntl-nocache
-      , unix                    ^>=2.8
-
-    other-modules:  System.FS.BlockIO.Internal
-
-  elif os(windows)
-    hs-source-dirs: blockio-api/src-windows
-    build-depends:  Win32 ^>=2.14
-    other-modules:  System.FS.BlockIO.Internal
-
-  if flag(serialblockio)
-    cpp-options: -DSERIALBLOCKIO
-
-test-suite blockio-api-test
-  import:         language, warnings, wno-x-partial
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: blockio-api/test
-  main-is:        Main.hs
-  build-depends:
-    , async
-    , base                  >=4.16      && <4.22
-    , bytestring
-    , fs-api
-    , lsm-tree:blockio-api
-    , primitive
-    , QuickCheck            ^>=2.15.0.1
-    , tasty
-    , tasty-hunit
-    , tasty-quickcheck
-    , temporary
-    , vector
-
-  ghc-options:    -threaded
-
-library blockio-sim
-  import:          language, warnings, wno-x-partial
-  visibility:      private
-  hs-source-dirs:  blockio-sim/src
-  exposed-modules: System.FS.BlockIO.Sim
-  build-depends:
-    , base                   >=4.16 && <4.22
-    , bytestring
-    , fs-api                 ^>=0.3
-    , fs-sim                 ^>=0.3
-    , io-classes             ^>=1.6 || ^>=1.7
-    , io-classes:strict-stm
-    , lsm-tree:blockio-api
-    , primitive              ^>=0.9
-
-test-suite blockio-sim-test
-  import:         language, warnings
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: blockio-sim/test
-  main-is:        Main.hs
-  build-depends:
-    , base                   >=4.16 && <4.22
-    , fs-api
-    , fs-sim
-    , io-classes:strict-stm
-    , lsm-tree:blockio-api
-    , lsm-tree:blockio-sim
-    , QuickCheck
-    , tasty
-    , tasty-quickcheck
-
-library fcntl-nocache
-  import:         language, warnings
-  visibility:     private
-  hs-source-dirs: src-fcntl-nocache
-
-  if !os(windows)
-    exposed-modules:    System.Posix.Fcntl.NoCache
-    build-depends:      base <5
-    build-tool-depends: hsc2hs:hsc2hs
 
 library control
   import:          language, warnings

@@ -3,7 +3,9 @@ index-state:
   -- current date: ghc-9.12 and data-elevator
   , hackage.haskell.org 2025-03-10T07:49:31Z
 
-packages: .
+packages:
+  .
+  ./blockio
 
 tests: True
 benchmarks: True

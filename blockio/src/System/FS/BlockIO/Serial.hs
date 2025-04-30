@@ -1,6 +1,3 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module System.FS.BlockIO.Serial (
     serialHasBlockIO
   ) where
