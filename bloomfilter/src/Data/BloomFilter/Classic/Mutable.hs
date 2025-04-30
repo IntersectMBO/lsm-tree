@@ -35,8 +35,7 @@ module Data.BloomFilter.Classic.Mutable (
     new,
 
     -- ** Accessors
-    size,
-    elem,
+    read,
 
     -- ** Mutation
     insert,
@@ -53,32 +52,32 @@ import           Data.BloomFilter.Classic.Calc (BloomSize (..))
 import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, evalHashes,
                      makeHashes)
 
-import           Prelude hiding (elem)
+import           Prelude hiding (read)
 
 type MBloom :: Type -> Type -> Type
 -- | A mutable Bloom filter, for use within the 'ST' monad.
 data MBloom s a = MBloom {
-      numBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
-    , numHashes :: {-# UNPACK #-} !Int
-    , bitArray  :: {-# UNPACK #-} !(V.MBitVec64 s)
+      mbNumBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
+    , mbNumHashes :: {-# UNPACK #-} !Int
+    , mbBitArray  :: {-# UNPACK #-} !(V.MBitVec64 s)
     }
 type role MBloom nominal nominal
 
 instance Show (MBloom s a) where
-    show mb = "MBloom { " ++ show (numBits mb) ++ " bits } "
+    show mb = "MBloom { " ++ show (mbNumBits mb) ++ " bits } "
 
 -- | Create a new mutable Bloom filter.
 --
 -- The size is ceiled at $2^48$. Tell us if you need bigger bloom filters.
 --
 new :: BloomSize -> ST s (MBloom s a)
-new BloomSize { sizeBits, sizeHashes = numHashes } = do
-    let !numBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
-    bitArray <- V.new (fromIntegral numBits)
+new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
+    let !mbNumBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
+    mbBitArray <- V.new (fromIntegral mbNumBits)
     pure MBloom {
-      numBits,
-      numHashes,
-      bitArray
+      mbNumBits,
+      mbNumHashes,
+      mbBitArray
     }
 
 -- | Modify the filter's bit array. The callback is expected to read (exactly)
@@ -87,8 +86,8 @@ new BloomSize { sizeBits, sizeHashes = numHashes } = do
 deserialise :: MBloom (PrimState m) a
             -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
             -> m ()
-deserialise MBloom {bitArray} fill =
-    V.deserialise bitArray fill
+deserialise MBloom {mbBitArray} fill =
+    V.deserialise mbBitArray fill
 
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
@@ -96,7 +95,7 @@ insert :: Hashable a => MBloom s a -> a -> ST s ()
 insert !mb !x = insertHashes mb (makeHashes x)
 
 insertHashes :: MBloom s a -> CheapHashes a -> ST s ()
-insertHashes MBloom { numBits = m, numHashes = k, bitArray = v } !h =
+insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } !h =
     go 0
   where
     go !i | i >= k = return ()
@@ -106,11 +105,11 @@ insertHashes MBloom { numBits = m, numHashes = k, bitArray = v } !h =
 -- | Query a mutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
-elem :: Hashable a => a -> MBloom s a -> ST s Bool
-elem elt mb = elemHashes (makeHashes elt) mb
+read :: Hashable a => a -> MBloom s a -> ST s Bool
+read elt mb = readHashes (makeHashes elt) mb
 
-elemHashes :: forall s a. CheapHashes a -> MBloom s a -> ST s Bool
-elemHashes !ch MBloom { numBits = m, numHashes = k, bitArray = v } =
+readHashes :: forall s a. CheapHashes a -> MBloom s a -> ST s Bool
+readHashes !ch MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } =
     go 0
   where
     go :: Int -> ST s Bool
@@ -120,15 +119,7 @@ elemHashes !ch MBloom { numBits = m, numHashes = k, bitArray = v } =
                            b <- V.unsafeRead v idx
                            if b
                            then go (i + 1)
-
                            else return False
--- | Return the size of the Bloom filter.
-size :: MBloom s a -> BloomSize
-size MBloom { numBits, numHashes } =
-    BloomSize {
-      sizeBits   = numBits,
-      sizeHashes = numHashes
-    }
 
 -- $overview
 --
