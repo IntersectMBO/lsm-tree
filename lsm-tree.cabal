@@ -442,7 +442,6 @@ test-suite bloomfilter-tests
     , quickcheck-instances
     , tasty
     , tasty-quickcheck
-    , vector
 
 benchmark bloomfilter-bench
   import:         language
