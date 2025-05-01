@@ -426,7 +426,7 @@ library bloomfilter
     Data.BloomFilter.Hash
 
   other-modules:
-    Data.BloomFilter.Classic.BitVec64
+    Data.BloomFilter.Classic.BitArray
     Data.BloomFilter.Classic.Calc
     Data.BloomFilter.Classic.Internal
 

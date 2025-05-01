@@ -1,12 +1,12 @@
 {-# LANGUAGE CPP           #-}
 {-# LANGUAGE MagicHash     #-}
 {-# LANGUAGE UnboxedTuples #-}
--- | Minimal bit vector implementation.
-module Data.BloomFilter.Classic.BitVec64 (
-    BitVec64 (..),
+-- | Minimal bit array implementation.
+module Data.BloomFilter.Classic.BitArray (
+    BitArray (..),
     unsafeIndex,
     prefetchIndex,
-    MBitVec64 (..),
+    MBitArray (..),
     new,
     unsafeWrite,
     unsafeRead,
@@ -36,11 +36,11 @@ import           GHC.Word (Word64 (W64#))
 -- | Bit vector backed up by an array of Word64
 --
 -- This vector's offset and length are multiples of 64
-newtype BitVec64 = BV64 (VP.Vector Word64)
+newtype BitArray = BV64 (VP.Vector Word64)
   deriving (Eq, Show)
 
 {-# INLINE unsafeIndex #-}
-unsafeIndex :: BitVec64 -> Int -> Bool
+unsafeIndex :: BitArray -> Int -> Bool
 unsafeIndex (BV64 bv) i =
     unsafeTestBit (VP.unsafeIndex bv j) k
   where
@@ -53,7 +53,7 @@ unsafeTestBit :: Word64 -> Int -> Bool
 unsafeTestBit w k = w .&. (1 `unsafeShiftL` k) /= 0
 
 {-# INLINE prefetchIndex #-}
-prefetchIndex :: BitVec64 -> Int -> ST s ()
+prefetchIndex :: BitArray -> Int -> ST s ()
 prefetchIndex (BV64 (VP.Vector (I# off#) _ (ByteArray ba#))) (I# i#) =
     ST (\s -> case prefetchByteArray0# ba# (off# +# uncheckedIShiftRL# i# 3#) s of
                 s' -> (# s', () #))
@@ -61,7 +61,7 @@ prefetchIndex (BV64 (VP.Vector (I# off#) _ (ByteArray ba#))) (I# i#) =
     -- offset to a byte offset for prefetch. Whereas in unsafeIndex, we go from
     -- a bit offset to a Word64 offset, so an extra shiftR 3, for 6 total.
 
-newtype MBitVec64 s = MBV64 (VP.MVector s Word64)
+newtype MBitArray s = MBV64 (VP.MVector s Word64)
 
 -- | Will create an explicitly pinned byte array if it is larger than 1 kB.
 -- This is done because pinned byte arrays allow for more efficient
@@ -70,7 +70,7 @@ newtype MBitVec64 s = MBV64 (VP.MVector s Word64)
 --
 -- TODO: remove this workaround once a solution exists, e.g. a new primop that
 -- allows checking for implicit pinning.
-new :: Word64 -> ST s (MBitVec64 s)
+new :: Word64 -> ST s (MBitArray s)
 new s = do
     mba <- newPinnedByteArray numBytes
     setByteArray mba 0 numBytes (0 :: Word8)
@@ -79,14 +79,14 @@ new s = do
     !numWords = w2i (roundUpTo64 s)
     !numBytes = unsafeShiftL numWords 3 -- * 8
 
-serialise :: BitVec64 -> (ByteArray, Int, Int)
+serialise :: BitArray -> (ByteArray, Int, Int)
 serialise = asByteArray
   where
     asByteArray (BV64 (VP.Vector off len ba)) =
       (ba, off * 8, len * 8)
 
 -- | Do an inplace overwrite of the byte array representing the bit block.
-deserialise :: MBitVec64 s
+deserialise :: MBitArray s
             -> (MutableByteArray s -> Int -> Int -> m ())
             -> m ()
 deserialise bitArray fill =
@@ -96,14 +96,14 @@ deserialise bitArray fill =
     asMutableByteArray (MBV64 (VP.MVector off len mba)) =
       (mba, off * 8, len * 8)
 
-unsafeWrite :: MBitVec64 s -> Word64 -> Bool -> ST s ()
+unsafeWrite :: MBitArray s -> Word64 -> Bool -> ST s ()
 unsafeWrite (MBV64 mbv) i x = do
     VPM.unsafeModify mbv (\w -> if x then setBit w (w2i k) else clearBit w (w2i k)) (w2i j)
   where
     !j = unsafeShiftR i 6 -- `div` 64
     !k = i .&. 63         -- `mod` 64
 
-unsafeRead :: MBitVec64 s -> Word64 -> ST s Bool
+unsafeRead :: MBitArray s -> Word64 -> ST s Bool
 unsafeRead (MBV64 mbv) i = do
     !w <- VPM.unsafeRead mbv (w2i j)
     return $! testBit w (w2i k)
@@ -111,13 +111,13 @@ unsafeRead (MBV64 mbv) i = do
     !j = unsafeShiftR i 6 -- `div` 64
     !k = i .&. 63         -- `mod` 64
 
-freeze :: MBitVec64 s -> ST s BitVec64
+freeze :: MBitArray s -> ST s BitArray
 freeze (MBV64 mbv) = BV64 <$> VP.freeze mbv
 
-unsafeFreeze :: MBitVec64 s -> ST s BitVec64
+unsafeFreeze :: MBitArray s -> ST s BitArray
 unsafeFreeze (MBV64 mbv) = BV64 <$> VP.unsafeFreeze mbv
 
-thaw :: BitVec64 -> ST s (MBitVec64 s)
+thaw :: BitArray -> ST s (MBitArray s)
 thaw (BV64 bv) = MBV64 <$> VP.thaw bv
 
 -- this may overflow, but so be it (1^64 bits is a lot)
