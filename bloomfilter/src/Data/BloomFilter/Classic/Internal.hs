@@ -1,5 +1,9 @@
+{-# LANGUAGE CPP       #-}
+{-# LANGUAGE MagicHash #-}
 {-# OPTIONS_HADDOCK not-home #-}
--- | This module exports 'Bloom'' definition.
+-- | This module defines the 'Bloom' and 'MBloom' types and all the functions
+-- that need direct knowledge of and access to the representation. This forms
+-- the trusted base.
 module Data.BloomFilter.Classic.Internal (
     -- * Mutable Bloom filters
     MBloom (..),
@@ -10,12 +14,19 @@ module Data.BloomFilter.Classic.Internal (
     -- * Immutable Bloom filters
     Bloom (..),
     bloomInvariant,
+    size,
+    elemHashes,
 
     -- * Conversion
+    serialise,
     deserialise,
-) where
+    freeze,
+    unsafeFreeze,
+    thaw,
+  ) where
 
 import           Control.DeepSeq (NFData (..))
+import           Control.Exception (assert)
 import           Control.Monad.Primitive (PrimState)
 import           Control.Monad.ST (ST)
 import           Data.Bits
@@ -23,11 +34,16 @@ import           Data.Kind (Type)
 import           Data.Primitive.ByteArray
 import qualified Data.Vector.Primitive as VP
 
+#if MIN_VERSION_base(4,17,0)
+import           GHC.Exts (remWord64#)
+#else
+import           GHC.Exts (remWord#)
+#endif
+import           GHC.Word (Word64 (W64#))
+
 import qualified Data.BloomFilter.Classic.BitVec64 as V
 import           Data.BloomFilter.Classic.Calc (BloomSize (..))
 import           Data.BloomFilter.Hash (CheapHashes, evalHashes)
-
-import           Prelude hiding (read)
 
 -------------------------------------------------------------------------------
 -- Mutable Bloom filters
@@ -121,3 +137,90 @@ instance Show (Bloom a) where
 
 instance NFData (Bloom a) where
     rnf !_ = ()
+
+-- | Return the size of the Bloom filter.
+size :: Bloom a -> BloomSize
+size Bloom { numBits, numHashes } =
+    BloomSize {
+      sizeBits   = numBits,
+      sizeHashes = numHashes
+    }
+
+-- | Query an immutable Bloom filter for membership using already constructed 'Hashes' value.
+elemHashes :: CheapHashes a -> Bloom a -> Bool
+elemHashes !ch Bloom { numBits, numHashes, bitArray } =
+    go 0
+  where
+    go :: Int -> Bool
+    go !i | i >= numHashes
+          = True
+    go !i = let idx' :: Word64
+                !idx' = evalHashes ch i in
+            let idx :: Int
+                !idx = fromIntegral (idx' `unsafeRemWord64` fromIntegral numBits) in
+            -- While the idx' can cover the full Word64 range,
+            -- after taking the remainder, it now must fit in
+            -- and Int because it's less than the filter size.
+            if V.unsafeIndex bitArray idx
+              then go (i + 1)
+              else False
+
+serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
+serialise b@Bloom{bitArray} =
+    (size b, ba, off, len)
+  where
+    (ba, off, len) = V.serialise bitArray
+
+
+-------------------------------------------------------------------------------
+-- Conversions between mutable and immutable Bloom filters
+--
+
+-- | Create an immutable Bloom filter from a mutable one.  The mutable
+-- filter may be modified afterwards.
+freeze :: MBloom s a -> ST s (Bloom a)
+freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
+    bitArray <- V.freeze mbBitArray
+    let !bf = Bloom {
+                numBits   = mbNumBits,
+                numHashes = mbNumHashes,
+                bitArray
+              }
+    assert (bloomInvariant bf) $ pure bf
+
+-- | Create an immutable Bloom filter from a mutable one.  The mutable
+-- filter /must not/ be modified afterwards, or a runtime crash may
+-- occur.  For a safer creation interface, use 'freeze' or 'create'.
+unsafeFreeze :: MBloom s a -> ST s (Bloom a)
+unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
+    bitArray <- V.unsafeFreeze mbBitArray
+    let !bf = Bloom {
+                numBits   = mbNumBits,
+                numHashes = mbNumHashes,
+                bitArray
+              }
+    assert (bloomInvariant bf) $ pure bf
+
+-- | Copy an immutable Bloom filter to create a mutable one.  There is
+-- no non-copying equivalent.
+thaw :: Bloom a -> ST s (MBloom s a)
+thaw Bloom { numBits, numHashes, bitArray } = do
+    mbBitArray <- V.thaw bitArray
+    pure MBloom {
+      mbNumBits   = numBits,
+      mbNumHashes = numHashes,
+      mbBitArray
+    }
+
+
+-------------------------------------------------------------------------------
+-- Low level utils
+--
+
+-- | Like 'rem' but does not check for division by 0.
+unsafeRemWord64 :: Word64 -> Word64 -> Word64
+#if MIN_VERSION_base(4,17,0)
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord64#` y#)
+#else
+unsafeRemWord64 (W64# x#) (W64# y#) = W64# (x# `remWord#` y#)
+#endif
