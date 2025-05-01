@@ -49,26 +49,36 @@ newtype LevelNo = LevelNo Int
   Table configuration
 -------------------------------------------------------------------------------}
 
--- | Table configuration parameters, including LSM tree tuning parameters.
---
--- Some config options are fixed (for now):
---
--- * Merge policy: Tiering
---
--- * Size ratio: 4
+{- |
+A collection of configuration parameters for tables, which can be used to tune the performance of the table.
+
+Each parameter is associated with its own type.
+Detailed discussion of the use of each parameter can be found in the documentation for its associated type.
+For an overview, see the [Performance](../#performance) section in the package description.
+
+The 'defaultTableConfig' defines reasonable defaults for all parameters.
+-}
 data TableConfig = TableConfig {
+    -- | The merge policy determines how the table manages its data,
+    --   which affects the disk I\/O cost of some operations.
     confMergePolicy       :: !MergePolicy
-    -- Size ratio between the capacities of adjacent levels.
+    -- | The size ratio determines how the table manages its data,
+    --   and is the parameter \(T\) in the disk I\/O cost of operations.
   , confSizeRatio         :: !SizeRatio
-    -- | Total number of bytes that the write buffer can use.
-    --
-    -- The maximum is 4GiB, which should be more than enough for realistic
-    -- applications.
+    -- | The write buffer allocation strategy determines the maximum size of the in-memory write buffer,
+    --   and is the parameter \(B\) in the disk I\/O cost of operations.
+    --   Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
+    -- | The Bloom filter allocation strategy determines the number of bits per physical entry allocated for the Bloom filters.
   , confBloomFilterAlloc  :: !BloomFilterAlloc
+    -- | The fence pointer index type determines the type of indexes,
+    --   which affects the in-memory size of the table and may constrain the table keys.
   , confFencePointerIndex :: !FencePointerIndexType
-    -- | The policy for caching key\/value data from disk in memory.
+    -- | The disk cache policy determines the policy for caching data from disk in memory,
+    --   which may affect the performance of lookup operations.
   , confDiskCachePolicy   :: !DiskCachePolicy
+    -- | The merge schedule determines how the table manages its data,
+    --   which affects the disk I\/O cost of some operations.
   , confMergeSchedule     :: !MergeSchedule
   }
   deriving stock (Show, Eq)
