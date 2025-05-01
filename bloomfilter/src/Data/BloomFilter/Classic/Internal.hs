@@ -41,7 +41,8 @@ import           GHC.Exts (remWord#)
 #endif
 import           GHC.Word (Word64 (W64#))
 
-import qualified Data.BloomFilter.Classic.BitVec64 as V
+import           Data.BloomFilter.Classic.BitArray (BitArray, MBitArray)
+import qualified Data.BloomFilter.Classic.BitArray as BitArray
 import           Data.BloomFilter.Classic.Calc (BloomSize (..))
 import           Data.BloomFilter.Hash (CheapHashes, evalHashes)
 
@@ -54,7 +55,7 @@ type MBloom :: Type -> Type -> Type
 data MBloom s a = MBloom {
       mbNumBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
     , mbNumHashes :: {-# UNPACK #-} !Int
-    , mbBitArray  :: {-# UNPACK #-} !(V.MBitVec64 s)
+    , mbBitArray  :: {-# UNPACK #-} !(MBitArray s)
     }
 type role MBloom nominal nominal
 
@@ -71,7 +72,7 @@ instance NFData (MBloom s a) where
 new :: BloomSize -> ST s (MBloom s a)
 new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
     let !mbNumBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
-    mbBitArray <- V.new (fromIntegral mbNumBits)
+    mbBitArray <- BitArray.new (fromIntegral mbNumBits)
     pure MBloom {
       mbNumBits,
       mbNumHashes,
@@ -84,7 +85,7 @@ insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } !h =
   where
     go !i | i >= k = return ()
           | otherwise = let !idx = evalHashes h i `rem` fromIntegral m
-                        in V.unsafeWrite v idx True >> go (i + 1)
+                        in BitArray.unsafeWrite v idx True >> go (i + 1)
 
 readHashes :: forall s a. CheapHashes a -> MBloom s a -> ST s Bool
 readHashes !ch MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } =
@@ -94,7 +95,7 @@ readHashes !ch MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } =
     go !i | i >= k    = return True
           | otherwise = do let !idx' = evalHashes ch i
                            let !idx = idx' `rem` fromIntegral m
-                           b <- V.unsafeRead v idx
+                           b <- BitArray.unsafeRead v idx
                            if b
                            then go (i + 1)
                            else return False
@@ -106,7 +107,7 @@ deserialise :: MBloom (PrimState m) a
             -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
             -> m ()
 deserialise MBloom {mbBitArray} fill =
-    V.deserialise mbBitArray fill
+    BitArray.deserialise mbBitArray fill
 
 
 -------------------------------------------------------------------------------
@@ -117,13 +118,13 @@ type Bloom :: Type -> Type
 data Bloom a = Bloom {
       numBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
     , numHashes :: {-# UNPACK #-} !Int
-    , bitArray  :: {-# UNPACK #-} !V.BitVec64
+    , bitArray  :: {-# UNPACK #-} !BitArray
     }
   deriving Eq
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
-bloomInvariant Bloom { numBits = s, bitArray = V.BV64 (VP.Vector off len ba) } =
+bloomInvariant Bloom { numBits = s, bitArray = BitArray.BV64 (VP.Vector off len ba) } =
        s > 0
     && s <= 2^(48 :: Int)
     && off >= 0
@@ -161,7 +162,7 @@ elemHashes !ch Bloom { numBits, numHashes, bitArray } =
             -- While the idx' can cover the full Word64 range,
             -- after taking the remainder, it now must fit in
             -- and Int because it's less than the filter size.
-            if V.unsafeIndex bitArray idx
+            if BitArray.unsafeIndex bitArray idx
               then go (i + 1)
               else False
 
@@ -169,7 +170,7 @@ serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
     (size b, ba, off, len)
   where
-    (ba, off, len) = V.serialise bitArray
+    (ba, off, len) = BitArray.serialise bitArray
 
 
 -------------------------------------------------------------------------------
@@ -180,7 +181,7 @@ serialise b@Bloom{bitArray} =
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
 freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
-    bitArray <- V.freeze mbBitArray
+    bitArray <- BitArray.freeze mbBitArray
     let !bf = Bloom {
                 numBits   = mbNumBits,
                 numHashes = mbNumHashes,
@@ -193,7 +194,7 @@ freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
 -- occur.  For a safer creation interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
 unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
-    bitArray <- V.unsafeFreeze mbBitArray
+    bitArray <- BitArray.unsafeFreeze mbBitArray
     let !bf = Bloom {
                 numBits   = mbNumBits,
                 numHashes = mbNumHashes,
@@ -205,7 +206,7 @@ unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
 thaw Bloom { numBits, numHashes, bitArray } = do
-    mbBitArray <- V.thaw bitArray
+    mbBitArray <- BitArray.thaw bitArray
     pure MBloom {
       mbNumBits   = numBits,
       mbNumHashes = numHashes,
