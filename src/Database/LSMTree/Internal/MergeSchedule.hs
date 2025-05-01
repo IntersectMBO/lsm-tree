@@ -494,7 +494,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
     (wb', es') <- addWriteBufferEntries hfs resolve wbblobs maxn wb es
     -- Supply credits before flushing, so that we complete merges in time. The
     -- number of supplied credits is based on the size increase of the write
-    -- buffer, not the the number of processed entries @length es' - length es@.
+    -- buffer, not the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
     supplyCredits conf (NominalCredits numAdded) (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }

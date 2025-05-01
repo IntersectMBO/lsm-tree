@@ -71,18 +71,21 @@ description:
   *   The variable \(s\) refers to the number of snapshots in the session.
   *   The variable \(b\) usually refers to the size of a batch of inputs\/outputs.
       Its precise meaning is explained for each occurrence.
-  *   The constant \(B\) refers to the size of the write buffer, which is a configuration parameter.
-  *   The constant \(T\) refers to the size ratio of the table, which is a configuration parameter.
-  *   The constant \(P\) refers to the the average number of key–value pairs that fit in a page of memory.
+  *   The constant \(B\) refers to the size of the write buffer,
+      which is determined by the @TableConfig@ parameter @confWriteBufferAlloc@.
+  *   The constant \(T\) refers to the size ratio of the table,
+      which is determined by the @TableConfig@ parameter @confSizeRatio@.
+  *   The constant \(P\) refers to the average number of key–value pairs that fit in a page of memory.
 
   === Disk I\/O cost of operations #performance_time#
 
-  The following table summarises the cost of the operations on LSM-trees measured in the number of disk I\/O operations.
+  The following table summarises the worst-case cost of the operations on LSM-trees measured in the number of disk I\/O operations.
   If the cost depends on the merge policy or merge schedule, then the table contains one entry for each relevant combination.
   Otherwise, the merge policy and\/or merge schedule is listed as N\/A.
+  The merge policy and merge schedule are determined by the @TableConfig@ parameters @confMergePolicy@ and @confMergeSchedule@.
 
   +----------+------------------------+-----------------+-----------------+------------------------------------------------+
-  | Resource | Operation              | Merge policy    | Merge schedule  | Cost in disk I\/O operations                   |
+  | Resource | Operation              | Merge policy    | Merge schedule  | Worst-case disk I\/O complexity                |
   +==========+========================+=================+=================+================================================+
   | Session  | Create\/Open           | N\/A            | N\/A            | \(O(1)\)                                       |
   +----------+------------------------+-----------------+-----------------+------------------------------------------------+
@@ -121,65 +124,312 @@ description:
 
   (*The variable \(b\) refers to the number of entries retrieved by the range lookup.)
 
-  TODO: Document the average-case behaviour of lookups.
+  === Table Size #performance_size#
 
-  === In-memory size of tables #performance_size#
+  The in-memory and the on-disk size of an LSM-tree scale /linearly/ with the number of physical entries.
+  However, the in-memory size is smaller by a significant factor.
+  Let us look at a table that uses the default configuration and has 100 million entries with 34 byte keys and 60 byte values.
+  The total size of 100 million key–value pairs is approximately 8.75GiB.
+  Hence, the on-disk size would be at least 8.75GiB, not counting the overhead for metadata.
 
-  The in-memory size of an LSM-tree is described in terms of the variable \(n\), which refers to the number of /physical/ database entries.
-  A /physical/ database entry is any key–operation pair, e.g., @Insert k v@ or @Delete k@, whereas a /logical/ database entry is determined by all physical entries with the same key.
+  The in-memory size would be approximately 265.39MiB:
 
-  The worst-case in-memory size of an LSM-tree is \(O(n)\).
+  *   The write buffer would store at most 20,000 entries, which is approximately 2.86MiB.
+  *   The fence-pointer indexes would store approximately 2.29 million keys, which is approximately 9.30MiB.
+  *   The Bloom filters would use 15.78 bits per entry, which is approximately 188.11MiB.
 
-  *   The worst-case in-memory size of the write buffer is \(O(B)\).
-
-      The maximum size of the write buffer on the write buffer allocation strategy, which is determined by the @confWriteBufferAlloc@ field of @TableConfig@.
-      Regardless of write buffer allocation strategy, the size of the write buffer may never exceed 4GiB.
-
-      [@AllocNumEntries maxEntries@]:
-        The maximum size of the write buffer is the maximum number of entries multiplied by the average size of a key–operation pair.
-
-  *   The worst-case in-memory size of the Bloom filters is \(O(n)\).
-
-      The total in-memory size of all Bloom filters is the number of bits per physical entry multiplied by the number of physical entries.
-      The required number of bits per physical entry is determined by the Bloom filter allocation strategy, which is determined by the @confBloomFilterAlloc@ field of @TableConfig@.
-
-      [@AllocFixed bitsPerPhysicalEntry@]:
-          The number of bits per physical entry is specified as @bitsPerPhysicalEntry@.
-      [@AllocRequestFPR requestedFPR@]:
-          The number of bits per physical entry is determined by the requested false-positive rate, which is specified as @requestedFPR@.
-
-      The false-positive rate scales exponentially with the number of bits per entry:
-
-      +---------------------------+---------------------+
-      | False-positive rate       | Bits per entry      |
-      +===========================+=====================+
-      | \(1\text{ in }10\)        | \(\approx  4.77 \)  |
-      +---------------------------+---------------------+
-      | \(1\text{ in }100\)       | \(\approx  9.85 \)  |
-      +---------------------------+---------------------+
-      | \(1\text{ in }1{,}000\)   | \(\approx 15.79 \)  |
-      +---------------------------+---------------------+
-      | \(1\text{ in }10{,}000\)  | \(\approx 22.58 \)  |
-      +---------------------------+---------------------+
-      | \(1\text{ in }100{,}000\) | \(\approx 30.22 \)  |
-      +---------------------------+---------------------+
-
-  *   The worst-case in-memory size of the indexes is \(O(n)\).
-
-      The total in-memory size of all indexes depends on the index type, which is determined by the @confFencePointerIndex@ field of @TableConfig@.
-      The in-memory size of the various indexes is described in reference to the size of the database in [/memory pages/](https://en.wikipedia.org/wiki/Page_%28computer_memory%29).
-
-      [@OrdinaryIndex@]:
-          An ordinary index stores the maximum serialised key for each memory page.
-          The total in-memory size of all indexes is proportional to the average size of one serialised key per memory page.
-      [@CompactIndex@]:
-          A compact index stores the 64 most significant bits of the minimum serialised key for each memory page, as well as 1 bit per memory page to resolve clashes, 1 bit per memory page to mark overflow pages, and a negligible amount of memory for tie breakers.
-          The total in-memory size of all indexes is approximately 66 bits per memory page.
+  For a discussion of how the sizes of these components are determined by the table configuration, see [Fine-tuning Table Configuration](#fine_tuning).
 
   The total size of an LSM-tree must not exceed \(2^{41}\) physical entries.
   Violation of this condition /is/ checked and will throw a 'TableTooLargeError'.
 
-  == Implementation
+  === Fine-tuning Table Configuration #fine_tuning#
+
+  [@confMergePolicy@]
+      The /merge policy/ balances the performance of lookups against the performance of updates.
+      Levelling favours lookups.
+      Tiering favours updates.
+      Lazy levelling strikes a middle ground between levelling and tiering, and moderately favours updates.
+      This parameter is explicitly referenced in the documentation of those operations it affects.
+
+  [@confSizeRatio@]
+      The /size ratio/ pushes the effects of the merge policy to the extreme.
+      If the size ratio is higher, levelling favours lookups more, and tiering and lazy levelling favour updates more.
+      This parameter is referred to as \(T\) in the disk I\/O cost of operations.
+
+  [@confWriteBufferAlloc@]
+      The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the table.
+      If the write buffer is larger, it takes up more memory, but lookups and updates are more efficient.
+      This parameter is referred to as \(B\) in the disk I\/O cost of operations.
+      Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
+
+  [@confMergeSchedule@]
+      The /merge schedule/ balances the performance of lookups and updates against the smooth performance of updates.
+      The merge schedule does not affect the performance of table unions.
+      With the one-shot merge schedule, lookups and updates are more efficient overall, but some updates may take much longer than others.
+      With the incremental merge schedule, lookups and updates are less efficient overall, but each update does a similar amount of work.
+      This parameter is explicitly referenced in the documentation of those operations it affects.
+
+  [@confBloomFilterAlloc@]
+      The Bloom filter size balances the performance of lookups against the in-memory size of the table.
+      If the Bloom filters are larger, they take up more memory, but lookup operations are more efficient.
+
+  [@confFencePointerIndex@]
+      The /fence-pointer index type/ supports two types of indexes.
+      The /ordinary/ indexes are designed to work with any key.
+      The /compact/ indexes are optimised for the case where the keys in the database are uniformly distributed, e.g., when the keys are hashes.
+
+  [@confDiskCachePolicy@]
+      The /disk cache policy/ determines if lookup operations use the OS page cache.
+      Caching may improve the performance of lookups if database access follows certain patterns.
+
+  ==== Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size #fine_tuning_data_layout#
+
+  The configuration parameters @confMergePolicy@, @confSizeRatio@, and @confWriteBufferAlloc@ affect how the table organises its data.
+  To understand what effect these parameters have, one must have a basic understand of how an LSM-tree stores its data.
+  The physical entries in an LSM-tree are key–operation pairs, which pair a key with an operation such as an @Insert@ with a value or a @Delete@.
+  These key–operation pairs are organised into /runs/, which are sequences of key–operation pairs sorted by their key.
+  Runs are organised into /levels/, which are unordered sequences or runs.
+  Levels are organised hierarchically.
+  Level 0 is kept in memory, and is referred to as the /write buffer/.
+  All subsequent levels are stored on disk, with each run stored in its own file.
+  The following shows an example LSM-tree layout, with each run as a boxed sequence of keys and each level as a row.
+
+  \[
+  \begin{array}{l:l}
+  \text{Level}
+  &
+  \text{Data}
+  \\
+  0
+  &
+  \fbox{\(\texttt{4}\,\_\)}
+  \\
+  1
+  &
+  \fbox{\(\texttt{1}\,\texttt{3}\)}
+  \quad
+  \fbox{\(\texttt{2}\,\texttt{7}\)}
+  \\
+  2
+  &
+  \fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{4}\,\texttt{5}\,\texttt{6}\,\texttt{8}\,\texttt{9}\)}
+  \end{array}
+  \]
+
+  The data in an LSM-tree is /partially sorted/: only the key–operation pairs within each run are sorted and deduplicated.
+  As a rule of thumb, keeping more of the data sorted means lookup operations are faster but update operations are slower.
+
+  The configuration parameters @confMergePolicy@, @confSizeRatio@, and @confWriteBufferAlloc@ directly affect a table's data layout.
+  The parameter @confWriteBufferAlloc@ determines the capacity of the write buffer.
+
+  [@AllocNumEntries maxEntries@]:
+      The write buffer can contain at most @maxEntries@ entries.
+      The constant \(B\) refers to the value of @maxEntries@.
+      Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
+
+  The parameter @confSizeRatio@ determines the ratio between the capacities of successive levels.
+  The constant \(T\) refers to the value of @confSizeRatio@.
+  For instance, if \(B = 2\) and \(T = 2\), then
+
+  \[
+  \begin{array}{l:l}
+  \text{Level}   & \text{Capacity}
+  \\
+  0              & B \cdot T^0 = 2
+  \\
+  1              & B \cdot T^1 = 4
+  \\
+  2              & B \cdot T^2 = 8
+  \\
+  \ell           & B \cdot T^\ell
+  \end{array}
+  \]
+
+  The merge policy @confMergePolicy@ determines the number of runs per level.
+  In a /tiering/ LSM-tree, each level contains \(T\) runs.
+  In a /levelling/ LSM-tree, each level contains one single run.
+  The /lazy levelling/ policy uses levelling only for the last level and uses tiering for all preceding levels.
+  The previous example used lazy levelling.
+  The following examples illustrate the different merge policies using the same data, assuming \(B = 2\) and \(T = 2\).
+
+  \[
+  \begin{array}{l:l:l:l}
+  \text{Level}
+  &
+  \text{Tiering}
+  &
+  \text{Levelling}
+  &
+  \text{Lazy Levelling}
+  \\
+  0
+  &
+  \fbox{\(\texttt{4}\,\_\)}
+  &
+  \fbox{\(\texttt{4}\,\_\)}
+  &
+  \fbox{\(\texttt{4}\,\_\)}
+  \\
+  1
+  &
+  \fbox{\(\texttt{1}\,\texttt{3}\)}
+  \quad
+  \fbox{\(\texttt{2}\,\texttt{7}\)}
+  &
+  \fbox{\(\texttt{1}\,\texttt{2}\,\texttt{3}\,\texttt{7}\)}
+  &
+  \fbox{\(\texttt{1}\,\texttt{3}\)}
+  \quad
+  \fbox{\(\texttt{2}\,\texttt{7}\)}
+  \\
+  2
+  &
+  \fbox{\(\texttt{4}\,\texttt{5}\,\texttt{7}\,\texttt{8}\)}
+  \quad
+  \fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{9}\)}
+  &
+  \fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{4}\,\texttt{5}\,\texttt{6}\,\texttt{8}\,\texttt{9}\)}
+  &
+  \fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{4}\,\texttt{5}\,\texttt{6}\,\texttt{8}\,\texttt{9}\)}
+  \end{array}
+  \]
+
+  Tiering favours the performance of updates.
+  Levelling favours the performance of lookups.
+  Lazy levelling strikes a middle ground between tiering and levelling.
+  It favours the performance of lookup operations for the oldest data and enables more deduplication,
+  without the impact that full levelling has on update operations.
+
+  ==== Fine-tuning: Merge Schedule #fine_tuning_merge_schedule#
+
+  The configuration parameter @confMergeSchedule@ affects the worst-case performance of lookup and update operations and the structure of runs.
+  Regardless of the merge schedule, the amortised disk I\/O complexity of lookups and updates is /logarithmic/ in the size of the table.
+  When the write buffer fills up, its contents are flushed to disk as a run and added to level 1.
+  When some level fills up, its contents are flushed down to the next level.
+  Eventually, as data is flushed down, runs must be merged.
+  This package supports two schedules for merging:
+
+  *   Using the @OneShot@ merge schedule, runs must always be kept fully sorted and deduplicated.
+      However, flushing a run down to the next level may cause the next level to fill up,
+      in which case it too must be flushed and merged futher down.
+      In the worst case, this can cascade down the entire table.
+      Consequently, the worst-case disk I\/O complexity of updates is /linear/ in the size of the table.
+      This is unacceptable for real-time systems and other use cases where unresponsiveness is unacceptable.
+  *   Using the @Incremental@ merge schedule, runs can be /partially merged/, which allows the merging work to be spead out evenly across all update operations.
+      This aligns the worst-case and average-case disk I\/O complexity of updates—both are /logarithmic/ in the size of the table.
+      The cost is a small constant overhead for both lookup and update operations.
+
+  The merge schedule does not affect the performance of table unions.
+  The amortised disk I\/O complexity of one-shot unions is /linear/ in the size of the tables.
+  Instead, there are separate operations for incremental and oneshot unions.
+  For incremental unions, it is up to the user to spread the merging work out evenly over time.
+
+  ==== Fine-tuning: Bloom Filter Size #fine_tuning_bloom_filter_size#
+
+  The configuration parameter @confBloomFilterAlloc@ affects the size of the Bloom filters,
+  which balances the performance of lookups against the in-memory size of the table.
+
+  Tables maintain a [Bloom filter](https://en.wikipedia.org/wiki/Bloom_filter) in memory for each run on disk.
+  These Bloom filter are probablilistic datastructure that are used to track which keys are present in their corresponding run.
+  Querying a Bloom filter returns either \"maybe\" meaning the key is possibly in the run or \"no\" meaning the key is definitely not in the run.
+  When a query returns \"maybe\" while the key is /not/ in the run, this is referred to as a /false positive/.
+  While the database executes a lookup operation, any Bloom filter query that returns a false positive causes the database to unnecessarily read a run from disk.
+  The probabliliy of these spurious reads follow a [binomial distribution](https://en.wikipedia.org/wiki/Binomial_distribution) \(\text{Binomial}(r,\text{FPR})\)
+  where \(r\) refers to the number of runs and \(\text{FPR}\) refers to the false-positive rate of the Bloom filters.
+  Hence, the expected number of spurious reads for each lookup operation is \(r\cdot\text{FPR}\).
+  The number of runs \(r\) is proportional to the number of physical entries in the table. Its exact value depends on the merge policy of the table:
+
+  [@LazyLevelling@]
+    \(r = T (\log_T\frac{n}{B} - 1) + 1\).
+
+  The false-positive rate scales exponentially with size of the Bloom filters in bits per entry.
+
+  +---------------------------+----------------------+
+  | False-positive rate (FPR) | Bits per entry (BPE) |
+  +===========================+======================+
+  | \(1\text{ in }10\)        | \(\approx  4.77 \)   |
+  +---------------------------+----------------------+
+  | \(1\text{ in }100\)       | \(\approx  9.85 \)   |
+  +---------------------------+----------------------+
+  | \(1\text{ in }1{,}000\)   | \(\approx 15.78 \)   |
+  +---------------------------+----------------------+
+  | \(1\text{ in }10{,}000\)  | \(\approx 22.57 \)   |
+  +---------------------------+----------------------+
+  | \(1\text{ in }100{,}000\) | \(\approx 30.22 \)   |
+  +---------------------------+----------------------+
+
+  The configuration parameter @confBloomFilterAlloc@ can be specified in two ways:
+
+  [@AllocFixed bitsPerEntry@]
+      Allocate the requested number of bits per entry in the table.
+
+      The value must strictly positive, but fractional values are permitted.
+      The recommended range is \([2, 24]\).
+
+  [@AllocRequestFPR falsePositiveRate@]
+      Allocate the required number of bits per entry to get the requested false-positive rate.
+
+      The value must be in the range \((0, 1)\).
+      The recommended range is \([1\mathrm{e}{ -5 },1\mathrm{e}{ -2 }]\).
+
+  The total in-memory size of all Bloom filters scales /linearly/ with the number of physical entries in the table and is determined by the number of physical entries multiplied by the number of bits per physical entry, i.e, \(n\cdot\text{BPE}\).
+  Let us consider a table with 100 million physical entries which uses the default table configuration for every parameter other than the Bloom filter size.
+
+  +---------------------------+----------------------+------------------------------------------------------------------+
+  | False-positive rate (FPR) | Bloom filter size    | Expected spurious reads per lookup                               |
+  +===========================+======================+==================================================================+
+  | \(1\text{ in }10\)        | \( 56.86\text{MiB}\) | \( 2.56\text{ spurious reads every lookup }\)                    |
+  +---------------------------+----------------------+------------------------------------------------------------------+
+  | \(1\text{ in }100\)       | \(117.42\text{MiB}\) | \( 1   \text{ spurious read every }    3.91\text{ lookups }\)    |
+  +---------------------------+----------------------+------------------------------------------------------------------+
+  | \(1\text{ in }1{,}000\)   | \(188.11\text{MiB}\) | \( 1   \text{ spurious read every }   39.10\text{ lookups }\)    |
+  +---------------------------+----------------------+------------------------------------------------------------------+
+  | \(1\text{ in }10{,}000\)  | \(269.06\text{MiB}\) | \( 1   \text{ spurious read every }  391.01\text{ lookups }\)    |
+  +---------------------------+----------------------+------------------------------------------------------------------+
+  | \(1\text{ in }100{,}000\) | \(360.25\text{MiB}\) | \( 1   \text{ spurious read every } 3910.19\text{ lookups }\)    |
+  +---------------------------+----------------------+------------------------------------------------------------------+
+
+  ==== Fine-tuning: Fence-Pointer Index Type #fine_tuning_fence_pointer_index_type#
+
+  The configuration parameter @confFencePointerIndex@ affects the type and size of the fence-pointer indexes.
+  Tables maintain a fence-pointer index in memory for each run on disk.
+  These fence-pointer indexes store the keys at the boundaries of each page of memory to ensure that each lookup has to read at most one page of memory from each run.
+  Tables support two types of fence-pointer indexes:
+
+  [@OrdinaryIndex@]
+      Ordinary indexes are designed for any use case.
+
+      Ordinary indexes store one serialised key per page of memory.
+      The total in-memory size of all indexes is \(K \cdot \frac{n}{P}\) bits,
+      where \(K\) refers to the average size of a serialised key in bits.
+
+  [@CompactIndex@]
+      Compact indexes are designed for the use case where the keys in the table are uniformly distributed, such as when using hashes.
+
+      Compact indexes store the 64 most significant bits of the minimum serialised key of each page of memory.
+      This requires that serialised keys are /at least/ 64 bits in size.
+      Compact indexes store 1 additional bit per page of memory to resolve collisions, 1 additional bit per page of memory to mark entries that are larger than one page, and a negligible amount of memory for tie breakers.
+      The total in-memory size of all indexes is \(66 \cdot \frac{n}{P}\) bits.
+
+  ==== Fine-tuning: Disk Cache Policy #fine_tuning_disk_cache_policy#
+
+  The configuration parameter @confDiskCachePolicy@ determines how the database uses the OS page cache.
+  This may improve performance if the database's /access pattern/ has good /temporal locality/ or good /spatial locality/.
+  The database's access pattern refers to the pattern by which entries are accessed by lookup operations.
+  An access pattern has good temporal locality if it is likely to access entries that were recently accessed or updated.
+  An access pattern has good spatial locality if it is likely to access entries that have nearby keys.
+
+  *   Use the @DiskCacheAll@ policy if the database's access pattern has either good spatial locality or both good spatial and temporal locality.
+  *   Use the @DiskCacheLevelOneTo l@ policy if the database's access pattern has good temporal locality for updates only.
+      The variable @l@ determines the number of levels that are cached.
+      For a description of levels, see [Merge Policy, Size Ratio, and Write Buffer Size](#fine_tuning_data_layout).
+      With this setting, the database can be expected to cache up to \(\frac{k}{P}\) pages of memory,
+      where \(k\) refers to the number of entries that fit in levels \([1,l]\) and is defined as \(\sum_{i=1}^{l}BT^{i}\).
+  *   Use the @DiskCacheNone@ policy if the database's access pattern has does not have good spatial or temporal locality.
+      For instance, if the access pattern is uniformly random.
+
+  == References
 
   The implementation of LSM-trees in this package draws inspiration from:
 

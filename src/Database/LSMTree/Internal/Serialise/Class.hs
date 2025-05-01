@@ -42,13 +42,15 @@ import           Numeric (showInt)
   SerialiseKey
 -------------------------------------------------------------------------------}
 
--- | Serialisation of keys.
---
--- Instances should satisfy the following laws:
---
--- [Identity] @'deserialiseKey' ('serialiseKey' x) == x@
--- [Identity up to slicing] @'deserialiseKey' ('packSlice' prefix ('serialiseKey' x) suffix) == x@
---
+{- | Serialisation of keys.
+
+Instances should satisfy the following laws:
+
+[Identity]
+  @'deserialiseKey' ('serialiseKey' x) == x@
+[Identity up to slicing]
+  @'deserialiseKey' ('packSlice' prefix ('serialiseKey' x) suffix) == x@
+-}
 class SerialiseKey k where
   serialiseKey :: k -> RawBytes
   -- TODO: 'deserialiseKey' is only strictly necessary for range queries.
@@ -67,26 +69,27 @@ serialiseKeyIdentityUpToSlicing ::
 serialiseKeyIdentityUpToSlicing prefix x suffix =
     deserialiseKey (packSlice prefix (serialiseKey x) suffix) == x
 
--- | Order-preserving serialisation of keys
---
--- Internally, the library sorts key\/value pairs using the ordering of
--- /serialised/ keys. Range lookups and cursor reads return key\/value according
--- to this ordering. As such, if serialisation does not preserve the ordering of
--- /unserialised/ keys, then range lookups and cursor reads will return
--- /unserialised/ keys out of order.
---
--- Instances that prevent keys from being returned out of order should satisfy
--- the following law:
---
--- [Ordering-preserving] @x \`'compare'\` y == 'serialiseKey' x \`'compare'\` 'serialiseKey' y@
---
--- Serialised keys (raw bytes) are lexicographically ordered, which means that
--- keys should be serialised into big-endian formats to satisfy the
--- __Ordering-preserving__ law,
---
+{- |
+Order-preserving serialisation of keys.
+
+Table data is sorted by /serialised/ keys.
+Range lookups and cursors return entries in this order.
+If serialisation does not preserve the ordering of /unserialised/ keys,
+then range lookups and cursors return entries out of order.
+
+If the 'SerialiseKey' instance for a type preserves the ordering,
+then it can safely be given an instance of 'SerialiseKeyOrderPreserving'.
+These should satisfy the following law:
+
+[Order-preserving]
+  @x \`'compare'\` y == 'serialiseKey' x \`'compare'\` 'serialiseKey' y@
+
+Serialised keys are lexicographically ordered.
+To satisfy the __Order-preserving__ law, keys should be serialised into a big-endian format.
+-}
 class SerialiseKey k => SerialiseKeyOrderPreserving k where
 
--- | Test the __Ordering-preserving__ law for the 'SerialiseKeyOrderPreserving' class
+-- | Test the __Order-preserving__ law for the 'SerialiseKeyOrderPreserving' class
 serialiseKeyPreservesOrdering :: (Ord k, SerialiseKey k) => k -> k -> Bool
 serialiseKeyPreservesOrdering x y = x `compare` y == serialiseKey x `compare` serialiseKey y
 
@@ -94,12 +97,16 @@ serialiseKeyPreservesOrdering x y = x `compare` y == serialiseKey x `compare` se
   SerialiseValue
 -------------------------------------------------------------------------------}
 
--- | Serialisation of values and blobs.
---
--- Instances should satisfy the following laws:
---
--- [Identity] @'deserialiseValue' ('serialiseValue' x) == x@
--- [Identity up to slicing] @'deserialiseValue' ('packSlice' prefix ('serialiseValue' x) suffix) == x@
+{- | Serialisation of values and blobs.
+
+Instances should satisfy the following laws:
+
+[Identity]
+  @'deserialiseValue' ('serialiseValue' x) == x@
+
+[Identity up to slicing]
+  @'deserialiseValue' ('packSlice' prefix ('serialiseValue' x) suffix) == x@
+-}
 class SerialiseValue v where
   serialiseValue :: v -> RawBytes
   deserialiseValue :: RawBytes -> v
@@ -147,60 +154,110 @@ requireBytesExactly tyName expected actual x
   Int
 -------------------------------------------------------------------------------}
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Int8 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim x
 
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int8" 1 len $ indexInt8Array ba off
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Int8 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int8" 1 len $ indexInt8Array ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Int16 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt16 x
 
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int16" 2 len $ byteSwapInt16 (indexWord8ArrayAsInt16 ba off)
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Int16 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int16" 2 len $ indexWord8ArrayAsInt16 ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Int32 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt32 x
 
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int32" 4 len $ byteSwapInt32 (indexWord8ArrayAsInt32 ba off)
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Int32 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int32" 4 len $ indexWord8ArrayAsInt32 ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Int64 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt64 x
 
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int64" 8 len $ byteSwapInt64 (indexWord8ArrayAsInt64 ba off)
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Int64 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int64" 8 len $ indexWord8ArrayAsInt64 ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Int where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapInt x
 
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Int" 8 len $ byteSwapInt (indexWord8ArrayAsInt ba off)
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Int where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
@@ -211,6 +268,11 @@ instance SerialiseValue Int where
   Word
 -------------------------------------------------------------------------------}
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Word8 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim  x
 
@@ -219,13 +281,22 @@ instance SerialiseKey Word8 where
 
 instance SerialiseKeyOrderPreserving Word8
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Word8 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word8" 1 len $ indexWord8Array ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
 
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Word16 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord16 x
 
@@ -234,12 +305,22 @@ instance SerialiseKey Word16 where
 
 instance SerialiseKeyOrderPreserving Word16
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Word16 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word16" 2 len $ indexWord8ArrayAsWord16 ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Word32 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord32 x
 
@@ -248,12 +329,22 @@ instance SerialiseKey Word32 where
 
 instance SerialiseKeyOrderPreserving Word32
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Word32 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word32" 4 len $ indexWord8ArrayAsWord32 ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Word64 where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord64 x
 
@@ -262,12 +353,22 @@ instance SerialiseKey Word64 where
 
 instance SerialiseKeyOrderPreserving Word64
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Word64 where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word64" 8 len $ indexWord8ArrayAsWord64 ba off
 
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(1)\).
+-}
 instance SerialiseKey Word where
   serialiseKey x = RB.RawBytes $ byteVectorFromPrim $ byteSwapWord x
 
@@ -276,6 +377,11 @@ instance SerialiseKey Word where
 
 instance SerialiseKeyOrderPreserving Word
 
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(1)\).
+-}
 instance SerialiseValue Word where
   serialiseValue x = RB.RawBytes $ byteVectorFromPrim $ x
 
@@ -286,21 +392,29 @@ instance SerialiseValue Word where
   String
 -------------------------------------------------------------------------------}
 
--- | \( O(n) \) (de-)serialisation, where \(n\) is the number of characters in
--- the string. The string is encoded using UTF8.
---
--- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
+{- |
+@'serialiseKey'@: \(O(n)\).
+
+@'deserialiseKey'@: \(O(n)\).
+
+The 'String' is (de)serialised as UTF-8.
+-}
 instance SerialiseKey String where
+  -- TODO: Optimise. The performance is \(O(n) + O(n)\) but it could be \(O(n)\).
   serialiseKey = serialiseKey . UTF8.fromString
   deserialiseKey = UTF8.toString . deserialiseKey
 
 instance SerialiseKeyOrderPreserving String
 
--- | \( O(n) \) (de-)serialisation, where \(n\) is the number of characters in
--- the string.
---
--- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
+{- |
+@'serialiseKey'@: \(O(n)\).
+
+@'deserialiseKey'@: \(O(n)\).
+
+The 'String' is (de)serialiseValue as UTF-8.
+-}
 instance SerialiseValue String where
+  -- TODO: Optimise. The performance is \(O(n) + O(n)\) but it could be \(O(n)\).
   serialiseValue = serialiseValue . UTF8.fromString
   deserialiseValue = UTF8.toString . deserialiseValue
 
@@ -308,42 +422,64 @@ instance SerialiseValue String where
   ByteString
 -------------------------------------------------------------------------------}
 
--- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
---
--- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
+{- |
+@'serialiseKey'@: \(O(n)\).
+
+@'deserialiseKey'@: \(O(n)\).
+-}
 instance SerialiseKey LBS.ByteString where
+  -- TODO: Optimise. The performance is \(O(n) + O(n)\) but it could be \(O(n)\).
   serialiseKey = serialiseKey . LBS.toStrict
   deserialiseKey = B.toLazyByteString . RB.builder
 
 instance SerialiseKeyOrderPreserving LBS.ByteString
 
--- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
---
--- TODO: optimise, it's \( O(n) + O(n) \) where it could be \( O(n) \).
+{- |
+@'serialiseValue'@: \(O(n)\).
+
+@'deserialiseValue'@: \(O(n)\).
+-}
 instance SerialiseValue LBS.ByteString where
+  -- TODO: Optimise. The performance is \(O(n) + O(n)\) but it could be \(O(n)\).
   serialiseValue = serialiseValue . LBS.toStrict
   deserialiseValue = B.toLazyByteString . RB.builder
 
--- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
+{- |
+@'serialiseKey'@: \(O(n)\).
+
+@'deserialiseKey'@: \(O(n)\).
+-}
 instance SerialiseKey BS.ByteString where
   serialiseKey = serialiseKey . SBS.toShort
   deserialiseKey = SBS.fromShort . deserialiseKey
 
 instance SerialiseKeyOrderPreserving BS.ByteString
 
--- | \( O(n) \) (de-)serialisation, where \(n\) is the number of bytes
+{- |
+@'serialiseValue'@: \(O(n)\).
+
+@'deserialiseValue'@: \(O(n)\).
+-}
 instance SerialiseValue BS.ByteString where
   serialiseValue = serialiseValue . SBS.toShort
   deserialiseValue = SBS.fromShort . deserialiseValue
 
--- | \( O(1) \) serialisation, \( O(n) \) deserialisation
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(n)\).
+-}
 instance SerialiseKey SBS.ShortByteString where
   serialiseKey = RB.fromShortByteString
   deserialiseKey = byteArrayToSBS . RB.force
 
 instance SerialiseKeyOrderPreserving SBS.ShortByteString
 
--- | \( O(1) \) serialisation, \( O(n) \) deserialisation
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(n)\).
+-}
 instance SerialiseValue SBS.ShortByteString where
   serialiseValue = RB.fromShortByteString
   deserialiseValue = byteArrayToSBS . RB.force
@@ -352,12 +488,20 @@ instance SerialiseValue SBS.ShortByteString where
   ByteArray
 -------------------------------------------------------------------------------}
 
--- | \( O(1) \) serialisation, \( O(n) \) deserialisation
+{- |
+@'serialiseKey'@: \(O(1)\).
+
+@'deserialiseKey'@: \(O(n)\).
+-}
 instance SerialiseKey P.ByteArray where
   serialiseKey ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
   deserialiseKey = RB.force
 
--- | \( O(1) \) serialisation, \( O(n) \) deserialisation
+{- |
+@'serialiseValue'@: \(O(1)\).
+
+@'deserialiseValue'@: \(O(n)\).
+-}
 instance SerialiseValue P.ByteArray where
   serialiseValue ba = RB.fromByteArray 0 (P.sizeofByteArray ba) ba
   deserialiseValue = RB.force
@@ -366,22 +510,24 @@ instance SerialiseValue P.ByteArray where
   Void
 -------------------------------------------------------------------------------}
 
--- | The 'deserialiseValue' of this instance throws. (as does e.g. 'Word64'
--- instance on invalid input.)
---
--- This instance is useful for tables without blobs.
+{- |
+This instance is intended for tables without blobs.
+
+The implementation of 'deseriValue' throws an excepValuen.
+-}
 instance SerialiseValue Void where
   serialiseValue = absurd
-  deserialiseValue = error "deserialiseValue: Void can not be deserialised"
+  deserialiseValue = error "deserialiseValue: cannot deserialise into Void"
 
 {-------------------------------------------------------------------------------
   Sum
 -------------------------------------------------------------------------------}
 
--- | An instance for 'Sum' which is transparent to the serialisation of @a@.
---
--- Note: If you want to serialize @Sum a@ differently than @a@, then you should
--- create another @newtype@ over 'Sum' and define your alternative serialization.
+{- |
+An instance for 'Sum' which is transparent to the serialisation of the value type.
+
+__NOTE:__ If you want to seriValue @'Sum' a@ differValuely from @a@, you must use another newtype wrapper.
+-}
 instance SerialiseValue a => SerialiseValue (Sum a) where
   serialiseValue (Sum v) = serialiseValue v
 
