@@ -104,37 +104,39 @@ The documentation provides two measures of complexity:
 The complexities are described in terms of the following variables and
 constants:
 
-- The variable *n* refers to the number of *physical* table entries. A
+- The variable $`n`$ refers to the number of *physical* table entries. A
   *physical* table entry is any key–operation pair, e.g., `Insert k v`
   or `Delete k`, whereas a *logical* table entry is determined by all
-  physical entries with the same key. If the variable *n* is used to
+  physical entries with the same key. If the variable $`n`$ is used to
   describe the complexity of an operation that involves multiple tables,
   it refers to the sum of all table entries.
 
-- The variable *o* refers to the number of open tables and cursors in
+- The variable $`o`$ refers to the number of open tables and cursors in
   the session.
 
-- The variable *s* refers to the number of snapshots in the session.
+- The variable $`s`$ refers to the number of snapshots in the session.
 
-- The variable *b* usually refers to the size of a batch of
+- The variable $`b`$ usually refers to the size of a batch of
   inputs/outputs. Its precise meaning is explained for each occurrence.
 
-- The constant *B* refers to the size of the write buffer, which is a
-  configuration parameter.
+- The constant $`B`$ refers to the size of the write buffer, which is
+  determined by the `TableConfig` parameter `confWriteBufferAlloc`.
 
-- The constant *T* refers to the size ratio of the table, which is a
-  configuration parameter.
+- The constant $`T`$ refers to the size ratio of the table, which is
+  determined by the `TableConfig` parameter `confSizeRatio`.
 
-- The constant *P* refers to the the average number of key–value pairs
+- The constant $`P`$ refers to the the average number of key–value pairs
   that fit in a page of memory.
 
 #### Disk I/O cost of operations <span id="performance_time" class="anchor"></span>
 
-The following table summarises the cost of the operations on LSM-trees
-measured in the number of disk I/O operations. If the cost depends on
-the merge policy or merge schedule, then the table contains one entry
-for each relevant combination. Otherwise, the merge policy and/or merge
-schedule is listed as N/A.
+The following table summarises the worst-case cost of the operations on
+LSM-trees measured in the number of disk I/O operations. If the cost
+depends on the merge policy or merge schedule, then the table contains
+one entry for each relevant combination. Otherwise, the merge policy
+and/or merge schedule is listed as N/A. The merge policy and merge
+schedule are determined by the `TableConfig` parameters
+`confMergePolicy` and `confMergeSchedule`.
 
 <table>
 <thead>
@@ -143,7 +145,7 @@ schedule is listed as N/A.
 <th>Operation</th>
 <th>Merge policy</th>
 <th>Merge schedule</th>
-<th>Cost in disk I/O operations</th>
+<th>Worst-case disk I/O complexity</th>
 </tr>
 </thead>
 <tbody>
@@ -273,39 +275,37 @@ schedule is listed as N/A.
 </tbody>
 </table>
 
-(\*The variable *b* refers to the number of entries retrieved by the
+(\*The variable $`b`$ refers to the number of entries retrieved by the
 range lookup.)
-
-TODO: Document the average-case behaviour of lookups.
 
 #### In-memory size of tables <span id="performance_size" class="anchor"></span>
 
 The in-memory size of an LSM-tree is described in terms of the variable
-*n*, which refers to the number of *physical* database entries. A
+$`n`$, which refers to the number of *physical* database entries. A
 *physical* database entry is any key–operation pair, e.g., `Insert k v`
 or `Delete k`, whereas a *logical* database entry is determined by all
 physical entries with the same key.
 
-The worst-case in-memory size of an LSM-tree is *O*(*n*).
+The worst-case in-memory size of an LSM-tree is $`O(n)`$.
 
-- The worst-case in-memory size of the write buffer is *O*(*B*).
+- The worst-case in-memory size of the write buffer is $`O(B)`$.
 
   The maximum size of the write buffer on the write buffer allocation
-  strategy, which is determined by the `confWriteBufferAlloc` field of
-  `TableConfig`. Regardless of write buffer allocation strategy, the
-  size of the write buffer may never exceed 4GiB.
+  strategy, which is determined by the `TableConfig` parameter
+  `confWriteBufferAlloc`. Regardless of write buffer allocation
+  strategy, the size of the write buffer may never exceed 4GiB.
 
   `AllocNumEntries maxEntries`  
   The maximum size of the write buffer is the maximum number of entries
   multiplied by the average size of a key–operation pair.
 
-- The worst-case in-memory size of the Bloom filters is *O*(*n*).
+- The worst-case in-memory size of the Bloom filters is $`O(n)`$.
 
   The total in-memory size of all Bloom filters is the number of bits
   per physical entry multiplied by the number of physical entries. The
   required number of bits per physical entry is determined by the Bloom
-  filter allocation strategy, which is determined by the
-  `confBloomFilterAlloc` field of `TableConfig`.
+  filter allocation strategy, which is determined by the `TableConfig`
+  parameter `confBloomFilterAlloc`.
 
   `AllocFixed bitsPerPhysicalEntry`  
   The number of bits per physical entry is specified as
@@ -318,20 +318,20 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   The false-positive rate scales exponentially with the number of bits
   per entry:
 
-  | False-positive rate | Bits per entry |
-  |---------------------|----------------|
-  | 1 in 10             |  ≈ 4.77        |
-  | 1 in 100            |  ≈ 9.85        |
-  | 1 in 1, 000         |  ≈ 15.79       |
-  | 1 in 10, 000        |  ≈ 22.58       |
-  | 1 in 100, 000       |  ≈ 30.22       |
+  | False-positive rate       | Bits per entry     |
+  |---------------------------|--------------------|
+  | $`1\text{ in }10`$        | $`\approx  4.77 `$ |
+  | $`1\text{ in }100`$       | $`\approx  9.85 `$ |
+  | $`1\text{ in }1{,}000`$   | $`\approx 15.79 `$ |
+  | $`1\text{ in }10{,}000`$  | $`\approx 22.58 `$ |
+  | $`1\text{ in }100{,}000`$ | $`\approx 30.22 `$ |
 
-- The worst-case in-memory size of the indexes is *O*(*n*).
+- The worst-case in-memory size of the indexes is $`O(n)`$.
 
   The total in-memory size of all indexes depends on the index type,
-  which is determined by the `confFencePointerIndex` field of
-  `TableConfig`. The in-memory size of the various indexes is described
-  in reference to the size of the database in [*memory
+  which is determined by the `TableConfig` parameter
+  `confFencePointerIndex`. The in-memory size of the various indexes is
+  described in reference to the size of the database in [*memory
   pages*](https://en.wikipedia.org/wiki/Page_%28computer_memory%29 "https://en.wikipedia.org/wiki/Page_%28computer_memory%29").
 
   `OrdinaryIndex`  
@@ -346,11 +346,166 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   a negligible amount of memory for tie breakers. The total in-memory
   size of all indexes is approximately 66 bits per memory page.
 
-The total size of an LSM-tree must not exceed 2<sup>41</sup> physical
+The total size of an LSM-tree must not exceed $`2^{41}`$ physical
 entries. Violation of this condition *is* checked and will throw a
 `TableTooLargeError`.
 
-### Implementation
+#### Fine-tuning Table Configuration <span id="fine_tuning" class="anchor"></span>
+
+##### Table Layout: Merge Policy, Merge Schedule, Size Ratio, and Write Buffer Size
+
+The table configuration paramters `confMergePolicy`,
+`confMergeSchedule`, `confSizeRatio`, and `confWriteBufferAlloc` affect
+how the table organises its data. To understand what effect these
+parameters have, one must have a basic understand of how an LSM-tree
+stores its data. An LSM-tree stores key–operation pairs, which pair a
+key with an operation such as an `Insert` with a value or a `Delete`.
+These key–operation pairs are organised into *runs*, which are sequences
+of key–operation pairs sorted by their key. Runs are organised into
+*levels*, which are unordered sequences or runs. Levels are organised
+hierarchically. Level 0 is kept in memory, and is referred to as the
+*write buffer*. All subsequent levels are stored on disk, with each run
+stored in its own file. The following shows an example LSM-tree layout,
+with each run as a boxed sequence of keys and each level as a row.
+
+``` math
+
+\begin{array}{l:l}
+\text{Level}
+&
+\text{Data}
+\\
+0
+&
+\fbox{\(\texttt{4}\,\_\)}
+\\
+1
+&
+\fbox{\(\texttt{1}\,\texttt{3}\)}
+\quad
+\fbox{\(\texttt{2}\,\texttt{7}\)}
+\\
+2
+&
+\fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{4}\,\texttt{5}\,\texttt{6}\,\texttt{8}\,\texttt{9}\)}
+\end{array}
+```
+
+The data in an LSM-tree is *partially sorted*: only the key–operation
+pairs within each run are sorted and deduplicated. As a rule of thumb,
+keeping more of the data sorted means lookup operations are faster but
+update operations are slower.
+
+The configuration parameters `confMergePolicy`, `confSizeRatio`, and
+`confWriteBufferAlloc` directly affect the table layout. Let $`B`$ refer
+to the value of `confWriteBufferAlloc`. Let $`T`$ refer to the value of
+`confiSizeRatio`. The write buffer can contain at most $`B`$ entries.
+The size ratio $`T`$ determines the ratio between the maxmimum number of
+entries in each level. For instance, if $`B = 2`$ and $`T = 2`$, then
+
+``` math
+
+\begin{array}{l:l}
+\text{Level}   & \text{Maximum Size}
+\\
+0              & B \cdot T^0 = 2
+\\
+1              & B \cdot T^1 = 4
+\\
+2              & B \cdot T^2 = 8
+\\
+\ell           & B \cdot T^\ell
+\end{array}
+```
+
+The merge policy `confMergePolicy` determines the number of runs per
+level. In a *tiering* LSM-tree, each level contains $`T`$ runs. In a
+*levelling* LSM-tree, each level contains one single run. The *lazy
+levelling* policy uses levelling only for the last level and uses
+tiering for all preceding levels. The previous example used lazy
+levelling. The following examples illustrate the different merge
+policies using the same data, assuming $`B = 2`$ and $`T = 2`$.
+
+``` math
+
+\begin{array}{l:l:l:l}
+\text{Level}
+&
+\text{Tiering}
+&
+\text{Levelling}
+&
+\text{Lazy Levelling}
+\\
+0
+&
+\fbox{\(\texttt{4}\,\_\)}
+&
+\fbox{\(\texttt{4}\,\_\)}
+&
+\fbox{\(\texttt{4}\,\_\)}
+\\
+1
+&
+\fbox{\(\texttt{1}\,\texttt{3}\)}
+\quad
+\fbox{\(\texttt{2}\,\texttt{7}\)}
+&
+\fbox{\(\texttt{1}\,\texttt{2}\,\texttt{3}\,\texttt{7}\)}
+&
+\fbox{\(\texttt{1}\,\texttt{3}\)}
+\quad
+\fbox{\(\texttt{2}\,\texttt{7}\)}
+\\
+2
+&
+\fbox{\(\texttt{4}\,\texttt{5}\,\texttt{7}\,\texttt{8}\)}
+\quad
+\fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{9}\)}
+&
+\fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{4}\,\texttt{5}\,\texttt{6}\,\texttt{8}\,\texttt{9}\)}
+&
+\fbox{\(\texttt{0}\,\texttt{2}\,\texttt{3}\,\texttt{4}\,\texttt{5}\,\texttt{6}\,\texttt{8}\,\texttt{9}\)}
+\end{array}
+```
+
+Tiering favours the performance of updates. Levelling favours the
+performance of lookups. Lazy levelling strikes a middle ground between
+tiering and levelling. It favours the performance of lookup operations
+for the oldest data and enables more deduplication, without the impact
+that full levelling has on update operations.
+
+The configuration parameter `confMergeSchedule` affects the worst-case
+performance of lookup and update operations and the structure of runs.
+Regardless of the merge schedule, the amortised disk I/O complexity of
+lookups and updates is *logarithmic* in the size of the table. When the
+write buffer fills up, its contents are flushed to disk as a run and
+added to level 1. When some level fills up, its contents are flushed
+down to the next level. Eventually, as data is flushed down, runs must
+be merged. This package supports two schedules for merging:
+
+- Using the `OneShot` merge schedule, runs must always be kept fully
+  sorted and deduplicated. However, flushing a run down to the next
+  level may cause the next level to fill up, in which case it too must
+  be flushed and merged futher down. In the worst case, this can cascade
+  down the entire table. Consequently, the worst-case disk I/O
+  complexity of updates is *linear* in the size of the table. This is
+  unacceptable for real-time systems and other use cases where
+  unresponsiveness is unacceptable.
+
+- Using the `Incremental` merge schedule, runs can be *partially merged*
+  with the merging work spead out evenly across all update operations.
+  This aligns the worst-case and average-case disk I/O complexity of
+  updates—both are *logarithmic* in the size of the table. The cost is a
+  small constant overhead for both lookup and update operations.
+
+The merge schedule does not affect the performance of table unions. The
+amortised disk I/O complexity of one-shot unions is *linear* in the size
+of the tables. Instead, there are separate operations for incremental
+and oneshot unions. For incremental unions, it is up to the user to
+spread the merging work out evenly over time.
+
+### References
 
 The implementation of LSM-trees in this package draws inspiration from:
 
