@@ -6,13 +6,13 @@
 -- the trusted base.
 module Data.BloomFilter.Classic.Internal (
     -- * Mutable Bloom filters
-    MBloom (..),
+    MBloom,
     new,
     insertHashes,
     readHashes,
 
     -- * Immutable Bloom filters
-    Bloom (..),
+    Bloom,
     bloomInvariant,
     size,
     elemHashes,
