@@ -168,14 +168,14 @@ defaultConfig = Config {
 
 configWord64 :: Config
 configWord64 = defaultConfig {
-    randomKey    = first serialiseKey . uniform @_ @Word64
-  , randomValue  = first serialiseValue . uniform @_ @Word64
+    randomKey    = first serialiseKey . uniform @Word64 @_
+  , randomValue  = first serialiseValue . uniform @Word64 @_
   }
 
 configUTxO :: Config
 configUTxO = defaultConfig {
-    randomKey    = first serialiseKey . uniform @_ @UTxOKey
-  , randomValue  = first serialiseValue . uniform @_ @UTxOValue
+    randomKey    = first serialiseKey . uniform @UTxOKey @_
+  , randomValue  = first serialiseValue . uniform @UTxOValue @_
   }
 
 envInputKOps :: Config -> InputKOps

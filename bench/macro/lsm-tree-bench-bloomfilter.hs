@@ -271,7 +271,7 @@ benchInBatches !b !rng0 !action =
     go !rng !n
       | n <= 0    = ()
       | otherwise =
-        let (!rng'', !rng') = split rng
+        let (!rng'', !rng') = splitGen rng
             ks  :: VP.Vector Word256
             !ks  = VP.unfoldrExactN b uniform rng'
             ks' :: V.Vector SerialisedKey

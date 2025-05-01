@@ -399,7 +399,7 @@ genLookupBatch !rng0 !n0
           !res <- V.unsafeFreeze mres
           pure (res, rng)
       | otherwise = do
-          let (!k, !rng') = uniform @StdGen @UTxOKey rng
+          let (!k, !rng') = uniform @UTxOKey @StdGen rng
               !sk = serialiseKey k
           VM.write mres i $! sk
           go rng' (i+1) mres
