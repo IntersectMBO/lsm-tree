@@ -1,15 +1,12 @@
 module Main (main) where
 
 import qualified Data.BloomFilter.Classic as B
-import qualified Data.BloomFilter.Classic.BitVec64 as BV64
-import qualified Data.BloomFilter.Classic.Internal as BI
 import           Data.BloomFilter.Hash (Hashable (..), hash64)
 
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Int (Int64)
-import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64)
 
 import           Test.QuickCheck.Instances ()
@@ -42,15 +39,6 @@ tests = testGroup "bloomfilter"
           hash64 (BS.empty, BS.pack [120]) =/= hash64 (BS.pack [120], BS.empty)
         , testProperty "prop_list_ex" $
           hash64 [[],[],[BS.empty]] =/= hash64 [[],[BS.empty],[]]
-        ]
-    , testGroup "equality"
-        [ testProperty "doesn't care about leftover bits a" $
-          BI.Bloom 48 1 (BV64.BV64 (VP.singleton 0xffff_0000_1234_5678)) ===
-          BI.Bloom 48 1 (BV64.BV64 (VP.singleton 0xeeee_0000_1234_5678))
-
-        , testProperty "doesn't care about leftover bits b" $
-          BI.Bloom 49 1 (BV64.BV64 (VP.singleton 0xffff_0000_1234_5678)) =/=
-          BI.Bloom 49 1 (BV64.BV64 (VP.singleton 0xeeee_0000_1234_5678))
         ]
     ]
 

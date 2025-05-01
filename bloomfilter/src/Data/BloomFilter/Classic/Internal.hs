@@ -103,6 +103,7 @@ data Bloom a = Bloom {
     , numHashes :: {-# UNPACK #-} !Int
     , bitArray  :: {-# UNPACK #-} !V.BitVec64
     }
+  deriving Eq
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
@@ -114,25 +115,6 @@ bloomInvariant Bloom { numBits = s, bitArray = V.BV64 (VP.Vector off len ba) } =
     && (off + len) * 8 <= sizeofByteArray ba
   where
     ceilDiv64 x = unsafeShiftR (x + 63) 6
-
-instance Eq (Bloom a) where
-    -- We support arbitrary sized bitvectors,
-    -- therefore an equality is a bit involved:
-    -- we need to be careful when comparing the last bits of bitArray.
-    (==) Bloom { numBits = n,  numHashes = k,  bitArray = V.BV64 v  }
-         Bloom { numBits = n', numHashes = k', bitArray = V.BV64 v' } =
-        k == k' &&
-        n == n' &&
-        VP.take w v == VP.take w v' && -- compare full words
-        if l == 0 then True else unsafeShiftL x s == unsafeShiftL x' s -- compare last words
-      where
-        !w = fromIntegral (unsafeShiftR n 6) :: Int  -- n `div` 64
-        !l = fromIntegral (n .&. 63) :: Int          -- n `mod` 64
-        !s = 64 - l
-
-        -- last words
-        x = VP.unsafeIndex v w
-        x' = VP.unsafeIndex v' w
 
 instance Show (Bloom a) where
     show mb = "Bloom { " ++ show (numBits mb) ++ " bits } "
