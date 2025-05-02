@@ -241,8 +241,8 @@ instance Arbitrary TableConfig where
       | (a', b', c', d', e', f', g') <- shrink (a, b, c, d, e, f, g) ]
 
 instance Arbitrary MergePolicy where
-  arbitrary = pure MergePolicyLazyLevelling
-  shrink MergePolicyLazyLevelling = []
+  arbitrary = pure LazyLevelling
+  shrink LazyLevelling = []
 
 instance Arbitrary SizeRatio where
   arbitrary = pure Four

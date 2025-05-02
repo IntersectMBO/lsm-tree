@@ -314,13 +314,13 @@ instance DecodeVersioned TableConfig where
 -- MergePolicy
 
 instance Encode MergePolicy where
-  encode MergePolicyLazyLevelling = encodeWord 0
+  encode LazyLevelling = encodeWord 0
 
 instance DecodeVersioned MergePolicy where
   decodeVersioned V0 =  do
       tag <- decodeWord
       case tag of
-        0 -> pure MergePolicyLazyLevelling
+        0 -> pure LazyLevelling
         _ -> fail ("[MergePolicy] Unexpected tag: " <> show tag)
 
 -- SizeRatio

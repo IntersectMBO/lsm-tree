@@ -85,7 +85,7 @@ instance NFData TableConfig where
 defaultTableConfig :: TableConfig
 defaultTableConfig =
     TableConfig
-      { confMergePolicy       = MergePolicyLazyLevelling
+      { confMergePolicy       = LazyLevelling
       , confSizeRatio         = Four
       , confWriteBufferAlloc  = AllocNumEntries 20_000
       , confBloomFilterAlloc  = defaultBloomFilterAlloc
@@ -112,12 +112,12 @@ data MergePolicy =
     -- | Use tiering on intermediate levels, and levelling on the last level.
     -- This makes it easier for delete operations to disappear on the last
     -- level.
-    MergePolicyLazyLevelling
+    LazyLevelling
     -- TODO: add other merge policies, like tiering and levelling.
   deriving stock (Eq, Show)
 
 instance NFData MergePolicy where
-  rnf MergePolicyLazyLevelling = ()
+  rnf LazyLevelling = ()
 
 {-------------------------------------------------------------------------------
   Size ratio

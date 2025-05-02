@@ -231,7 +231,7 @@ instance Arbitrary R.TableConfig where
     confWriteBufferAlloc <- QC.arbitrary
     confFencePointerIndex <- QC.arbitrary
     pure $ R.TableConfig {
-        R.confMergePolicy       = R.MergePolicyLazyLevelling
+        R.confMergePolicy       = R.LazyLevelling
       , R.confSizeRatio         = R.Four
       , confWriteBufferAlloc
       , R.confBloomFilterAlloc  = R.AllocFixed 10

@@ -93,7 +93,7 @@ module Database.LSMTree.Simple (
 
     -- * Table Configuration #table_configuration#
     TableConfig (..),
-    MergePolicy (MergePolicyLazyLevelling),
+    MergePolicy (LazyLevelling),
     SizeRatio (Four),
     WriteBufferAlloc (AllocNumEntries),
     BloomFilterAlloc (AllocFixed, AllocRequestFPR),
@@ -356,7 +356,7 @@ Run an action with access to a session opened from a session directory.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(o \: T \log_T \frac{n}{B})\).
 
 The variable \(o\) refers to the number of open tables and cursors in the session.
@@ -429,7 +429,7 @@ Close a session.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(o \: T \log_T \frac{n}{B})\).
 
 The variable \(o\) refers to the number of open tables and cursors in the session.
@@ -464,7 +464,7 @@ Run an action with access to an empty table.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
@@ -529,7 +529,7 @@ Close a table.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Closing is idempotent, i.e., closing a closed table does nothing.
@@ -553,7 +553,7 @@ Check if the key is a member of the table.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Membership tests can be performed concurrently from multiple Haskell threads.
@@ -581,7 +581,7 @@ The batch of keys corresponds in-order to the batch of results.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(b \: T \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -603,7 +603,7 @@ Look up the value associated with a key.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Lookups can be performed concurrently from multiple Haskell threads.
@@ -634,7 +634,7 @@ The batch of keys corresponds in-order to the batch of results.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(b \: T \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -698,7 +698,7 @@ If the key is already present in the table, the associated value is replaced wit
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\frac{1}{P} \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -723,7 +723,7 @@ Variant of 'insert' for batch insertions.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\frac{b}{P} \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -747,7 +747,7 @@ If the key is not present in the table, the table is left unchanged.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\frac{1}{P} \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -771,7 +771,7 @@ Variant of 'delete' for batch deletions.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\frac{b}{P} \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -797,7 +797,7 @@ Update the value at a specific key:
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\frac{1}{P} \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -822,7 +822,7 @@ Variant of 'update' for batch updates.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\frac{b}{P} \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -855,7 +855,7 @@ The duplicate is unaffected by subsequent updates to the given table and vice ve
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
@@ -996,7 +996,7 @@ Run an action with access to a table that incrementally computes the union of th
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
@@ -1032,7 +1032,7 @@ Variant of 'withIncrementalUnion' that takes any number of tables.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B} + b)\).
 
 The variable \(b\) refers to the number of input tables.
@@ -1152,7 +1152,7 @@ Run an action with access to a cursor.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
@@ -1192,7 +1192,7 @@ Create a cursor for the given table.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 __Warning:__ Cursors hold open resources and must be closed using 'closeCursor'.
@@ -1228,7 +1228,7 @@ Close a cursor.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Closing is idempotent, i.e., closing a closed cursor does nothing.
@@ -1343,7 +1343,7 @@ However, it is not so cheap that one should use it after every operation.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -1457,7 +1457,7 @@ Delete the named snapshot.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
