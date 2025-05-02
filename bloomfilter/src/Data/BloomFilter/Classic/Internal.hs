@@ -71,12 +71,12 @@ instance NFData (MBloom s a) where
 -- The size is ceiled at $2^48$. Tell us if you need bigger bloom filters.
 --
 new :: BloomSize -> ST s (MBloom s a)
-new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
+new BloomSize { sizeBits, sizeHashes } = do
     let !mbNumBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
     mbBitArray <- BitArray.new mbNumBits
     pure MBloom {
       mbNumBits,
-      mbNumHashes,
+      mbNumHashes = max 1 sizeHashes,
       mbBitArray
     }
 
