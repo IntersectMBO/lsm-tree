@@ -126,8 +126,8 @@ notElem = \elt ub -> not (elt `elem` ub)
 -- | Query a mutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
-read :: Hashable a => a -> MBloom s a -> ST s Bool
-read elt mb = readHashes (makeHashes elt) mb
+read :: Hashable a => MBloom s a -> a -> ST s Bool
+read mb elt = readHashes mb (makeHashes elt)
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
 -- function populates the filter as follows.
