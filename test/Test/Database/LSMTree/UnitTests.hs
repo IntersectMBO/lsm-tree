@@ -4,6 +4,7 @@
 module Test.Database.LSMTree.UnitTests (tests) where
 
 import           Control.Tracer (nullTracer)
+import           Data.Bifunctor (Bifunctor (second))
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (for_)
@@ -47,7 +48,7 @@ unit_blobs info =
       inserts table [("key1", ResolveAsFirst "value1", Just "blob1")]
 
       res <- lookups table ["key1"]
-      info (show res)
+      info (show . fmap (second (const ())) $ res)
 
       case res of
         [FoundWithBlob val bref] -> do

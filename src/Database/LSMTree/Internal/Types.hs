@@ -4,6 +4,7 @@ module Database.LSMTree.Internal.Types (
     Session (..),
     Table (..),
     BlobRef (..),
+    showsPrecBlobRef,
     Cursor (..),
     ResolveValue (..),
     resolveCompatibility,
@@ -80,9 +81,9 @@ data BlobRef m b
     (Typeable h) =>
     BlobRef !(Unsafe.WeakBlobRef m h)
 
-instance Show (BlobRef m b) where
-  showsPrec :: Int -> BlobRef m b -> ShowS
-  showsPrec d (BlobRef b) = showsPrec d b
+showsPrecBlobRef :: Int -> BlobRef m b -> ShowS
+showsPrecBlobRef p (BlobRef weakBlobRef) =
+  showParen (p>10) (showString "BlobRef " . showsPrec 11 weakBlobRef)
 
 {- |
 A cursor is a stable read-only iterator for a table.
