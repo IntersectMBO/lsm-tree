@@ -44,8 +44,8 @@ import           GHC.Word (Word64 (W64#))
 
 import           Data.BloomFilter.Classic.BitArray (BitArray, MBitArray)
 import qualified Data.BloomFilter.Classic.BitArray as BitArray
-import           Data.BloomFilter.Classic.Calc (BloomSize (..))
-import           Data.BloomFilter.Hash (CheapHashes, evalHashes)
+import           Data.BloomFilter.Classic.Calc
+import           Data.BloomFilter.Hash
 
 -------------------------------------------------------------------------------
 -- Mutable Bloom filters
@@ -81,25 +81,34 @@ new BloomSize { sizeBits, sizeHashes } = do
     }
 
 insertHashes :: MBloom s a -> CheapHashes a -> ST s ()
-insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = a } !h =
+insertHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
     go 0
   where
-    go !i | i >= k = return ()
-          | otherwise = let !idx = fromIntegral (evalHashes h i `rem` fromIntegral m)
-                        in BitArray.unsafeSet a idx >> go (i + 1)
+    go !i | i >= mbNumHashes = return ()
+    go !i = do
+      let probe :: Word64
+          probe = evalHashes h i
+          index :: Int
+          index = fromIntegral (probe `unsafeRemWord64` fromIntegral mbNumBits)
+      -- While the probe point can cover the full Word64 range, after range
+      -- reduction it is less then the filter size and thus must fit in an Int.
+      BitArray.unsafeSet mbBitArray index
+      go (i + 1)
 
-readHashes :: forall s a. CheapHashes a -> MBloom s a -> ST s Bool
-readHashes !ch MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } =
+readHashes :: forall s a. MBloom s a -> CheapHashes a -> ST s Bool
+readHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
     go 0
   where
     go :: Int -> ST s Bool
-    go !i | i >= k    = return True
-          | otherwise = do let !idx' = evalHashes ch i
-                           let !idx = fromIntegral (idx' `rem` fromIntegral m)
-                           b <- BitArray.unsafeRead v idx
-                           if b
-                           then go (i + 1)
-                           else return False
+    go !i | i >= mbNumHashes = return True
+    go !i = do
+      let probe :: Word64
+          probe = evalHashes h i
+          index :: Int
+          index = fromIntegral (probe `unsafeRemWord64` fromIntegral mbNumBits)
+      b <- BitArray.unsafeRead mbBitArray index
+      if b then go (i + 1)
+           else return False
 
 -- | Modify the filter's bit array. The callback is expected to read (exactly)
 -- the given number of bytes into the given byte array buffer.
@@ -148,24 +157,24 @@ size Bloom { numBits, numHashes } =
       sizeHashes = numHashes
     }
 
--- | Query an immutable Bloom filter for membership using already constructed 'Hashes' value.
+-- | Query an immutable Bloom filter for membership using already constructed
+-- 'CheapHashes' value.
 elemHashes :: CheapHashes a -> Bloom a -> Bool
-elemHashes !ch Bloom { numBits, numHashes, bitArray } =
+elemHashes !h Bloom { numBits, numHashes, bitArray } =
     go 0
   where
     go :: Int -> Bool
-    go !i | i >= numHashes
-          = True
-    go !i = let idx' :: Word64
-                !idx' = evalHashes ch i in
-            let idx :: Int
-                !idx = fromIntegral (idx' `unsafeRemWord64` fromIntegral numBits) in
-            -- While the idx' can cover the full Word64 range,
-            -- after taking the remainder, it now must fit in
-            -- and Int because it's less than the filter size.
-            if BitArray.unsafeIndex bitArray idx
-              then go (i + 1)
-              else False
+    go !i | i >= numHashes = True
+    go !i =
+      let probe :: Word64
+          probe = evalHashes h i
+          index :: Int
+          index = fromIntegral (probe `unsafeRemWord64` fromIntegral numBits)
+          -- While the probe point can cover the full Word64 range, after range
+          -- reduction it is less then the filter size and must fit in an Int.
+       in if BitArray.unsafeIndex bitArray index
+            then go (i + 1)
+            else False
 
 serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
