@@ -37,6 +37,7 @@
 - ignore: {name: "Hoist not"}
 - ignore: {name: "Use /="}
 - ignore: {name: "Use unless"}
+- ignore: {name: "Use notElem"}
 
 # Specify additional command line arguments
 #
