@@ -121,11 +121,7 @@ elem elt ub = elemHashes (makeHashes elt) ub
 -- /is/ present, return @False@.  If the value is not present, there
 -- is /still/ some possibility that @False@ will be returned.
 notElem :: Hashable a => a -> Bloom a -> Bool
-notElem elt ub = notElemHashes (makeHashes elt) ub
-
--- | Query an immutable Bloom filter for non-membership using already constructed 'Hashes' value.
-notElemHashes :: CheapHashes a -> Bloom a -> Bool
-notElemHashes !ch !ub = not (elemHashes ch ub)
+notElem = \elt ub -> not (elt `elem` ub)
 
 -- | Query a mutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
