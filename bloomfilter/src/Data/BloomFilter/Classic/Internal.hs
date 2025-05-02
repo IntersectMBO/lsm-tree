@@ -27,12 +27,13 @@ module Data.BloomFilter.Classic.Internal (
 
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
-import           Control.Monad.Primitive (PrimState)
+import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Control.Monad.ST (ST)
 import           Data.Bits
 import           Data.Kind (Type)
 import           Data.Primitive.ByteArray
-import qualified Data.Vector.Primitive as VP
+import           Data.Primitive.PrimArray
+import           Data.Word (Word64)
 
 #if MIN_VERSION_base(4,17,0)
 import           GHC.Exts (remWord64#)
@@ -72,7 +73,7 @@ instance NFData (MBloom s a) where
 new :: BloomSize -> ST s (MBloom s a)
 new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
     let !mbNumBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
-    mbBitArray <- BitArray.new (fromIntegral mbNumBits)
+    mbBitArray <- BitArray.new mbNumBits
     pure MBloom {
       mbNumBits,
       mbNumHashes,
@@ -80,12 +81,12 @@ new BloomSize { sizeBits, sizeHashes = mbNumHashes } = do
     }
 
 insertHashes :: MBloom s a -> CheapHashes a -> ST s ()
-insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } !h =
+insertHashes MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = a } !h =
     go 0
   where
     go !i | i >= k = return ()
-          | otherwise = let !idx = evalHashes h i `rem` fromIntegral m
-                        in BitArray.unsafeWrite v idx True >> go (i + 1)
+          | otherwise = let !idx = fromIntegral (evalHashes h i `rem` fromIntegral m)
+                        in BitArray.unsafeSet a idx >> go (i + 1)
 
 readHashes :: forall s a. CheapHashes a -> MBloom s a -> ST s Bool
 readHashes !ch MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } =
@@ -94,7 +95,7 @@ readHashes !ch MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } =
     go :: Int -> ST s Bool
     go !i | i >= k    = return True
           | otherwise = do let !idx' = evalHashes ch i
-                           let !idx = idx' `rem` fromIntegral m
+                           let !idx = fromIntegral (idx' `rem` fromIntegral m)
                            b <- BitArray.unsafeRead v idx
                            if b
                            then go (i + 1)
@@ -103,7 +104,8 @@ readHashes !ch MBloom { mbNumBits = m, mbNumHashes = k, mbBitArray = v } =
 -- | Modify the filter's bit array. The callback is expected to read (exactly)
 -- the given number of bytes into the given byte array buffer.
 --
-deserialise :: MBloom (PrimState m) a
+deserialise :: PrimMonad m
+            => MBloom (PrimState m) a
             -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
             -> m ()
 deserialise MBloom {mbBitArray} fill =
@@ -124,12 +126,10 @@ data Bloom a = Bloom {
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
-bloomInvariant Bloom { numBits = s, bitArray = BitArray.BV64 (VP.Vector off len ba) } =
-       s > 0
-    && s <= 2^(48 :: Int)
-    && off >= 0
-    && ceilDiv64 s == fromIntegral len
-    && (off + len) * 8 <= sizeofByteArray ba
+bloomInvariant Bloom { numBits, bitArray = BitArray.BitArray pa } =
+       numBits > 0
+    && numBits <= 2^(48 :: Int)
+    && ceilDiv64 numBits == sizeofPrimArray pa
   where
     ceilDiv64 x = unsafeShiftR (x + 63) 6
 
