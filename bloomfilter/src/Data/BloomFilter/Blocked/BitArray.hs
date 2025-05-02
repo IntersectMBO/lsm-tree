@@ -6,6 +6,7 @@
 -- multiple accesses to the same block only require a single cache line load
 -- or store.
 module Data.BloomFilter.Blocked.BitArray (
+    NumBlocks (..),
     bitsToBlocks,
     blocksToBits,
     BlockIx (..),
@@ -47,13 +48,17 @@ import           GHC.ST (ST (ST))
 newtype BitArray = BitArray (PrimArray Word64)
   deriving stock (Eq, Show)
 
+-- | Blocks are 512 bits, 64 bytes.
+newtype NumBlocks = NumBlocks Int
+  deriving stock Eq
+
 -- | The number of 512-bit blocks for the given number of bits. This rounds
 -- up to the nearest multiple of 512.
-bitsToBlocks :: Int -> Int
-bitsToBlocks n = (n+511) `div` 512  -- rounded up
+bitsToBlocks :: Int -> NumBlocks
+bitsToBlocks n = NumBlocks ((n+511) `div` 512)  -- rounded up
 
-blocksToBits :: Int -> Int
-blocksToBits n = n * 512
+blocksToBits :: NumBlocks -> Int
+blocksToBits (NumBlocks n) = n * 512
 
 newtype BlockIx = BlockIx Word
 newtype BitIx   = BitIx   Int
@@ -85,8 +90,8 @@ newtype MBitArray s = MBitArray (MutablePrimArray s Word64)
 
 -- | We create an explicitly pinned byte array, aligned to 64 bytes.
 --
-new :: Int -> ST s (MBitArray s)
-new numBlocks = do
+new :: NumBlocks -> ST s (MBitArray s)
+new (NumBlocks numBlocks) = do
     mba@(MutableByteArray mba#) <- newAlignedPinnedByteArray numBytes 64
     setByteArray mba 0 numBytes (0 :: Word8)
     return (MBitArray (MutablePrimArray mba#))

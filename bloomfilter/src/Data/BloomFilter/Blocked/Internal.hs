@@ -46,7 +46,8 @@ import           Data.Primitive.PrimArray
 import           Data.Primitive.Types (Prim (..))
 
 import           Data.BloomFilter.Blocked.BitArray (BitArray, BitIx (..),
-                     BlockIx (..), MBitArray, bitsToBlocks, blocksToBits)
+                     BlockIx (..), MBitArray, NumBlocks (..), bitsToBlocks,
+                     blocksToBits)
 import qualified Data.BloomFilter.Blocked.BitArray as BitArray
 import           Data.BloomFilter.Classic.Calc
 import           Data.BloomFilter.Hash
@@ -70,7 +71,7 @@ formatVersion = 1000
 type MBloom :: Type -> Type -> Type
 -- | A mutable Bloom filter, for use within the 'ST' monad.
 data MBloom s a = MBloom {
-      mbNumBlocks :: {-# UNPACK #-} !Int  -- ^ non-zero
+      mbNumBlocks :: {-# UNPACK #-} !NumBlocks  -- ^ non-zero
     , mbNumHashes :: {-# UNPACK #-} !Int
     , mbBitArray  :: {-# UNPACK #-} !(MBitArray s)
     }
@@ -89,11 +90,15 @@ instance NFData (MBloom s a) where
 -- The maximum size is $2^41$ bits (256 Gbytes). Tell us if you need bigger
 -- bloom filters.
 --
+-- The reason for the current limit of $2^41$ bits is that this corresponds to
+-- 2^32 blocks, each of size 64 bytes (512 bits). The reason for the current
+-- limit of 2^32 blocks is that for efficiency we use a single 64bit hash per
+-- element, and split that into a pair of 32bit hashes which are used for
+-- probing the filter. To go bigger would need a pair of hashes.
+--
 new :: BloomSize -> ST s (MBloom s a)
 new BloomSize { sizeBits, sizeHashes } = do
-    let numBlocks :: Int
-        numBlocks = max 1 (bitsToBlocks sizeBits)
-                .&. 0xffff_ffff
+    let numBlocks = bitsToBlocks (max 1 (min 0x200_0000_0000 sizeBits))
     mbBitArray <- BitArray.new numBlocks
     pure MBloom {
       mbNumBlocks = numBlocks,
@@ -114,8 +119,9 @@ insertHashes MBloom { mbNumBlocks, mbNumHashes, mbBitArray } !h =
     go !g !i = do
       let blockBitIx :: BitIx
           (!blockBitIx, !g') = genBitIndex g
-      assert (let BlockIx b = blockIx
-               in b >= 0 && b < fromIntegral mbNumBlocks) $
+      assert (let BlockIx    b = blockIx
+                  NumBlocks nb = mbNumBlocks
+               in b >= 0 && b < fromIntegral nb) $
         BitArray.unsafeSet mbBitArray blockIx blockBitIx
       go g' (i-1)
 
@@ -149,7 +155,7 @@ deserialise MBloom {mbBitArray} fill =
 type Bloom :: Type -> Type
 -- | An immutable Bloom filter.
 data Bloom a = Bloom {
-      numBlocks :: {-# UNPACK #-} !Int  -- ^ non-zero
+      numBlocks :: {-# UNPACK #-} !NumBlocks  -- ^ non-zero
     , numHashes :: {-# UNPACK #-} !Int
     , bitArray  :: {-# UNPACK #-} !BitArray
     }
@@ -157,8 +163,11 @@ data Bloom a = Bloom {
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
-bloomInvariant Bloom { numBlocks, bitArray = BitArray.BitArray pa } =
-    numBlocks * 8 == sizeofPrimArray pa
+bloomInvariant Bloom {
+                 numBlocks = NumBlocks nb,
+                 bitArray  = BitArray.BitArray pa
+               } =
+    nb * 8 == sizeofPrimArray pa
 
 instance Show (Bloom a) where
     show mb = "Bloom { " ++ show numBits ++ " bits } "
@@ -190,8 +199,9 @@ elemHashes Bloom { numBlocks, numHashes, bitArray } !h =
     go !g !i
       | let blockBitIx :: BitIx
             (!blockBitIx, !g') = genBitIndex g
-      , assert (let BlockIx b = blockIx
-                 in b >= 0 && b < fromIntegral numBlocks) $
+      , assert (let BlockIx    b = blockIx
+                    NumBlocks nb = numBlocks
+                 in b >= 0 && b < fromIntegral nb) $
         BitArray.unsafeIndex bitArray blockIx blockBitIx
       = go g' (i-1)
 
@@ -298,8 +308,8 @@ hashes = Hashes . hash64
 -- 32bits are used with a simpler PRNG to produce a sequence of probe points
 -- withi the selected 512bit block.
 --
-blockIxAndBitGen :: Hashes a -> Int -> (BlockIx, BitIxGen)
-blockIxAndBitGen (Hashes w64) numBlocks =
+blockIxAndBitGen :: Hashes a -> NumBlocks -> (BlockIx, BitIxGen)
+blockIxAndBitGen (Hashes w64) (NumBlocks numBlocks) =
     assert (numBlocks > 0) $
     (blockIx, bitGen)
   where
