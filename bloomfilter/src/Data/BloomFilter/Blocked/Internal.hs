@@ -142,6 +142,7 @@ prefetchInsert MBloom { mbNumBlocks, mbBitArray } !h =
     blockIx :: BlockIx
     (!blockIx, _) = blockIxAndBitGen h mbNumBlocks
 
+{-# INLINE deserialise #-}
 -- | Overwrite the filter's bit array. Use 'new' to create a filter of the
 -- expected size and then use this function to fill in the bit data.
 --

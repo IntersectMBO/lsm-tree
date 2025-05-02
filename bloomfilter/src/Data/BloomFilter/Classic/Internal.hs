@@ -140,6 +140,7 @@ readHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
       if b then go (i + 1)
            else return False
 
+{-# INLINE deserialise #-}
 -- | Overwrite the filter's bit array. Use 'new' to create a filter of the
 -- expected size and then use this function to fill in the bit data.
 --

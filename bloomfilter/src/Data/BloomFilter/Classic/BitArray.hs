@@ -82,6 +82,7 @@ serialise bitArray =
   where
     asByteArray (BitArray (PrimArray ba#)) = ByteArray ba#
 
+{-# INLINE deserialise #-}
 -- | Do an inplace overwrite of the byte array representing the bit block.
 deserialise :: PrimMonad m
             => MBitArray (PrimState m)
