@@ -307,7 +307,7 @@ hashes = Hashes . hash64
 -- | The scheme for turning 'Hashes' into block and bit indexes is as follows:
 -- the high 32bits of the 64bit hash select the block of bits, while the low
 -- 32bits are used with a simpler PRNG to produce a sequence of probe points
--- withi the selected 512bit block.
+-- within the selected 512bit block.
 --
 blockIxAndBitGen :: Hashes a -> NumBlocks -> (BlockIx, BitIxGen)
 blockIxAndBitGen (Hashes w64) (NumBlocks numBlocks) =
@@ -324,8 +324,8 @@ blockIxAndBitGen (Hashes w64) (NumBlocks numBlocks) =
 newtype BitIxGen = BitIxGen Word
 
 {-# INLINE genBitIndex #-}
--- | Generate the next in a (short) short sequence of pseudo-random 9-bit
--- values. This is used for selecting the probe bit within the 512 bit block.
+-- | Generate the next in a short sequence of pseudo-random 9-bit values. This
+-- is used for selecting the probe bit within the 512 bit block.
 --
 -- This simple generator works by multiplying a 32bit value by the golden ratio
 -- (as a fraction of a 32bit value). This is only suitable for short sequences

@@ -74,9 +74,9 @@ unsafeIndex (BitArray arr) blockIx blockBitIx =
 {-# INLINE prefetchIndex #-}
 prefetchIndex :: BitArray -> BlockIx -> ST s ()
 prefetchIndex (BitArray (PrimArray ba#)) (BlockIx blockIx) =
-    -- For reading, we want to prefetch such that we do least disturbence of
+    -- For reading, we want to prefetch such that we do least disturbance of
     -- the caches. We will typically not keep this cache line longer than one
-    -- read.
+    -- use of elemHashes which does several memory reads of the same cache line.
     let !i@(I# i#) = fromIntegral blockIx `shiftL` 6 in
     -- blockIx * 64 to go from block index to the byte offset of the beginning
     -- of the block. This offset is in bytes, not words.
