@@ -81,7 +81,7 @@ prefetchIndex (BitArray (PrimArray ba#)) (BlockIx blockIx) =
     -- blockIx * 64 to go from block index to the byte offset of the beginning
     -- of the block. This offset is in bytes, not words.
 
-    assert (i >= 0 && i <= sizeofByteArray (ByteArray ba#)) $
+    assert (i >= 0 && i < sizeofByteArray (ByteArray ba#) - 63) $
 
     ST (\s -> case prefetchByteArray0# ba# i# s of
                 s' -> (# s', () #))
@@ -123,7 +123,7 @@ unsafeSet :: MBitArray s -> BlockIx -> BitIx -> ST s ()
 unsafeSet (MBitArray arr) blockIx blockBitIx = do
 #ifdef NO_IGNORE_ASSERTS
     sz <- getSizeofMutablePrimArray arr
-    assert (wordIx >= 0 && wordIx <= sz) $ return ()
+    assert (wordIx >= 0 && wordIx < sz) $ return ()
 #endif
     w <- readPrimArray arr wordIx
     writePrimArray arr wordIx (unsafeSetBit w wordBitIx)
@@ -141,7 +141,7 @@ prefetchSet (MBitArray (MutablePrimArray mba#)) (BlockIx blockIx) = do
 
 #ifdef NO_IGNORE_ASSERTS
     sz <- getSizeofMutableByteArray (MutableByteArray mba#)
-    assert (let i = I# i# in i >= 0 && i <= sz) $ return ()
+    assert (let i = I# i# in i >= 0 && i < sz-63) $ return ()
 #endif
 
     ST (\s -> case prefetchMutableByteArray3# mba# i# s of
