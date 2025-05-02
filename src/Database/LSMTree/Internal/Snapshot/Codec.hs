@@ -267,33 +267,27 @@ instance DecodeVersioned SnapshotRun where
 -- TableConfig
 
 instance Encode TableConfig where
-  encode config =
+  encode TableConfig {..} =
          encodeListLen 7
-      <> encode mergePolicy
-      <> encode sizeRatio
-      <> encode writeBufferAlloc
-      <> encode bloomFilterAlloc
-      <> encode fencePointerIndex
-      <> encode diskCachePolicy
-      <> encode mergeSchedule
-    where
-      TableConfig
-        mergePolicy
-        sizeRatio
-        writeBufferAlloc
-        bloomFilterAlloc
-        fencePointerIndex
-        diskCachePolicy
-        mergeSchedule
-        = config
+      <> encode confMergePolicy
+      <> encode confSizeRatio
+      <> encode confWriteBufferAlloc
+      <> encode confBloomFilterAlloc
+      <> encode confFencePointerIndex
+      <> encode confDiskCachePolicy
+      <> encode confMergeSchedule
 
 instance DecodeVersioned TableConfig where
   decodeVersioned v@V0 = do
       _ <- decodeListLenOf 7
-      TableConfig
-        <$> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        <*> decodeVersioned v <*> decodeVersioned v <*> decodeVersioned v
-        <*> decodeVersioned v
+      confMergePolicy <- decodeVersioned v
+      confSizeRatio <- decodeVersioned v
+      confWriteBufferAlloc <- decodeVersioned v
+      confBloomFilterAlloc <- decodeVersioned v
+      confFencePointerIndex <- decodeVersioned v
+      confDiskCachePolicy <- decodeVersioned v
+      confMergeSchedule <- decodeVersioned v
+      pure TableConfig {..}
 
 -- MergePolicy
 

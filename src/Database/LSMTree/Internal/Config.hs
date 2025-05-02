@@ -58,6 +58,7 @@ newtype LevelNo = LevelNo Int
 -- * Size ratio: 4
 data TableConfig = TableConfig {
     confMergePolicy       :: !MergePolicy
+  , confMergeSchedule     :: !MergeSchedule
     -- Size ratio between the capacities of adjacent levels.
   , confSizeRatio         :: !SizeRatio
     -- | Total number of bytes that the write buffer can use.
@@ -69,7 +70,6 @@ data TableConfig = TableConfig {
   , confFencePointerIndex :: !FencePointerIndexType
     -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy   :: !DiskCachePolicy
-  , confMergeSchedule     :: !MergeSchedule
   }
   deriving stock (Show, Eq)
 
@@ -86,12 +86,12 @@ defaultTableConfig :: TableConfig
 defaultTableConfig =
     TableConfig
       { confMergePolicy       = LazyLevelling
+      , confMergeSchedule     = defaultMergeSchedule
       , confSizeRatio         = Four
       , confWriteBufferAlloc  = AllocNumEntries 20_000
       , confBloomFilterAlloc  = defaultBloomFilterAlloc
       , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
-      , confMergeSchedule     = defaultMergeSchedule
       }
 
 data RunLevelNo = RegularLevel LevelNo | UnionLevel
