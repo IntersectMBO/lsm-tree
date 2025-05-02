@@ -27,6 +27,7 @@ module Data.BloomFilter.Classic (
 
     -- * Types
     Hash,
+    Hashable,
     CheapHashes,
 
     -- * Immutable Bloom filters
@@ -54,14 +55,15 @@ module Data.BloomFilter.Classic (
     -- ** Accessors
     size,
     elem,
-    elemHashes,
     notElem,
+    elemHashes,
     serialise,
 
     -- * Mutable Bloom filters
     MBloom,
     new,
     insert,
+    insertHashes,
     read,
 
     -- ** Conversion
@@ -78,7 +80,7 @@ import           Data.Primitive.ByteArray (MutableByteArray)
 import           Data.BloomFilter.Classic.Calc
 import           Data.BloomFilter.Classic.Internal hiding (deserialise)
 import qualified Data.BloomFilter.Classic.Internal as Internal
-import           Data.BloomFilter.Hash (CheapHashes, Hash, Hashable, makeHashes)
+import           Data.BloomFilter.Hash
 
 import           Prelude hiding (elem, notElem, read)
 
