@@ -126,6 +126,7 @@ deserialise MBloom {mbBitArray} fill =
 --
 
 type Bloom :: Type -> Type
+-- | An immutable Bloom filter.
 data Bloom a = Bloom {
       numBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
     , numHashes :: {-# UNPACK #-} !Int
@@ -199,9 +200,9 @@ freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
               }
     assert (bloomInvariant bf) $ pure bf
 
--- | Create an immutable Bloom filter from a mutable one.  The mutable
--- filter /must not/ be modified afterwards, or a runtime crash may
--- occur.  For a safer creation interface, use 'freeze' or 'create'.
+-- | Create an immutable Bloom filter from a mutable one without copying. The
+-- mutable filter /must not/ be modified afterwards. For a safer creation
+-- interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
 unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
     bitArray <- BitArray.unsafeFreeze mbBitArray
