@@ -1,6 +1,4 @@
--- |
---
--- A fast, space efficient Bloom filter implementation.  A Bloom
+-- | A fast, space efficient Bloom filter implementation.  A Bloom
 -- filter is a set-like data structure that provides a probabilistic
 -- membership test.
 --
@@ -12,9 +10,6 @@
 --   to a filter, a membership test /may/ nevertheless indicate that
 --   the element is present.
 --
--- This module provides low-level control.  For an easier to use
--- interface, see the "Data.BloomFilter.Classic.Easy" module.
-
 module Data.BloomFilter.Classic (
     -- * Overview
     -- $overview
