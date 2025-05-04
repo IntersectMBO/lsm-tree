@@ -54,7 +54,7 @@ fromHasFS hfs =
 -- | Lock files are reader\/writer locks.
 --
 -- We implement this using the content of the lock file. The content is a
--- counter, positive for readers and negaive (specifically -1) for writers.
+-- counter, positive for readers and negative (specifically -1) for writers.
 -- There can be any number of readers, but only one writer. Writers can not
 -- coexist with readers.
 --

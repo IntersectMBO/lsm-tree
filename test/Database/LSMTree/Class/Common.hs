@@ -27,7 +27,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- | Constraints for keys, values, and blobs
 type C k v b = (CK k, CV v, CB b)
 
--- | Constaints for keys
+-- | Constraints for keys
 type CK k = (C_ k, SerialiseKey k)
 
 -- | Constraints for values

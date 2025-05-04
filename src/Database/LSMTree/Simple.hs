@@ -243,7 +243,7 @@ Just (Value "Hello")
 --------------------------------------------------------------------------------
 
 {- $resource_management
-This package uses explicit resource mangagement. The 'Session', 'Table', and 'Cursor'
+This package uses explicit resource management. The 'Session', 'Table', and 'Cursor'
 handles hold open resources, such as file handles, which must be explicitly released.
 Every operation that allocates a resource is paired with another operation to releases
 that resource. For each pair of allocate and release operations there is a bracketed

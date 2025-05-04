@@ -111,7 +111,7 @@ data HasBlockIO m h = HasBlockIO {
     -- function in 'IO' much more complex. In particular, if we want to reuse
     -- "GHC.IO.Handle.Lock" functionality, then we have to either ...
     --
-    -- 1. Convert there and back between OS-specific file desciptors and
+    -- 1. Convert there and back between OS-specific file descriptors and
     --   'GHC.Handle's, which is not possible on Windows without creating new
     --   file descriptors, or ...
     -- 2. Vendor all of the "GHC.IO.Handle.Lock" code and its dependencies
@@ -131,7 +131,7 @@ data HasBlockIO m h = HasBlockIO {
     -- | Synchronise file contents with the storage device.
     --
     -- Ensure that all change to the file handle's contents which exist only in
-    -- memory (as buffered system cache pages) are transfered/flushed to disk.
+    -- memory (as buffered system cache pages) are transferred/flushed to disk.
     -- This will also update the file handle's associated metadata.
     --
     -- This uses different system calls on different distributions.

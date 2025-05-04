@@ -50,7 +50,7 @@ runParams =
       runParamIndex   = Index.Ordinary
     }
 
--- | 'new' in an existing directory should be succesfull.
+-- | 'new' in an existing directory should be successful.
 prop_newInExistingDir :: HasFS IO h -> FS.HasBlockIO IO h -> IO Property
 prop_newInExistingDir hfs hbio = do
     let runDir = FS.mkFsPath ["a", "b", "c"]

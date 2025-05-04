@@ -134,7 +134,7 @@ instance Arbitrary PageContentOrdered where
     shrink (PageContentOrdered kops) =
       map PageContentOrdered (shrinkOrderedKeyOps kops)
 
--- | Stricly increasing, so no duplicates.
+-- | Strictly increasing, so no duplicates.
 pageContentOrderedInvariant :: PageContentOrdered -> Bool
 pageContentOrderedInvariant (PageContentOrdered kops) =
     pageContentFitsInvariant (PageContentFits kops)

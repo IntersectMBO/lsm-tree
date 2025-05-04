@@ -292,7 +292,7 @@ mapActionError f (ActionError e) = ActionError (f e)
 --
 -- If the code was interrupted due to an exception for example, then the
 -- registry is aborted, which performs registered rollback actions. If the code
--- succesfully terminated, then the registry is committed, in which case
+-- successfully terminated, then the registry is committed, in which case
 -- registered, delayed actions will be performed.
 --
 -- Registered actions are run in LIFO order, whether they be rollback actions or
@@ -481,7 +481,7 @@ mapExceptionWithActionRegistry f action = action `catch` (throwIO . mapSomeExcep
   Rollback actions and delayed actions are performed /precisely/ when aborting
   or committing an action registry respectively (see [Action
   registry](#g:actionRegistry)). To achieve this, finalisation of the action
-  registry happens in the same masked state as runnning the registered actions.
+  registry happens in the same masked state as running the registered actions.
   This means all the usual masking caveats apply for the registered actions.
 -}
 

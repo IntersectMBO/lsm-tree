@@ -72,7 +72,7 @@ prop_putGet (PartialIOErrors errs) bss =
       let expected = CRC32C (Data.Digest.CRC32C.crc32c (BS.concat bss))
       return (all (expected==) [crc1, crc2, crc3])
 
--- TODO: test like prop_putGet but with put curruption, to detect that the
+-- TODO: test like prop_putGet but with put corruption, to detect that the
 -- crc doesn't match, to detect the corruption.
 
 prop_writeRead :: PartialIOErrors -> ChecksumsFile -> Bool

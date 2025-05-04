@@ -20,7 +20,7 @@ has to be enabled, either by setting the flag in
 executable using `--flag=+serialblockio`.
 
 > :warning: **When enabling `serialblockio`, disable the
-> `cabal.project.blockio-uring` import in `cabal.project`!** Unforunately, this
+> `cabal.project.blockio-uring` import in `cabal.project`!** Unfortunately, this
 > line has to be removed/commented out manually (for now), or the project won't
 > build.
 

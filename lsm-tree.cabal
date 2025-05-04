@@ -10,7 +10,7 @@ description:
   *   Basic key–value operations, such as lookup, insert, and delete.
   *   Range lookups, which efficiently retrieve the values for all keys in a given range.
   *   Monoidal upserts which combine the stored and new values.
-  *   BLOB storage which assocates a large auxiliary BLOB with a key.
+  *   BLOB storage which associates a large auxiliary BLOB with a key.
   *   Durable on-disk persistence and rollback via named snapshots.
   *   Cheap table duplication where all duplicates can be independently accessed and modified.
   *   High-performance lookups on SSDs using I\/O batching and parallelism.
@@ -47,7 +47,7 @@ description:
 
   *   Each session locks its session directory.
       This means that a database cannot be accessed from different processes at the same time.
-  *   Tables can be used concurrently and concurrent use of read operations such as lookups is determinstic.
+  *   Tables can be used concurrently and concurrent use of read operations such as lookups is deterministic.
       However, concurrent use of write operations such as insert or delete with any other operation results in a race condition.
 
   == Performance #performance#
@@ -172,7 +172,7 @@ description:
           An ordinary index stores the maximum serialised key for each memory page.
           The total in-memory size of all indexes is proportional to the average size of one serialised key per memory page.
       [@CompactIndex@]:
-          A compact index stores the 64 most significant bits of the minimum serialised key for each memory page, as well as 1 bit per memory page to resolve clashes, 1 bit per memory page to mark overflow pages, and a negligable amount of memory for tie breakers.
+          A compact index stores the 64 most significant bits of the minimum serialised key for each memory page, as well as 1 bit per memory page to resolve clashes, 1 bit per memory page to mark overflow pages, and a negligible amount of memory for tie breakers.
           The total in-memory size of all indexes is approximately 66 bits per memory page.
 
   The total size of an LSM-tree must not exceed \(2^{41}\) physical entries.

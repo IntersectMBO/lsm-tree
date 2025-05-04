@@ -182,7 +182,7 @@ resolveValidOutput (v1 :: v) (v2 :: v) =
 
 {- |
 Wrapper that provides an instance of 'ResolveValue' via the 'Semigroup'
-instance of the underyling type.
+instance of the underlying type.
 
 prop> resolve (ResolveViaSemigroup v1) (ResolveViaSemigroup v2) = ResolveViaSemigroup (v1 <> v2)
 -}

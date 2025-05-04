@@ -134,7 +134,7 @@ vector.
 
 The first 4 bytes (32bit) are a format identifier / format version. This
 determines the format of the rest of the header and file.
-The format identifier also acts as endianess marker.
+The format identifier also acts as endianness marker.
 It (and remaining fields) are serialised in native byte order.
 
 The remainder of the header for format 1 consists of:

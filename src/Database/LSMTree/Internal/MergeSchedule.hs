@@ -175,7 +175,7 @@ releaseTableContent reg (TableContent _wb wbb levels cache ul) = do
   Levels cache
 -------------------------------------------------------------------------------}
 
--- | Flattend cache of the runs that referenced by a table.
+-- | Flattened cache of the runs that referenced by a table.
 --
 -- This cache includes a vector of runs, but also vectors of the runs broken
 -- down into components, like bloom filters, fence pointer indexes and file

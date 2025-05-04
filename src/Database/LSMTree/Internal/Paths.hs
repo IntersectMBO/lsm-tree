@@ -96,7 +96,7 @@ newtype SnapshotName = SnapshotName FilePath
 instance Show SnapshotName where
   showsPrec d (SnapshotName p) = showsPrec d p
 
--- | The given string must satsify 'isValidSnapshotName'.
+-- | The given string must satisfy 'isValidSnapshotName'.
 --   Otherwise, 'fromString' throws an 'InvalidSnapshotNameError'.
 instance IsString SnapshotName where
   fromString :: String -> SnapshotName
@@ -163,7 +163,7 @@ isValidSnapshotName str =
 
 -- | Create snapshot name.
 --
--- The given string must satsify 'isValidSnapshotName'.
+-- The given string must satisfy 'isValidSnapshotName'.
 --
 -- Throws the following exceptions:
 --
@@ -304,7 +304,7 @@ newtype ForIndex a = ForIndex {unForIndex :: a}
   ForRunFiles abstraction
 -------------------------------------------------------------------------------}
 
--- | Stores someting for each run file (except the checksums file), allowing to
+-- | Stores something for each run file (except the checksums file), allowing to
 -- easily do something for all of them without mixing them up.
 data ForRunFiles a = ForRunFiles {
       forRunKOps   :: !(ForKOps a)

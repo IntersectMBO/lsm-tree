@@ -396,7 +396,7 @@ multiPageValuesClash ic
     -- triplet of contiguous LTP bits, and a C bit corresponding to the middle
     -- of the triplet.
     p (cj, ltpi, ltpj, ltpk) =
-          -- two multi-page values border eachother
+          -- two multi-page values border each other
          unBit ltpi && not (unBit ltpj) && unBit ltpk
          -- and they clash
       && unBit cj

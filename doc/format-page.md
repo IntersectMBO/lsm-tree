@@ -226,7 +226,7 @@ representation gives natural alignment without any padding.
 
 If the blob reference bitmap indicates that there is a blob reference for key i,
 then the index in the blob reference array can be found by counting the number
-of 1 bits for all bitmap indexes stricly less than i. This can be done
+of 1 bits for all bitmap indexes strictly less than i. This can be done
 relatively efficiently using the popcount CPU instruction. For example, pages
 with up to 64 keys, the bitmap fits into a single 64bit word and thus a single
 popcount instruction, (and some bit shifting and masking) is needed to find the

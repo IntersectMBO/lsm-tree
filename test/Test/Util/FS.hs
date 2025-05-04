@@ -286,7 +286,7 @@ approximateEqStream (UnsafeStream infoXs xs) (UnsafeStream infoYs ys) =
 data DirEntry a = Directory a | File a
   deriving stock (Show, Eq, Ord, Functor)
 
--- | List all files and directories in the given directory and recusively in all
+-- | List all files and directories in the given directory and recursively in all
 -- sub-directories.
 listDirectoryRecursive ::
      Monad m
