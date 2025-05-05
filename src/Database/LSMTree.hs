@@ -1402,7 +1402,7 @@ It is recommended to use this function instead of 'union' and 'closeTable'.
 __Warning:__ Both input tables must be from the same 'Session'.
 
 __Warning:__ This is a relatively expensive operation that may take some time to complete.
-See 'incrementalUnion' for an incremental alternative.
+See 'withIncrementalUnion' for an incremental alternative.
 
 Throws the following exceptions:
 
