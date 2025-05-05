@@ -696,10 +696,12 @@ rangeLookup (Table table) range =
 Insert a new key and value in the table.
 If the key is already present in the table, the associated value is replaced with the given value.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\frac{1}{P} \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{n}{P})\).
 
 Throws the following exceptions:
 
@@ -721,10 +723,12 @@ insert table k v =
 {- |
 Variant of 'insert' for batch insertions.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\frac{b}{P} \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -745,10 +749,12 @@ inserts table entries =
 Delete a key and its value from the table.
 If the key is not present in the table, the table is left unchanged.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\frac{1}{P} \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{n}{P})\).
 
 Throws the following exceptions:
 
@@ -769,10 +775,12 @@ delete table k =
 {- |
 Variant of 'delete' for batch deletions.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\frac{b}{P} \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -795,10 +803,12 @@ Update the value at a specific key:
 * If the given value is 'Just', this operation acts as 'insert'.
 * If the given value is 'Nothing', this operation acts as 'delete'.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\frac{1}{P} \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{n}{P})\).
 
 Throws the following exceptions:
 
@@ -820,10 +830,12 @@ update table k mv =
 {- |
 Variant of 'update' for batch updates.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\frac{b}{P} \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
 
 The variable \(b\) refers to the length of the input vector.
 

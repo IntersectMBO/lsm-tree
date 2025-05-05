@@ -132,8 +132,9 @@ constants:
 
 The following table summarises the cost of the operations on LSM-trees
 measured in the number of disk I/O operations. If the cost depends on
-the merge policy, the table contains one entry for each merge policy.
-Otherwise, the merge policy is listed as N/A.
+the merge policy or merge schedule, then the table contains one entry
+for each relevant combination. Otherwise, the merge policy and/or merge
+schedule is listed as N/A.
 
 <table>
 <thead>
@@ -141,6 +142,7 @@ Otherwise, the merge policy is listed as N/A.
 <th>Resource</th>
 <th>Operation</th>
 <th>Merge policy</th>
+<th>Merge schedule</th>
 <th>Cost in disk I/O operations</th>
 </tr>
 </thead>
@@ -149,18 +151,6 @@ Otherwise, the merge policy is listed as N/A.
 <td>Session</td>
 <td>Create/Open</td>
 <td>N/A</td>
-<td><span class="math inline"><em>O</em>(1)</span></td>
-</tr>
-<tr>
-<td></td>
-<td>Close</td>
-<td><code>LazyLevelling</code></td>
-<td><span class="math inline">$O(o \: T \: \log_T
-\frac{n}{B})$</span></td>
-</tr>
-<tr>
-<td>Table</td>
-<td>Create</td>
 <td>N/A</td>
 <td><span class="math inline"><em>O</em>(1)</span></td>
 </tr>
@@ -168,18 +158,36 @@ Otherwise, the merge policy is listed as N/A.
 <td></td>
 <td>Close</td>
 <td><code>LazyLevelling</code></td>
+<td>N/A</td>
+<td><span class="math inline">$O(o \: T \: \log_T
+\frac{n}{B})$</span></td>
+</tr>
+<tr>
+<td>Table</td>
+<td>Create</td>
+<td>N/A</td>
+<td>N/A</td>
+<td><span class="math inline"><em>O</em>(1)</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Close</td>
+<td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Lookup</td>
 <td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Range Lookup</td>
 <td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B} +
 \frac{b}{P})$</span>
 *</td>
@@ -188,12 +196,21 @@ Otherwise, the merge policy is listed as N/A.
 <td></td>
 <td>Insert/Delete/Update</td>
 <td><code>LazyLevelling</code></td>
+<td><code>Incremental</code></td>
 <td><span class="math inline">$O(\frac{1}{P} \: \log_T
 \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
+<td></td>
+<td><code>LazyLevelling</code></td>
+<td><code>OneShot</code></td>
+<td><span class="math inline">$O(\frac{n}{P})$</span></td>
+</tr>
+<tr>
+<td></td>
 <td>Duplicate</td>
+<td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline"><em>O</em>(0)</span></td>
 </tr>
@@ -201,17 +218,20 @@ Otherwise, the merge policy is listed as N/A.
 <td></td>
 <td>Union</td>
 <td>N/A</td>
+<td>N/A</td>
 <td><span class="math inline">$O(\frac{n}{P})$</span></td>
 </tr>
 <tr>
 <td>Snapshot</td>
 <td>Save</td>
 <td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Open</td>
+<td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline">$O(\frac{n}{P})$</span></td>
 </tr>
@@ -219,11 +239,13 @@ Otherwise, the merge policy is listed as N/A.
 <td></td>
 <td>Delete</td>
 <td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>List</td>
+<td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline"><em>O</em>(<em>s</em>)</span></td>
 </tr>
@@ -231,17 +253,20 @@ Otherwise, the merge policy is listed as N/A.
 <td>Cursor</td>
 <td>Create</td>
 <td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Close</td>
 <td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Read next entry</td>
+<td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline">$O(\frac{1}{P})$</span></td>
 </tr>
