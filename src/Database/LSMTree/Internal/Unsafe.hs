@@ -1606,7 +1606,7 @@ tableContentToMergingTree seshEnv conf
           -- any pre-existing union in the input table:
           unionmt = case tableUnionLevel of
                     NoUnion    -> Nothing
-                    Union mt _ -> Just mt  -- we could re-use the cache, but it
+                    Union mt _ -> Just mt  -- we could reuse the cache, but it
                                            -- would complicate things
        in newPendingLevelMerge runs unionmt
   where

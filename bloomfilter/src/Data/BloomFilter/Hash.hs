@@ -279,7 +279,7 @@ https://github.com/facebook/rocksdb/blob/096fb9b67d19a9a180e7c906b4a0cdb2b2d0c1f
 
 -}
 
--- | Evalute 'CheapHashes' family.
+-- | Evaluate 'CheapHashes' family.
 --
 -- \[
 -- g_i = h_0 + \left\lfloor h_1 / 2^i \right\rfloor

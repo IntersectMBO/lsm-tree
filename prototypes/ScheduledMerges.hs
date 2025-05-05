@@ -656,7 +656,7 @@ newMergingRun mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
     (debt, state) <- case filter (\r -> runSize r > 0) runs of
-      []  -> let (r:_) = runs -- just re-use the empty input
+      []  -> let (r:_) = runs -- just reuse the empty input
               in return (runSize r, CompletedMerge r)
       [r] -> return (runSize r, CompletedMerge r)
       rs  -> do

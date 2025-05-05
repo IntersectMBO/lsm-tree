@@ -91,7 +91,7 @@ constructIndexCompact (ChunkSize csize) apps = runST $ do
   Benchmarks for UTxO keys that are /almost/ uniformly distributed
 -------------------------------------------------------------------------------}
 
--- | UTXO keys are not truly uniformly distrbuted. The 'txId' is a uniformly
+-- | UTXO keys are not truly uniformly distributed. The 'txId' is a uniformly
 -- distributed hash, but the same 'txId' can appear in multiple UTXO keys, but
 -- with a different 'txIx'. In the worst case, this means that we have a clash
 -- in the compact index for /every page/. The following benchmarks show

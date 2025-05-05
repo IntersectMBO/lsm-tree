@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
--- | Incremental (in-memory portion of) run consruction
+-- | Incremental (in-memory portion of) run construction
 --
 module Database.LSMTree.Internal.RunAcc (
     RunAcc (..)

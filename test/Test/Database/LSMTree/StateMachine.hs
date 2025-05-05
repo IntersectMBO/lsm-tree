@@ -367,7 +367,7 @@ propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag =
 -- @release_RealImpl_MockFS@ are not run in a masked state and it is not
 -- guaranteed that the latter runs if the former succeeded. Therefore, if
 -- @runActions@ fails (with exceptions), then not having @bracket@ might lead to
--- more exceptions, which can obfuscate the orginal reason that the property
+-- more exceptions, which can obfuscate the original reason that the property
 -- failed. Because of this, if @prop@ fails, it's probably best to also try
 -- running the @IO@ version of this property with the failing seed, and compare
 -- the counterexamples to see which one is more interesting.
@@ -2251,10 +2251,10 @@ data Stats = Stats {
     -- | Names for which snapshots exist
     snapshotted        :: !(Set R.SnapshotName)
     -- === Final tags (per action sequence, across all tables)
-    -- | Number of succesful lookups and their results
+    -- | Number of successful lookups and their results
   , numLookupsResults  :: {-# UNPACK #-} !(Int, Int, Int)
                           -- (NotFound, Found, FoundWithBlob)
-    -- | Number of succesful updates
+    -- | Number of successful updates
   , numUpdates         :: {-# UNPACK #-} !(Int, Int, Int, Int)
                           -- (Insert, InsertWithBlob, Delete, Mupsert)
     -- | Actions that succeeded
@@ -2262,7 +2262,7 @@ data Stats = Stats {
     -- | Actions that failed with an error
   , failActions        :: [(String, Model.Err)]
     -- === Final tags (per action sequence, per table)
-    -- | Number of actions per table (succesful or failing)
+    -- | Number of actions per table (successful or failing)
   , numActionsPerTable :: !(Map Model.TableID Int)
     -- | The state of model tables at the point they were closed. This is used
     -- to augment the tables from the final model state (which of course has
@@ -2703,25 +2703,25 @@ data FinalTag =
   | NumLookupsFound String
     -- | Total number of lookup results that were 'SUT.FoundWithBlob'
   | NumLookupsFoundWithBlob String
-    -- | Number of 'Class.Insert's succesfully submitted to a table
+    -- | Number of 'Class.Insert's successfully submitted to a table
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.inserts')
   | NumInserts String
-    -- | Number of 'Class.InsertWithBlob's succesfully submitted to a table
+    -- | Number of 'Class.InsertWithBlob's successfully submitted to a table
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.inserts')
   | NumInsertsWithBlobs String
-    -- | Number of 'Class.Delete's succesfully submitted to a table
+    -- | Number of 'Class.Delete's successfully submitted to a table
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.deletes')
   | NumDeletes String
-    -- | Number of 'Class.Mupsert's succesfully submitted to a table
+    -- | Number of 'Class.Mupsert's successfully submitted to a table
     -- (this includes submissions through both 'Class.updates' and
     -- 'Class.mupserts')
   | NumMupserts String
     -- | Total number of actions (failing, succeeding, either)
   | NumActions String
-    -- | Which actions succeded
+    -- | Which actions succeeded
   | ActionSuccess String
     -- | Which actions failed
   | ActionFail String Model.Err
@@ -2860,13 +2860,13 @@ runActionsBracket p cleanupFlag refsFlag init cleanup runner tagger actions =
     cleanup' st = do
       -- We want to run forgotten reference checks after cleanup, since cleanup
       -- itself may lead to forgotten refs. The reference checks have the
-      -- crucial side effect of reseting the forgotten refs state. If we don't
+      -- crucial side effect of resetting the forgotten refs state. If we don't
       -- do this then the next test run (e.g. during shrinking) will encounter a
       -- false/stale forgotten refs exception. But we also have to make sure
       -- that if cleanup itself fails, that we still run the reference checks.
       -- 'propCleanup' will make sure to catch any exceptions that are thrown by
       -- the 'cleanup' action. 'propRefs' will then definitely run afterwards so
-      -- that the frogotten reference checks are definitely performed.
+      -- that the forgotten reference checks are definitely performed.
       x <- propCleanup cleanupFlag $ cleanup st
       y <- propRefs refsFlag
       pure (x QC..&&. y)

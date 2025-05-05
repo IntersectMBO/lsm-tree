@@ -26,7 +26,7 @@ It has support for:
 
 - Monoidal upserts which combine the stored and new values.
 
-- BLOB storage which assocates a large auxiliary BLOB with a key.
+- BLOB storage which associates a large auxiliary BLOB with a key.
 
 - Durable on-disk persistence and rollback via named snapshots.
 
@@ -78,7 +78,7 @@ LSM-trees can be used concurrently, but with a few restrictions:
   cannot be accessed from different processes at the same time.
 
 - Tables can be used concurrently and concurrent use of read operations
-  such as lookups is determinstic. However, concurrent use of write
+  such as lookups is deterministic. However, concurrent use of write
   operations such as insert or delete with any other operation results
   in a race condition.
 
@@ -318,7 +318,7 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   A compact index stores the 64 most significant bits of the minimum
   serialised key for each memory page, as well as 1 bit per memory page
   to resolve clashes, 1 bit per memory page to mark overflow pages, and
-  a negligable amount of memory for tie breakers. The total in-memory
+  a negligible amount of memory for tie breakers. The total in-memory
   size of all indexes is approximately 66 bits per memory page.
 
 The total size of an LSM-tree must not exceed 2<sup>41</sup> physical

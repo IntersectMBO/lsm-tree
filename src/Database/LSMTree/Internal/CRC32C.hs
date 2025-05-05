@@ -11,7 +11,7 @@
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE UnboxedTuples       #-}
 
--- | Functionalty related to CRC-32C (Castagnoli) checksums:
+-- | Functionality related to CRC-32C (Castagnoli) checksums:
 --
 -- * Support for calculating checksums while incrementally writing files.
 -- * Support for verifying checksums of files.

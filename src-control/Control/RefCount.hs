@@ -457,7 +457,7 @@ data Enabled a = Enabled !a | Disabled
 globalForgottenRef :: IORef (Enabled (Maybe (RefId, CallStack)))
 globalForgottenRef = unsafePerformIO $ newIORef (Enabled Nothing)
 
--- | This version of 'unsafeIOToPrim' is strict in the result of the arument
+-- | This version of 'unsafeIOToPrim' is strict in the result of the argument
 -- action.
 --
 -- Without strictness it seems that some IO side effects are not happening at
@@ -580,7 +580,7 @@ checkForgottenRefs = do
     _unused = throwIO @m @SomeException
 
 -- | Ignore and reset the state of forgotten reference tracking. This ensures
--- that any stale fogotten references are not reported later.
+-- that any stale forgotten references are not reported later.
 --
 -- This is especillay important in QC tests with shrinking which otherwise
 -- leads to confusion.

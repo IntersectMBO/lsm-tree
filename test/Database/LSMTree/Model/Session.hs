@@ -664,7 +664,7 @@ listSnapshots ::
 listSnapshots = gets (Map.keys . snapshots)
 
 {-------------------------------------------------------------------------------
-  Mutiple writable tables
+  Multiple writable tables
 -------------------------------------------------------------------------------}
 
 duplicate ::

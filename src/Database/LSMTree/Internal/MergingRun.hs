@@ -1024,5 +1024,5 @@ expectCompleted (DeRef MergingRun {..}) = do
       CompletedMerge r -> dupRef r  -- return a fresh reference to the run
       OngoingMerge{} -> do
         -- If the algorithm finds an ongoing merge here, then it is a bug in
-        -- our merge sceduling algorithm. As such, we throw a pure error.
+        -- our merge scheduling algorithm. As such, we throw a pure error.
         error "expectCompleted: expected a completed merge, but found an ongoing merge"

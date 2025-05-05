@@ -9,7 +9,7 @@
 -- (internally the filling of root value and sifting down is delayed).
 --
 -- Also there isn't *insert* operation, i.e. the heap can only shrink.
--- Other heap usual heap opeartions are *create-heap*, *extract-min* and *replace*.
+-- Other heap usual heap operations are *create-heap*, *extract-min* and *replace*.
 -- However, as the 'MutableHeap' always represents a heap with its root (minimum value)
 -- extracted, *extract-min* is "fused" to other operations.
 module KMerge.Heap (

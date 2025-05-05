@@ -105,7 +105,7 @@ new maxcsize = IndexCompactAcc
     <*> newSTRef SNothing
     <*> newSTRef SNothing
 
--- | We explictly pin the byte arrays, since that allows for more efficient
+-- | We explicitly pin the byte arrays, since that allows for more efficient
 -- serialisation, as the definition of 'isByteArrayPinned' changed in GHC 9.6,
 -- see <https://gitlab.haskell.org/ghc/ghc/-/issues/22255>.
 --

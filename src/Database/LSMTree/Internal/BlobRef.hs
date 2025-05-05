@@ -81,7 +81,7 @@ data StrongBlobRef m h = StrongBlobRef {
 -- | Convert a 'RawBlobRef' to a 'WeakBlobRef'.
 rawToWeakBlobRef :: RawBlobRef m h -> WeakBlobRef m h
 rawToWeakBlobRef RawBlobRef {rawBlobRefFile, rawBlobRefSpan} =
-    -- This doesn't need to really do anything, becuase the raw version
+    -- This doesn't need to really do anything, because the raw version
     -- does not maintain an independent ref count, and the weak one does
     -- not either.
     WeakBlobRef {

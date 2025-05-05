@@ -178,7 +178,7 @@ dl_noSwallowExceptions = do
 -- generates an arbitrary probability for each stream, which should generate a
 -- larger variety of 'Errors' structures.
 --
--- TODO: upstream to @fs-sim@ to replase the default 'genErrors'?
+-- TODO: upstream to @fs-sim@ to replace the default 'genErrors'?
 arbitraryErrors :: Gen Errors
 arbitraryErrors = do
     dumpStateE                <- genStream arbitrary

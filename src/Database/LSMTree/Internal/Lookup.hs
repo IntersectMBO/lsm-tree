@@ -329,7 +329,7 @@ intraPageLookupsOn !resolveV !acc0 !rs !ks !rkixs !ioops !ioress =
                 V.unsafeInsertWithMStrict res (combine resolveV) kix e'
           loop res (ioopix + 1)
 
-    -- Check that the IOOp was performed succesfully, and that it wrote/read
+    -- Check that the IOOp was performed successfully, and that it wrote/read
     -- exactly as many bytes as we expected. If not, then the buffer won't
     -- contain the correct number of disk-page bytes, so we throw an exception.
     checkIOResult :: IOOp (PrimState m) h -> IOResult -> m ()
