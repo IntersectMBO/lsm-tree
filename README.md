@@ -154,7 +154,7 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td></td>
 <td>Close</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(o \: T \: \log_T
 \frac{n}{B})$</span></td>
 </tr>
@@ -167,19 +167,19 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td></td>
 <td>Close</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Lookup</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Range Lookup</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B} +
 \frac{b}{P})$</span>
 *</td>
@@ -187,7 +187,7 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td></td>
 <td>Insert/Delete/Update</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(\frac{1}{P} \: \log_T
 \frac{n}{B})$</span></td>
 </tr>
@@ -206,7 +206,7 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td>Snapshot</td>
 <td>Save</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
@@ -218,7 +218,7 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td></td>
 <td>Delete</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
@@ -230,13 +230,13 @@ Otherwise, the merge policy is listed as N/A.
 <tr>
 <td>Cursor</td>
 <td>Create</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>
 <td></td>
 <td>Close</td>
-<td><code>MergePolicyLazyLevelling</code></td>
+<td><code>LazyLevelling</code></td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
 </tr>
 <tr>

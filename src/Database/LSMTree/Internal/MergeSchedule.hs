@@ -823,7 +823,7 @@ mergePolicyForLevel ::
   -> Levels m h
   -> UnionLevel m h
   -> MergePolicyForLevel
-mergePolicyForLevel MergePolicyLazyLevelling (LevelNo n) nextLevels unionLevel
+mergePolicyForLevel LazyLevelling (LevelNo n) nextLevels unionLevel
   | n == 1
   = LevelTiering    -- always use tiering on first level
 

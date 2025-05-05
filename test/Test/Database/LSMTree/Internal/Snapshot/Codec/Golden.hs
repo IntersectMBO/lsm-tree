@@ -209,7 +209,7 @@ enumerateTableConfig =
         cache
         merge
       )
-    | (_, policy) <- [(blank, MergePolicyLazyLevelling)]
+    | (_, policy) <- [(blank, LazyLevelling)]
     , (_, ratio ) <- [(blank, Four)]
     , (_, allocs) <- fmap AllocNumEntries <$> [(blank, magicNumber1)]
     , (d, bloom ) <- enumerateBloomFilterAlloc

@@ -104,7 +104,7 @@ module Database.LSMTree (
   -- * Table Configuration #table_configuration#
   TableConfig (..),
   defaultTableConfig,
-  MergePolicy (MergePolicyLazyLevelling),
+  MergePolicy (LazyLevelling),
   SizeRatio (Four),
   WriteBufferAlloc (AllocNumEntries),
   BloomFilterAlloc (AllocFixed, AllocRequestFPR),
@@ -381,7 +381,7 @@ Otherwise, the session directory is opened as an existing session.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(o \: T \log_T \frac{n}{B})\).
 
 The variable \(o\) refers to the number of open tables and cursors in the session.
@@ -497,7 +497,7 @@ Close a session.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(o \: T \log_T \frac{n}{B})\).
 
 The variable \(o\) refers to the number of open tables and cursors in the session.
@@ -657,7 +657,7 @@ True
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Membership tests can be performed concurrently from multiple Haskell threads.
@@ -693,7 +693,7 @@ The batch of keys corresponds in-order to the batch of results.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -793,7 +793,7 @@ FoundWithBlob (Value "Hello") (Blob "World")
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 Lookups can be performed concurrently from multiple Haskell threads.
@@ -832,7 +832,7 @@ The batch of keys corresponds in-order to the batch of results.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(T \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -959,7 +959,7 @@ Found (Value "Goodbye")
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -995,7 +995,7 @@ Variant of 'insert' for batch insertions.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(b \: \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -1048,7 +1048,7 @@ Found (Value "Hello Goodbye")
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -1091,7 +1091,7 @@ Variant of 'upsert' for batch insertions.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(b \: \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -1140,7 +1140,7 @@ Found (Value "Hello")
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -1172,7 +1172,7 @@ Variant of 'delete' for batch deletions.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(b \: \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
@@ -1217,7 +1217,7 @@ Update generalises 'insert', 'delete', and 'upsert'.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(\log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -1257,7 +1257,7 @@ Variant of 'update' for batch updates.
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
-['MergePolicyLazyLevelling']:
+['LazyLevelling']:
     \(O(b \: \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
