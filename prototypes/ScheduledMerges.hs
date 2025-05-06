@@ -84,7 +84,7 @@ module ScheduledMerges (
 import           Prelude hiding (lookup)
 
 import           Data.Bits
-import           Data.Foldable (for_, toList, traverse_)
+import qualified Data.Foldable as Fold
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
@@ -235,7 +235,7 @@ data PreExistingRun s = PreExistingRun  !Run
 pendingContent :: PendingMerge s
                -> (TreeMergeType, [PreExistingRun s], [MergingTree s])
 pendingContent = \case
-    PendingLevelMerge prs t  -> (MergeLevel, prs, toList t)
+    PendingLevelMerge prs t  -> (MergeLevel, prs, Fold.toList t)
     PendingUnionMerge     ts -> (MergeUnion, [],  ts)
 
 {-# COMPLETE PendingMerge #-}
@@ -452,15 +452,15 @@ treeInvariant tree@(MergingTree treeState) = do
         -- above for 'CompletedTreeMerge'.
         assertI "pending level merges have at least one input" $
           length prs + length t > 0
-        for_ prs $ \case
+        Fold.for_ prs $ \case
           PreExistingRun        _r -> return ()
           PreExistingMergingRun mr -> mergeInvariant mr
-        for_ t treeInvariant
+        Fold.for_ t treeInvariant
 
       PendingTreeMerge (PendingUnionMerge ts) -> do
         assertI "pending union merges are non-trivial (at least two inputs)" $
           length ts > 1
-        for_ ts treeInvariant
+        Fold.for_ ts treeInvariant
 
     (debt, _) <- liftI $ remainingDebtMergingTree tree
     when (debt <= 0) $ do
@@ -662,7 +662,7 @@ newMergingRun mergeType runs = do
       rs  -> do
         -- The (physical) debt is always exactly the cost (merge steps),
         -- which is the sum of run lengths in elements.
-        let !debt  = sum (map runSize rs)
+        let !debt  = Fold.foldl' (+) 0 (map runSize rs)
         let merged = mergek mergeType rs  -- deliberately lazy
         return (debt, OngoingMerge zeroMergeCredit rs merged)
     MergingRun mergeType (MergeDebt debt) <$> newSTRef state
@@ -1072,7 +1072,7 @@ newtype NominalDebt = NominalDebt Credit
 -- inserting without calling 'supplyUnionCredits'.
 supplyCreditsLevels :: NominalCredit -> Levels s -> ST s ()
 supplyCreditsLevels nominalDeposit =
-  traverse_ $ \(Level ir _rs) -> do
+  Fold.traverse_ $ \(Level ir _rs) -> do
     case ir of
       Single{} -> return ()
       Merging _mp nominalDebt nominalCreditVar
@@ -1389,8 +1389,8 @@ remainingDebtPendingMerge (PendingMerge _ prs trees) = do
         [ traverse remainingDebtPreExistingRun prs
         , traverse remainingDebtMergingTree trees
         ]
-    let totalSize = sum sizes
-    let totalDebt = sum debts + totalSize
+    let totalSize = Fold.foldl' (+) 0 sizes
+    let totalDebt = Fold.foldl' (+) 0 debts + totalSize
     return (totalDebt, totalSize)
   where
     remainingDebtPreExistingRun = \case
@@ -1403,7 +1403,7 @@ remainingDebtMergingRun (MergingRun _ d ref) =
       CompletedMerge r ->
         return (0, runSize r)
       OngoingMerge c inputRuns _ ->
-        return (mergeDebtLeft d c, sum (map runSize inputRuns))
+        return (mergeDebtLeft d c, Fold.foldl' (+) 0 (map runSize inputRuns))
 
 -- | For each of the @supplyCredits@ type functions, we want to check some
 -- common properties.
@@ -1466,7 +1466,7 @@ supplyCreditsPendingMerge :: Credit -> PendingMerge s -> ST s Credit
 supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \case
     PendingLevelMerge prs tree ->
       leftToRight supplyPreExistingRun prs credits
-        >>= leftToRight supplyCreditsMergingTree (toList tree)
+        >>= leftToRight supplyCreditsMergingTree (Fold.toList tree)
     PendingUnionMerge trees ->
       splitEqually supplyCreditsMergingTree trees credits
   where
@@ -1571,7 +1571,7 @@ logicalValue lsm = do
     (wb, levels, tree) <- allLevels lsm
     let r = mergek
               MergeLevel
-              (wb : concat levels ++ toList (mergeTree <$> tree))
+              (wb : concat levels ++ Fold.toList (mergeTree <$> tree))
     return (Map.mapMaybe justInsert r)
   where
     mergeTree :: MTree Run -> Run

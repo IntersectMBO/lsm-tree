@@ -28,7 +28,7 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
 import           Data.Coerce (coerce)
 import           Data.Either (rights)
-import qualified Data.Foldable as F
+import qualified Data.Foldable as Fold
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -385,7 +385,7 @@ instance Arbitrary a => Arbitrary (SmallList a) where
   shrink = fmap SmallList . shrink . getSmallList
 
 conjoinF :: (Testable prop, Foldable f) => f prop -> Property
-conjoinF = conjoin . F.toList
+conjoinF = conjoin . Fold.toList
 
 ioopPageSpan :: IOOp s h -> PageSpan
 ioopPageSpan ioop =

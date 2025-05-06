@@ -4,7 +4,7 @@ import           Control.Exception (evaluate)
 import           Control.RefCount
 import           Data.Bifoldable (bifoldMap)
 import qualified Data.BloomFilter as Bloom
-import           Data.Foldable (traverse_)
+import qualified Data.Foldable as Fold
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
@@ -82,7 +82,7 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
     withRuns fs hbio runParams path counter rds' $ \runs -> do
-      let stepsNeeded = sum (map (Map.size . unRunData) rds)
+      let stepsNeeded = Fold.foldl' (+) 0 (map (Map.size . unRunData) rds)
 
       fsPathLhs <- RunFsPaths path . uniqueToRunNumber <$> incrUniqCounter counter
       (stepsDone, lhs) <- mergeRuns fs hbio mergeType stepSize fsPathLhs runs
@@ -160,7 +160,7 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
     counter <- newUniqCounter 1
     withRuns fs hbio runParams path counter wbs' $ \runs -> do
       mergeToClose <- makeInProgressMerge pathOut runs
-      traverse_ Merge.abort mergeToClose
+      Fold.traverse_ Merge.abort mergeToClose
 
       filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles pathOut)
 

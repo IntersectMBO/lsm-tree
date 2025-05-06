@@ -5,7 +5,7 @@ import           Control.Monad (replicateM_, when)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer (Tracer))
 import qualified Control.Tracer as Tracer
-import           Data.Foldable (find, traverse_)
+import qualified Data.Foldable as Fold
 import           Data.Maybe (fromJust)
 import           Data.STRef
 import           Text.Printf (printf)
@@ -90,7 +90,7 @@ test_regression_empty_run =
           ]
 
         -- insert more data, so the empty run becomes input to a merge
-        traverse_ ins [101..112]
+        Fold.traverse_ ins [101..112]
 
         expectShape lsm
           0
@@ -98,7 +98,7 @@ test_regression_empty_run =
           , ([], [0])
           ]
 
-        traverse_ ins [113..116]
+        Fold.traverse_ ins [113..116]
 
         expectShape lsm
           0
@@ -118,11 +118,11 @@ test_merge_again_with_incoming =
         let ins k = LSM.insert tracer lsm (K k) (V 0) Nothing
         -- get something to 3rd level (so 2nd level is not levelling)
         -- (needs 5 runs to go to level 2 so the resulting run becomes too big)
-        traverse_ ins [101..100+(5*16)]
+        Fold.traverse_ ins [101..100+(5*16)]
 
         -- also get a very small run (4 elements) to 2nd level by re-using keys
         replicateM_ 4 $
-          traverse_ ins [201..200+4]
+          Fold.traverse_ ins [201..200+4]
 
         expectShape lsm
           0
@@ -131,7 +131,7 @@ test_merge_again_with_incoming =
           ]
 
         -- get another run to 2nd level, which the small run can be merged with
-        traverse_ ins [301..300+16]
+        Fold.traverse_ ins [301..300+16]
 
         expectShape lsm
           0
@@ -141,7 +141,7 @@ test_merge_again_with_incoming =
           ]
 
         -- add just one more run so the 5-way merge on 2nd level gets created
-        traverse_ ins [401..400+4]
+        Fold.traverse_ ins [401..400+4]
 
         expectShape lsm
           0
@@ -163,7 +163,7 @@ test_merge_again_with_incoming =
         -- get 3 more runs to 2nd level, so the 5-way merge completes
         -- and becomes part of a new merge.
         -- (actually 4, as runs only move once a fifth run arrives...)
-        traverse_ ins [501..500+(4*16)]
+        Fold.traverse_ ins [501..500+(4*16)]
 
         expectShape lsm
           0
@@ -270,8 +270,8 @@ invariantT t = runST $ do
 sizeT :: T -> Int
 sizeT (TCompleted _)        = 1
 sizeT (TOngoing _)          = 1
-sizeT (TPendingLevel ps mt) = sum (fmap sizeP ps) + maybe 0 sizeT mt
-sizeT (TPendingUnion ts)    = sum (fmap sizeT ts)
+sizeT (TPendingLevel ps mt) = Fold.foldl' (+) 0 (fmap sizeP ps) + maybe 0 sizeT mt
+sizeT (TPendingUnion ts)    = Fold.foldl' (+) 0 (fmap sizeT ts)
 
 sizeP :: P -> Int
 sizeP (PRun _)        = 1
@@ -443,12 +443,12 @@ instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
 
 -- | The 'MergeDebt' and 'MergeCredit' must maintain a couple invariants:
 --
--- * the total debt must be the same as the sum of the input run sizes;
+-- * the total debt must be the same as the Fold.foldl' (+) 0 of the input run sizes;
 -- * the supplied credit is less than the total merge debt.
 --
 genMergeCreditForRuns :: [NonEmptyRun] -> QC.Gen (MergeDebt, MergeCredit)
 genMergeCreditForRuns rs = do
-      let totalDebt    = sum (map (length . getNonEmptyRun) rs)
+      let totalDebt    = Fold.foldl' (+) 0 (map (length . getNonEmptyRun) rs)
       suppliedCredits <- QC.chooseInt (0, totalDebt-1)
       unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
       let spentCredits = suppliedCredits - unspentCredits
@@ -472,7 +472,7 @@ shrinkMergeCreditForRuns :: [NonEmptyRun]
 shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
     [ assert (mergeDebtInvariant md' mc')
       (md', mc')
-    | let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
+    | let totalDebt'    = Fold.foldl' (+) 0 (map (length . getNonEmptyRun) rs')
     , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
                                       (totalDebt'-1))
     , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
@@ -572,5 +572,5 @@ showPowersOf factor n
   | n == 0      = "n == 0"
   | otherwise   = printf "%d <= n < %d" lb ub
   where
-    ub = fromJust (find (n <) (iterate (* factor) factor))
+    ub = fromJust (Fold.find (n <) (iterate (* factor) factor))
     lb = ub `div` factor

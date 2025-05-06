@@ -62,6 +62,7 @@
   - { name: "Data.Vector.Primitive", as: "VP" }
   - { name: "Data.Vector.Primitive.Mutable", as: "VPM" }
   # others
+  - { name: "Data.Foldable", as: "Fold" }
   - { name: "Database.LSMTree.Internal.RawBytes", as: "RB"} # if you import Database.LSMTree.Internal.RawByes qualified, it must be as 'RB'
 #   - {name: Control.Arrow, within: []} # Certain modules are banned entirely
 #
@@ -70,8 +71,6 @@
 
 # Add custom hints for this project
 #
-# Will suggest replacing "wibbleMany [myvar]" with "wibbleOne myvar"
-# - error: {lhs: "wibbleMany [x]", rhs: wibbleOne x}
 - error:
     name: "Use mkPrimVector"
     lhs: "Data.Vector.Primitive.Vector"
@@ -79,5 +78,14 @@
 
 - ignore: { name: "Use mkPrimVector", within: "Database.LSMTree.Internal.Vector" }
 
-# Define some custom infix operators
-# - fixity: infixr 3 ~^#^~
+- warn:
+    name: Strict sum
+    note: Prefer explicit strict fold to lazy sum. Decreases laziness
+    lhs: sum
+    rhs: foldl' (+) 0
+
+- warn:
+    name: Strict product
+    note: Prefer explicit strict fold to lazy product. Decreases laziness
+    lhs: product
+    rhs: foldl' (*) 1

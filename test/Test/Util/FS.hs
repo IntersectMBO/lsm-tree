@@ -58,7 +58,7 @@ import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Data.Bit (MVector (..), flipBit)
 import           Data.Char (isAscii, isDigit, isLetter)
-import           Data.Foldable (Foldable (..), foldlM, for_)
+import qualified Data.Foldable as Fold
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Primitive.ByteArray (newPinnedByteArray, setByteArray)
@@ -297,7 +297,7 @@ listDirectoryRecursive hfs = go Set.empty (mkFsPath [])
   where
     go !acc relPath absPath = do
         pcs <- listDirectory hfs absPath
-        foldlM (\acc' -> go' acc' relPath absPath) acc pcs
+        Fold.foldlM (\acc' -> go' acc' relPath absPath) acc pcs
 
     go' !acc relPath absPath pc = do
         let
@@ -324,7 +324,7 @@ listDirectoryRecursiveFiles ::
   -> m (Set FsPath)
 listDirectoryRecursiveFiles hfs dir = do
     dirEntries <- listDirectoryRecursive hfs dir
-    foldlM f Set.empty dirEntries
+    Fold.foldlM f Set.empty dirEntries
   where
     f !acc (File p) = pure $ Set.insert p acc
     f !acc _        = pure acc
@@ -339,7 +339,7 @@ listDirectoryFiles hfs = go Set.empty
   where
     go !acc absPath = do
         pcs <- listDirectory hfs absPath
-        foldlM go' acc pcs
+        Fold.foldlM go' acc pcs
 
     go' !acc pc = do
         let path = mkFsPath [pc]
@@ -361,7 +361,7 @@ flipRandomBitInRandomFile ::
   -> m (Maybe (FsPath, Int))
 flipRandomBitInRandomFile hfs bitChoice dir = do
   maybeFileBit <- pickRandomBitInRandomFile hfs bitChoice dir
-  for_ maybeFileBit $ \(file, bit) -> flipFileBit hfs file bit
+  Fold.for_ maybeFileBit $ \(file, bit) -> flipFileBit hfs file bit
   pure maybeFileBit
 
 -- | Flip a random bit in a random file in a given directory.
@@ -373,7 +373,7 @@ flipRandomBitInRandomFileHardlinkSafe ::
   -> m (Maybe (FsPath, Int))
 flipRandomBitInRandomFileHardlinkSafe hfs bitChoice dir = do
   maybeFileBit <- pickRandomBitInRandomFile hfs bitChoice dir
-  for_ maybeFileBit $ \(file, bit) -> flipFileBitHardlinkSafe hfs file bit
+  Fold.for_ maybeFileBit $ \(file, bit) -> flipFileBitHardlinkSafe hfs file bit
   pure maybeFileBit
 
 -- | Pick a random bit in a random file in a given directory.
@@ -385,14 +385,14 @@ pickRandomBitInRandomFile ::
   -> m (Maybe (FsPath, Int))
 pickRandomBitInRandomFile hfs bitChoice dir = do
   -- List all files
-  files <- fmap (dir </>) . toList <$> listDirectoryRecursiveFiles hfs dir
+  files <- fmap (dir </>) . Fold.toList <$> listDirectoryRecursiveFiles hfs dir
   -- Handle the situation where there are no files
   if null files then pure Nothing else do
     filesAndFileSizeBits <-
       for files $ \file -> do
         fileSizeBytes <- withFile hfs file ReadMode (hGetSize hfs)
         pure (file, fileSizeBytes * 8)
-    let totalFileSizeBits = sum (snd <$> filesAndFileSizeBits)
+    let totalFileSizeBits = Fold.foldl' (+) 0 (snd <$> filesAndFileSizeBits)
     -- Handle the situation where there are no non-empty files
     if totalFileSizeBits == 0 then pure Nothing else do
       assert (totalFileSizeBits > 0) $ pure ()

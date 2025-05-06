@@ -14,7 +14,7 @@ import qualified Data.Bit as BV
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Short as SBS
 import           Data.Coerce (coerce)
-import           Data.Foldable (Foldable (..))
+import qualified Data.Foldable as Fold
 import           Data.List.Split (chunksOf)
 import qualified Data.Map.Merge.Strict as Merge
 import           Data.Map.Strict (Map)
@@ -77,7 +77,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
                 ch1 <- flip appendToCompact ica $ AppendSinglePage k1 k2
                 ch2 <- flip appendToCompact ica $ AppendSinglePage k3 k3
                 (mCh3, idx) <- unsafeEnd ica
-                return (ch1 <> ch2 <> toList mCh3, idx)
+                return (ch1 <> ch2 <> Fold.toList mCh3, idx)
 
           let expectedVersion :: [Word8]
               expectedVersion = word32toBytesLE 0x0000_0001 <> word32toBytesLE 0x0000_0000
@@ -227,7 +227,7 @@ prop_searchMinMaxKeysAfterConstruction csize ps = eqMapProp real model
           pure $ if incr == 1 then Map.insert k (singlePage (PageNo c)) m
                               else Map.insert k (multiPage (PageNo c) (PageNo $ c + fromIntegral n)) m
 
-    real = foldMap' realSearch (getPages ps)
+    real = Fold.foldMap' realSearch (getPages ps)
 
     ic = fromPageSummaries (coerce csize) ps
 
@@ -350,7 +350,7 @@ writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
     return
       ( headerLBS
       , LBS.fromChunks $
-        foldMap (map Chunk.toByteString) $ cs <> pure (toList c)
+        foldMap (map Chunk.toByteString) $ cs <> pure (Fold.toList c)
       , finalLBS numEntries index
       )
 
@@ -463,7 +463,7 @@ data Chunks = Chunks [VU.Vector Word64] IndexCompact
 -- valid in other ways (e.g. can successfully be queried).
 chunksInvariant :: Chunks -> Bool
 chunksInvariant (Chunks chunks IndexCompact {..}) =
-       VU.length icPrimary == sum (map VU.length chunks)
+       VU.length icPrimary == Fold.foldl' (+) 0 (map VU.length chunks)
     && VU.length icClashes == VU.length icPrimary
     && VU.length icLargerThanPage == VU.length icPrimary
 

@@ -53,6 +53,7 @@ module FormatPage (
 ) where
 
 import           Data.Bits
+import qualified Data.Foldable as Fold
 import           Data.Function (on)
 import qualified Data.List as List
 import           Data.Maybe (fromJust, fromMaybe)
@@ -312,8 +313,8 @@ encodePage dpgsz kops = do
     } <- calcPageSizeOffsets
            dpgsz
            pageNumKeys pageNumBlobs
-           (sum [ BS.length k | Key   k <- keys ])
-           (sum [ BS.length v | Value v <- values ])
+           (Fold.foldl' (+) 0 [ BS.length k | Key   k <- keys ])
+           (Fold.foldl' (+) 0 [ BS.length v | Value v <- values ])
 
     let pageBlobRefBitmap = [ opHasBlobRef op | (_,op) <- kops ]
         pageOperations    = [ toOperationEnum op | (_,op) <- kops ]

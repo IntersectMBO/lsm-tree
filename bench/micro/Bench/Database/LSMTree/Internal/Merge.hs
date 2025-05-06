@@ -5,7 +5,7 @@ import           Criterion.Main (Benchmark, bench, bgroup)
 import qualified Criterion.Main as Cr
 import           Data.Bifunctor (first)
 import qualified Data.BloomFilter.Hash as Hash
-import           Data.Foldable (traverse_)
+import qualified Data.Foldable as Fold
 import           Data.IORef
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
@@ -215,7 +215,7 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
 
     distributed :: Int -> [Double] -> [Int]
     n `distributed` weights =
-      let total = sum weights
+      let total = Fold.foldl' (+) 0 weights
       in [ round (fromIntegral n * w / total)
          | w <- weights
          ]
@@ -382,7 +382,7 @@ mergeEnvCleanup ::
      )
   -> IO ()
 mergeEnvCleanup (tmpDir, _hasFS, hasBlockIO, runs) = do
-    traverse_ releaseRef runs
+    Fold.traverse_ releaseRef runs
     removeDirectoryRecursive tmpDir
     FS.close hasBlockIO
 

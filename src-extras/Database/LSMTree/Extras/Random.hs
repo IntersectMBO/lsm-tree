@@ -15,6 +15,7 @@ module Database.LSMTree.Extras.Random (
   ) where
 
 import qualified Data.ByteString as BS
+import qualified Data.Foldable as Fold
 import           Data.List (unfoldr)
 import qualified Data.Set as Set
 import qualified System.Random as R
@@ -74,7 +75,7 @@ withReplacement rng0 n0 sample =
 -------------------------------------------------------------------------------}
 
 -- | Chooses one of the given generators, with a weighted random distribution.
--- The input list must be non-empty, weights should be non-negative, and the sum
+-- The input list must be non-empty, weights should be non-negative, and the Fold.foldl' (+) 0
 -- of weights should be non-zero (i.e., at least one weight should be positive).
 --
 -- Based on the implementation in @QuickCheck@.
@@ -86,7 +87,7 @@ frequency xs0 g
  where
   (i, g') = uniformR (1, tot) g
 
-  tot = sum (map fst xs0)
+  tot = Fold.foldl' (+) 0 (map fst xs0)
 
   pick n ((k,x):xs)
     | n <= k    = x g'

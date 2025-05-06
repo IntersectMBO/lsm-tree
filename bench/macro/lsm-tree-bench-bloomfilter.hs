@@ -13,6 +13,7 @@ import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Hash as Bloom
 import qualified Data.BloomFilter.Mutable as MBloom
+import qualified Data.Foldable as Fold
 import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -206,16 +207,16 @@ lsmStyleBloomFilters l1 requestedBitsPerEntry =
 
 totalNumEntries, totalNumBytes :: [BloomFilterSizeInfo] -> Integer
 totalNumEntries filterSizes =
-    sum [ numEntries | (numEntries, _, _, _) <- filterSizes ]
+    Fold.foldl' (+) 0 [ numEntries | (numEntries, _, _, _) <- filterSizes ]
 
 totalNumBytes filterSizes =
-    sum [ nbits | (_,_,nbits,_) <- filterSizes ] `div` 8
+    Fold.foldl' (+) 0 [ nbits | (_,_,nbits,_) <- filterSizes ] `div` 8
 
 totalNumEntriesSanityCheck :: SizeBase -> [BloomFilterSizeInfo] -> Bool
 totalNumEntriesSanityCheck l1 filterSizes =
     totalNumEntries filterSizes
     ==
-    sum [ 2^l1 * sizeFactor | (_, sizeFactor, _, _) <- filterSizes ]
+    Fold.foldl' (+) 0 [ 2^l1 * sizeFactor | (_, sizeFactor, _, _) <- filterSizes ]
 
 
 -- | Input environment for benchmarking 'Bloom.elemMany'.

@@ -22,6 +22,7 @@ import           Prelude hiding (length)
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict (ST)
 import           Data.ByteString (ByteString)
+import qualified Data.Foldable as Fold
 import           Data.List (scanl')
 import           Data.Primitive.PrimVar (PrimVar, newPrimVar, readPrimVar,
                      writePrimVar)
@@ -79,7 +80,7 @@ feedBaler blocks (Baler buffer remnantSizeRef) = do
     let
 
         inputSize :: Int
-        !inputSize = sum (map length blocks)
+        !inputSize = Fold.foldl' (+) 0 (map length blocks)
 
         totalSize :: Int
         !totalSize = remnantSize + inputSize

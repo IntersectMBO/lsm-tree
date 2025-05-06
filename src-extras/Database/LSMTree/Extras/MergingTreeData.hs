@@ -19,7 +19,7 @@ module Database.LSMTree.Extras.MergingTreeData (
 
 import           Control.Exception (assert, bracket)
 import           Control.RefCount
-import           Data.Foldable (for_, toList)
+import qualified Data.Foldable as Fold
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.MergingRunData
@@ -151,19 +151,19 @@ mergingTreeDataInvariant mtd
       PendingLevelMergeData prs t -> do
         assertI "pending level merges have at least one input" $
           length prs + length t > 0
-        for_ prs $ \case
+        Fold.for_ prs $ \case
           PreExistingRunData        _r -> Right ()
           PreExistingMergingRunData mr -> mergingRunDataInvariant mr
-        for_ (drop 1 (reverse prs)) $ \case
+        Fold.for_ (drop 1 (reverse prs)) $ \case
           PreExistingRunData        _r -> Right ()
           PreExistingMergingRunData mr ->
             assertI "only the last pre-existing run can be a last level merge" $
               mergingRunDataMergeType mr == MR.MergeMidLevel
-        for_ t mergingTreeDataInvariant
+        Fold.for_ t mergingTreeDataInvariant
       PendingUnionMergeData ts -> do
         assertI "pending union merges are non-trivial (at least two inputs)" $
           length ts >= 2
-        for_ ts mergingTreeDataInvariant
+        Fold.for_ ts mergingTreeDataInvariant
   where
     assertI msg False = Left msg
     assertI _   True  = Right ()
@@ -233,7 +233,7 @@ labelMergingTreeData = \rd ->
         CompletedTreeMergeData _ -> 0
         OngoingTreeMergeData _   -> 0
         PendingLevelMergeData prds mtds ->
-          maximum (0 : fmap (const 1) prds ++ map depthTree (toList mtds))
+          maximum (0 : fmap (const 1) prds ++ map depthTree (Fold.toList mtds))
         PendingUnionMergeData mtds ->
           maximum (0 : map depthTree mtds)
 
@@ -335,7 +335,7 @@ mergingTreeDataSize = \case
     CompletedTreeMergeData _ -> 1
     OngoingTreeMergeData _ -> 1
     PendingLevelMergeData _ tree -> 1 + maybe 0 mergingTreeDataSize tree
-    PendingUnionMergeData trees -> 1 + sum (map mergingTreeDataSize trees)
+    PendingUnionMergeData trees -> 1 + Fold.foldl' (+) 0 (map mergingTreeDataSize trees)
 
 -- Split into at least two smaller positive numbers. The input needs to be
 -- greater than or equal to 2.

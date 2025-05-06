@@ -11,7 +11,7 @@ import           Control.Monad.Trans.State (StateT (..), get, put)
 import           Control.RefCount
 import           Data.Bifunctor (bimap, first)
 import           Data.Coerce (coerce)
-import           Data.Foldable (traverse_)
+import qualified Data.Foldable as Fold
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import           Data.Tree (Tree)
@@ -58,7 +58,7 @@ tests = testGroup "Database.LSMTree.Internal.Readers"
             hbio <- FsSim.fromHasFS hfs
             (prop, RealState _ mCtx) <- runRealMonad hfs hbio
                                                      (RealState 0 Nothing) act
-            traverse_ closeReadersCtx mCtx  -- close current readers
+            Fold.traverse_ closeReadersCtx mCtx  -- close current readers
             return prop
 
           -- ensure that all handles have been closed
@@ -328,7 +328,7 @@ instance InLockstep ReadersState where
       -- Directly using strings, since there is only a small number of tags.
       [ [ "NewEntries " <> showPowersOf 10 numEntries
         | New _ sources <- [action]
-        , let numEntries = sum (map (Map.size . sourceKOps) sources)
+        , let numEntries = Fold.foldl' (+) 0 (map (Map.size . sourceKOps) sources)
         ]
       , [ "NewEntriesKeyDuplicates " <> showPowersOf 2 keyCount
         | New _ sources <- [action]
@@ -392,13 +392,13 @@ type ReadersCtx = ( [Readers.ReaderSource IO MockFS.HandleMock]
 closeReadersCtx :: ReadersCtx -> IO ()
 closeReadersCtx (sources, readers) = do
     Readers.close readers
-    traverse_ closeReaderSource sources
+    Fold.traverse_ closeReaderSource sources
 
 closeReaderSource :: Readers.ReaderSource IO h -> IO ()
 closeReaderSource = \case
     Readers.FromWriteBuffer _ wbblobs -> releaseRef wbblobs
     Readers.FromRun           run     -> releaseRef run
-    Readers.FromReaders     _ sources -> traverse_ closeReaderSource sources
+    Readers.FromReaders     _ sources -> Fold.traverse_ closeReaderSource sources
 
 instance RunModel (Lockstep ReadersState) RealMonad where
   perform       = \_st -> runIO
@@ -417,7 +417,7 @@ runIO act lu = case act of
     New offset srcDatas -> ReaderT $ \(hfs, hbio) -> do
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
-      traverse_ (liftIO . closeReadersCtx) mCtx
+      Fold.traverse_ (liftIO . closeReadersCtx) mCtx
       counter <- liftIO $ newUniqCounter numRuns
       sources <- liftIO $ forM srcDatas (fromSourceData hfs hbio counter)
       newReaders <- liftIO $ do
@@ -426,7 +426,7 @@ runIO act lu = case act of
         -- TODO: tidy up cleanup code?
         case mreaders of
           Nothing -> do
-            traverse_ closeReaderSource sources
+            Fold.traverse_ closeReaderSource sources
             return Nothing
           Just readers ->
             return $ Just (sources, readers)
@@ -477,7 +477,7 @@ runIO act lu = case act of
                   return (Right x)
                 Drained -> do
                   -- Readers is drained, clean up the sources
-                  liftIO $ traverse_ closeReaderSource sources
+                  liftIO $ Fold.traverse_ closeReaderSource sources
                   put (RealState n Nothing)
                   return (Right x)
 

@@ -12,6 +12,7 @@ import           Data.Bits ((.&.))
 import           Data.BloomFilter (Bloom)
 import qualified Data.BloomFilter as Bloom
 import qualified Data.BloomFilter.Internal as Bloom
+import qualified Data.Foldable as Fold
 import           Data.Time
 import qualified Data.Vector as V
 import           Data.Vector.Algorithms.Merge as Merge
@@ -295,13 +296,13 @@ lsmStyleRuns l1 =
 -- 111804416
 totalNumEntries :: [RunSizeInfo] -> Int
 totalNumEntries runSizes =
-    sum [ numEntries | (numEntries, _) <- runSizes ]
+    Fold.foldl' (+) 0 [ numEntries | (numEntries, _) <- runSizes ]
 
 totalNumEntriesSanityCheck :: SizeBase -> [RunSizeInfo] -> Bool
 totalNumEntriesSanityCheck l1 runSizes =
     totalNumEntries runSizes
     ==
-    sum [ 2^l1 * sizeFactor | (_, sizeFactor) <- runSizes ]
+    Fold.foldl' (+) 0 [ 2^l1 * sizeFactor | (_, sizeFactor) <- runSizes ]
 
 withFS ::
      (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)

@@ -9,6 +9,7 @@ import           Codec.CBOR.Read
 import           Codec.CBOR.Write
 import           Control.DeepSeq (NFData)
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Foldable as Fold
 import           Data.Proxy
 import qualified Data.Text as Text
 import           Data.Typeable
@@ -460,7 +461,7 @@ genPendingTreeMerge gas =
               0 -> 1
               depth ->
                 let sub = recursiveOptions branching $ depth - 1
-                in  sum $ (sub ^) <$> [ 0 .. branching ]
+                in  Fold.foldl' (+) 0 $ (sub ^) <$> [ 0 .. branching ]
             probability e =
               let basis = recursiveOptions branchingLimit nextGas
               in  (basis ^ e, vectorOf e subGen)
