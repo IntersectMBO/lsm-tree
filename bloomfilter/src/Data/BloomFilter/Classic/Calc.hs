@@ -60,14 +60,14 @@ policyForFPR fpr =
     -- so we have to use a more precise approximation, using the actual value
     -- of k.
     k       :: Int; k' :: Double
-    k       = min 64 (max 1 (round ((-recip_log2) * log_fpr)))
+    k       = max 1 (round ((-recip_log2) * log_fpr))
     k'      = fromIntegral k
     c       = negate k' / log1mexp (log_fpr / k')
     log_fpr = log fpr
 
 policyForBits :: BitsPerEntry -> BloomPolicy
-policyForBits c | c < 0 || c > 64 =
-    error "policyForBits: out of ragnge [0,64]"
+policyForBits c | c <= 0 =
+    error "policyForBits: bits per entry must be > 0"
 
 policyForBits c =
     BloomPolicy {

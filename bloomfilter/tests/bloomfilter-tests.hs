@@ -27,7 +27,7 @@ tests =
     [ testGroup "Classic"
         [ testGroup "calculations" $
             test_calculations proxyClassic
-              (FPR 1e-6, FPR 1) (BitsPerEntry 1, BitsPerEntry 50) 1e-6
+              (FPR 1e-15, FPR 1) (BitsPerEntry 1, BitsPerEntry 75) 1e-6
          ++ test_calculations_classic
         , test_fromList     proxyClassic
         ]
@@ -279,10 +279,10 @@ newtype FPR = FPR Double
 instance Arbitrary FPR where
   -- The most significant effect of the FPR is from its (negative) exponent,
   -- which influences both filter bits and number of hashes. So we generate
-  -- values with an exponent from 10^0 to 10^-6
+  -- values with an exponent from 10^0 to 10^-15
   arbitrary = do
       m <- choose (epsilon, 1-epsilon)
-      e <- choose (0, 6)
+      e <- choose (0, 15)
       pure (FPR (m * 10 ** (-e)))
     where
       epsilon = 1e-6 :: Double
@@ -291,7 +291,7 @@ newtype BitsPerEntry = BitsPerEntry Double
   deriving stock Show
 
 instance Arbitrary BitsPerEntry where
-  arbitrary = BitsPerEntry <$> choose (1, 50)
+  arbitrary = BitsPerEntry <$> choose (1, 75)
 
 newtype NumEntries = NumEntries Int
   deriving stock Show

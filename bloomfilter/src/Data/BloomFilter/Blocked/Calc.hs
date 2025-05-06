@@ -47,8 +47,8 @@ Fit {fitParams = V3 8.079418894776325e-2 1.6462569292513933 0.5550062950289885, 
 -}
 
 policyForBits :: BitsPerEntry -> BloomPolicy
-policyForBits c | c < 0 || c > 64 =
-    error "policyForBits: out of ragnge [0,64]"
+policyForBits c | c < 0 =
+    error "policyForBits: bits per entry must be > 0"
 
 policyForBits c =
     BloomPolicy {
