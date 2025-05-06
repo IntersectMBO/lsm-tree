@@ -138,7 +138,7 @@ readHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
 -- | Overwrite the filter's bit array. Use 'new' to create a filter of the
 -- expected size and then use this function to fill in the bit data.
 --
--- The callback is expected to read (exactly) the given number of bytes into
+-- The callback is expected to write (exactly) the given number of bytes into
 -- the given byte array buffer.
 --
 -- See also 'formatVersion' for compatibility advice.
