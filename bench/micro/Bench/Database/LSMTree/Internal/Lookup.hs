@@ -243,8 +243,8 @@ lookupsEnv ::
         , V.Vector SerialisedKey
         )
 lookupsEnv g nentries npos nneg = do
-    let  (g1, g') = R.split g
-         (g2, g3) = R.split g'
+    let  (g1, g') = R.splitGen g
+         (g2, g3) = R.splitGen g'
     let (keys, negLookups) = splitAt nentries
                            $ uniformWithoutReplacement @UTxOKey g1 (nentries + nneg)
         posLookups         = sampleUniformWithReplacement g2 npos keys

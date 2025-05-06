@@ -1,7 +1,6 @@
 index-state:
   -- Bump this if you need newer packages from Hackage
-  -- current date: ghc-9.12 and data-elevator
-  , hackage.haskell.org 2025-03-10T07:49:31Z
+  , hackage.haskell.org 2025-05-01T00:00:00Z
 
 packages:
   .

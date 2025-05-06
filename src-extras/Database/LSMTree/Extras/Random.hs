@@ -102,4 +102,4 @@ frequency xs0 g
 randomByteStringR :: (Int, Int) -> StdGen -> (BS.ByteString, StdGen)
 randomByteStringR range g =
     let (!l, !g')  = uniformR range g
-    in  R.genByteString l g'
+    in  R.uniformByteString l g'
