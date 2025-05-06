@@ -53,6 +53,9 @@ tests =
           prop_calc_size_hashes_bits proxy
       ]
 
+    -- These tests are only for the classic implementation because they use a
+    -- test oracle ('falsePositiveRate') that is only appropriate for the
+    -- classic implementation.
     test_calculations_classic =
       [ testProperty "prop_calc_size_fpr_fpr" $
           prop_calc_size_fpr_fpr proxyClassic
