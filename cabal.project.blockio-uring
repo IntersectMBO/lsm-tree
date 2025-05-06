@@ -3,4 +3,4 @@ if(os(linux))
     type: git
     location: https://github.com/well-typed/blockio-uring
     -- liburing-2.9
-    tag: 9451e77bc00664c9a104c1b34a5b1aa002fc97d2
+    tag: c01dbf68de237a63b8b3ed9d357526fb6eeb6b1c
