@@ -1325,7 +1325,6 @@ saveSnapshot ::
     Table k v ->
     IO ()
 saveSnapshot snapName snapLabel (Table table) =
-    -- TODO: This sets the table type to 'SnapFullTable'.
     LSMT.saveSnapshot snapName snapLabel table
 
 {- |

@@ -269,7 +269,6 @@ data Err
   | ErrSnapshotExists !SnapshotName
   | ErrSnapshotDoesNotExist !SnapshotName
   | ErrSnapshotCorrupted !SnapshotName
-  | ErrSnapshotWrongTableType !SnapshotName
   | ErrSnapshotWrongLabel !SnapshotName
   | ErrBlobRefInvalid
   | ErrCursorClosed

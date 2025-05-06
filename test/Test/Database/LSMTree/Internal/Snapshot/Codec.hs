@@ -151,7 +151,6 @@ testAll test = [
       -- SnapshotMetaData
       test (Proxy @SnapshotMetaData)
     , test (Proxy @SnapshotLabel)
-    , test (Proxy @SnapshotTableType)
     , test (Proxy @SnapshotRun)
       -- TableConfig
     , test (Proxy @TableConfig)
@@ -203,10 +202,10 @@ deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 instance Arbitrary SnapshotMetaData where
   arbitrary = SnapshotMetaData <$>
       arbitrary <*> arbitrary <*> arbitrary <*>
-      arbitrary <*> arbitrary <*> arbitrary
-  shrink (SnapshotMetaData a b c d e f) =
-      [ SnapshotMetaData a' b' c' d' e' f'
-      | (a', b', c', d', e', f') <- shrink (a, b, c, d, e, f)]
+      arbitrary <*> arbitrary
+  shrink (SnapshotMetaData a b c d e) =
+      [ SnapshotMetaData a' b' c' d' e'
+      | (a', b', c', d', e') <- shrink (a, b, c, d, e)]
 
 instance Arbitrary SnapshotLabel where
   -- Ensure that the labeling string is not excessively long.
@@ -217,10 +216,6 @@ instance Arbitrary SnapshotLabel where
     suffix <- vectorOfUpTo 3 arbitraryPrintableChar
     pure . SnapshotLabel . Text.pack $ prefix : suffix
   shrink (SnapshotLabel txt) = SnapshotLabel <$> shrink txt
-
-instance Arbitrary SnapshotTableType where
-  arbitrary = elements [SnapSimpleTable, SnapFullTable]
-  shrink _ = []
 
 instance Arbitrary SnapshotRun where
   arbitrary = SnapshotRun <$> arbitrary <*> arbitrary <*> arbitrary

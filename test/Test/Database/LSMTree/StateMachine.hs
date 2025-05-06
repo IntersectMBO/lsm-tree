@@ -554,7 +554,6 @@ handleSnapshotCorruptedError = \case
 
 handleSnapshotNotCompatibleError :: SnapshotNotCompatibleError -> Model.Err
 handleSnapshotNotCompatibleError = \case
-  ErrSnapshotWrongTableType name _ _ -> Model.ErrSnapshotWrongTableType name
   ErrSnapshotWrongLabel name _ _ -> Model.ErrSnapshotWrongLabel name
 
 handleBlobRefInvalidError :: BlobRefInvalidError -> Model.Err

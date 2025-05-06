@@ -214,7 +214,6 @@ import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
                      serialiseKeyPreservesOrdering, serialiseValueIdentity,
                      serialiseValueIdentityUpToSlicing)
 import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
-import qualified Database.LSMTree.Internal.Snapshot as Internal
 import           Database.LSMTree.Internal.Types (BlobRef (..), Cursor (..),
                      ResolveAsFirst (..), ResolveValue (..),
                      ResolveViaSemigroup (..), Session (..), Table (..),
@@ -2070,8 +2069,7 @@ saveSnapshot ::
   Table m k v b ->
   m ()
 saveSnapshot snapName snapLabel (Table table) =
-  -- TODO: remove SnapshotTableType
-  Internal.saveSnapshot snapName snapLabel Internal.SnapFullTable table
+  Internal.saveSnapshot snapName snapLabel table
 
 {- |
 Run an action with access to a table from a snapshot.
@@ -2206,7 +2204,7 @@ openTableFromSnapshotWith ::
   SnapshotLabel ->
   m (Table m k v b)
 openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
-  Table <$> Internal.openTableFromSnapshot tableConfigOverride session snapName snapLabel Internal.SnapFullTable (_getResolveSerialisedValue (Proxy @v))
+  Table <$> Internal.openTableFromSnapshot tableConfigOverride session snapName snapLabel (_getResolveSerialisedValue (Proxy @v))
 
 {- |
 Delete the named snapshot.

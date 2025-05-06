@@ -78,11 +78,11 @@ class Override o a where
 
 instance Override DiskCachePolicy SnapshotMetaData where
   override dcp
-    (SnapshotMetaData (sl :: SnapshotLabel)(stt :: SnapshotTableType)
+    (SnapshotMetaData (sl :: SnapshotLabel)
       (tc :: TableConfig) (rn :: RunNumber)
       (sls :: (SnapLevels SnapshotRun))
       (smt :: (Maybe (SnapMergingTree SnapshotRun))))
-    = SnapshotMetaData sl stt (override dcp tc) rn (override dcp sls) $
+    = SnapshotMetaData sl (override dcp tc) rn (override dcp sls) $
         let rdc = diskCachePolicyForLevel dcp UnionLevel
         in  fmap (override rdc) smt
 

@@ -37,7 +37,6 @@ tests :: TestTree
 tests =  handleOutputFiles . testGroup
     "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" $
     [ testCodecSnapshotLabel
-    , testCodecSnapshotTableType
     , testCodecTableConfig
     , testCodecSnapLevels
     , testCodecMergingTree
@@ -93,56 +92,41 @@ snapshotCodecTest name datum =
 testCodecSnapshotLabel :: TestTree
 testCodecSnapshotLabel =
   let assembler (tagA, valA) =
-        let (tagB, valB) = basicSnapshotTableType
-            (tagC, valC) = basicTableConfig
+        let (tagC, valC) = basicTableConfig
             valD = basicRunNumber
             (tagE, valE) = basicSnapLevels
             (tagF, valF) = basicSnapMergingTree
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
+        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
   in  testCodecBuilder "SnapshotLabels" $ assembler <$> enumerateSnapshotLabel
-
-testCodecSnapshotTableType :: TestTree
-testCodecSnapshotTableType =
-  let assembler (tagB, valB) =
-        let (tagA, valA) = basicSnapshotLabel
-            (tagC, valC) = basicTableConfig
-            valD = basicRunNumber
-            (tagE, valE) = basicSnapLevels
-            (tagF, valF) = basicSnapMergingTree
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
-  in  testCodecBuilder "SnapshotTables" $ assembler <$> enumerateSnapshotTableType
 
 testCodecTableConfig :: TestTree
 testCodecTableConfig =
   let assembler (tagC, valC) =
         let (tagA, valA) = basicSnapshotLabel
-            (tagB, valB) = basicSnapshotTableType
             valD = basicRunNumber
             (tagE, valE) = basicSnapLevels
             (tagF, valF) = basicSnapMergingTree
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
+        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
   in  testCodecBuilder "SnapshotConfig" $ assembler <$> enumerateTableConfig
 
 testCodecSnapLevels :: TestTree
 testCodecSnapLevels =
   let assembler (tagE, valE) =
         let (tagA, valA) = basicSnapshotLabel
-            (tagB, valB) = basicSnapshotTableType
             (tagC, valC) = basicTableConfig
             valD = basicRunNumber
             (tagF, valF) = basicSnapMergingTree
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
+        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
   in  testCodecBuilder "SnapshotLevels" $ assembler <$> enumerateSnapLevels
 
 testCodecMergingTree :: TestTree
 testCodecMergingTree =
   let assembler (tagF, valF) =
         let (tagA, valA) = basicSnapshotLabel
-            (tagB, valB) = basicSnapshotTableType
             (tagC, valC) = basicTableConfig
             valD = basicRunNumber
             (tagE, valE) = basicSnapLevels
-        in  (fuseAnnotations [tagA, tagB, tagC, tagE, tagF ], SnapshotMetaData valA valB valC valD valE valF)
+        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
   in  testCodecBuilder "SnapshotMergingTree" $ assembler <$> enumerateSnapMergingTree
 
 testCodecBuilder :: TestName -> [(ComponentAnnotation, SnapshotMetaData)] -> TestTree
@@ -163,9 +147,6 @@ Defaults used when the SnapshotMetaData sub-component is not under test
 
 basicSnapshotLabel :: (ComponentAnnotation, SnapshotLabel)
 basicSnapshotLabel = head enumerateSnapshotLabel
-
-basicSnapshotTableType :: (ComponentAnnotation, SnapshotTableType)
-basicSnapshotTableType = head enumerateSnapshotTableType
 
 basicTableConfig :: (ComponentAnnotation, TableConfig)
 basicTableConfig = ( fuseAnnotations $ "T0" : replicate 4 blank
@@ -189,12 +170,6 @@ enumerateSnapshotLabel :: [(ComponentAnnotation, SnapshotLabel)]
 enumerateSnapshotLabel =
   [ ("B0", SnapshotLabel "UserProvidedLabel")
   , ("B1", SnapshotLabel "")
-  ]
-
-enumerateSnapshotTableType :: [(ComponentAnnotation, SnapshotTableType)]
-enumerateSnapshotTableType =
-  [ ("N0", SnapSimpleTable)
-  , ("N1", SnapFullTable)
   ]
 
 enumerateTableConfig :: [(ComponentAnnotation, TableConfig)]
