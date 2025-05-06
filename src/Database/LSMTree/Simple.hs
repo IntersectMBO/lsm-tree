@@ -108,8 +108,8 @@ module Database.LSMTree.Simple (
     Range (..),
 
     -- * Union Credit and Debt
-    UnionCredits(..),
-    UnionDebt(..),
+    UnionCredits (..),
+    UnionDebt (..),
 
     -- * Key\/Value Serialisation #key_value_serialisation#
     RawBytes (RawBytes),
@@ -139,57 +139,39 @@ module Database.LSMTree.Simple (
     SnapshotDoesNotExistError (..),
     SnapshotCorruptedError (..),
     SnapshotNotCompatibleError (..),
-    BlobRefInvalidError (..),
     CursorClosedError (..),
     InvalidSnapshotNameError (..),
 ) where
 
 import           Control.ActionRegistry (mapExceptionWithActionRegistry)
-import           Control.Exception.Base (Exception, SomeException (..), assert,
-                     bracket, bracketOnError)
-import           Control.Monad (join)
+import           Control.Exception.Base (Exception, SomeException (..))
 import           Data.Bifunctor (Bifunctor (..))
+import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
-import           Data.Maybe (isJust)
 import           Data.Typeable (TypeRep)
 import           Data.Vector (Vector)
-import qualified Data.Vector as V
-import           Database.LSMTree.Internal.Config
-                     (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
-                     DiskCachePolicy (..), FencePointerIndexType (..),
-                     MergePolicy (..), MergeSchedule (..), SizeRatio (..),
-                     TableConfig (..), WriteBufferAlloc (..),
-                     defaultTableConfig, serialiseKeyMinimalSize)
-import           Database.LSMTree.Internal.Config.Override
-                     (OverrideDiskCachePolicy (..))
-import qualified Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Paths (InvalidSnapshotNameError (..),
-                     SnapshotName, isValidSnapshotName, toSnapshotName)
-import           Database.LSMTree.Internal.Range (Range (..))
-import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
-import qualified Database.LSMTree.Internal.Serialise as Internal
-import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
+import           Data.Void (Void)
+import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
+                     DiskCachePolicy, FencePointerIndexType,
+                     InvalidSnapshotNameError (..), MergePolicy, MergeSchedule,
+                     OverrideDiskCachePolicy (..), Range (..), RawBytes,
+                     ResolveAsFirst (..), SerialiseKey (..),
                      SerialiseKeyOrderPreserving, SerialiseValue (..),
-                     packSlice, serialiseKeyIdentity,
-                     serialiseKeyIdentityUpToSlicing,
-                     serialiseKeyPreservesOrdering, serialiseValueIdentity,
-                     serialiseValueIdentityUpToSlicing)
-import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
-import qualified Database.LSMTree.Internal.Snapshot as Internal
-import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
-                     CursorClosedError (..), SessionClosedError (..),
+                     SessionClosedError (..), SizeRatio,
                      SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
+                     SnapshotLabel (..), SnapshotName,
                      SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableCorruptedError (..), TableTooLargeError (..),
-                     UnionCredits (..), UnionDebt (..))
-import qualified Database.LSMTree.Internal.Unsafe as Internal
+                     TableConfig (..), TableCorruptedError (..),
+                     TableTooLargeError (..), UnionCredits (..), UnionDebt (..),
+                     WriteBufferAlloc, isValidSnapshotName, packSlice,
+                     serialiseKeyIdentity, serialiseKeyIdentityUpToSlicing,
+                     serialiseKeyMinimalSize, serialiseKeyPreservesOrdering,
+                     serialiseValueIdentity, serialiseValueIdentityUpToSlicing,
+                     toSnapshotName)
+import qualified Database.LSMTree as LSMT
 import           Prelude hiding (lookup, take, takeWhile)
-import           System.FS.API (MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
-import           System.FS.BlockIO.IO (ioHasBlockIO, withIOHasBlockIO)
-import           System.FS.IO (HandleIO, ioHasFS)
 
 --------------------------------------------------------------------------------
 -- Example
@@ -349,7 +331,7 @@ one session should be opened and shared between those parts of the program.
 Session directories cannot be shared between OS processes.
 -}
 type Session :: Type
-newtype Session = Session {unSession :: Internal.Session IO HandleIO}
+newtype Session = Session (LSMT.Session IO)
 
 {- |
 Run an action with access to a session opened from a session directory.
@@ -385,12 +367,8 @@ withSession ::
     IO a
 withSession dir action = do
     let tracer = mempty
-    let mountPoint = MountPoint dir
-    let rootDir = mkFsPath []
-    let hasFS = ioHasFS mountPoint
     _convertSessionDirErrors dir $
-        withIOHasBlockIO hasFS defaultIOCtxParams $ \hasBlockIO ->
-            Internal.withSession tracer hasFS hasBlockIO rootDir (action . Session)
+        LSMT.withSessionIO tracer dir (action . Session)
 
 {- |
 Open a session from a session directory.
@@ -414,15 +392,8 @@ openSession ::
     IO Session
 openSession dir = do
     let tracer = mempty
-    let mountPoint = MountPoint dir
-    let rootDir = mkFsPath []
-    let hasFS = ioHasFS mountPoint
     _convertSessionDirErrors dir $ do
-        bracketOnError (acquire hasFS) release $ \hasBlockIO ->
-            Session <$> Internal.openSession tracer hasFS hasBlockIO rootDir
-  where
-    acquire hasFS = ioHasBlockIO hasFS defaultIOCtxParams
-    release = \HasBlockIO{close} -> close
+        Session <$> LSMT.openSessionIO tracer dir
 
 {- |
 Close a session.
@@ -443,7 +414,8 @@ All other operations on a closed session will throw an exception.
 closeSession ::
     Session ->
     IO ()
-closeSession = Internal.closeSession . unSession
+closeSession (Session session) =
+    LSMT.closeSession session
 
 --------------------------------------------------------------------------------
 -- Tables
@@ -457,7 +429,7 @@ __Warning:__ Tables are ephemeral. Once you close a table, its data is lost fore
 type role Table nominal nominal
 
 type Table :: Type -> Type -> Type
-newtype Table k v = Table {unTable :: (Internal.Table IO HandleIO)}
+newtype Table k v = Table (LSMT.Table IO k (LSMT.ResolveAsFirst v) Void)
 
 {- |
 Run an action with access to an empty table.
@@ -481,8 +453,8 @@ withTable ::
     Session ->
     (Table k v -> IO a) ->
     IO a
-withTable session =
-    withTableWith defaultTableConfig session
+withTable (Session session) action =
+    LSMT.withTable session (action . Table)
 
 -- | Variant of 'withTable' that accepts [table configuration](#g:table_configuration).
 withTableWith ::
@@ -491,8 +463,8 @@ withTableWith ::
     Session ->
     (Table k v -> IO a) ->
     IO a
-withTableWith tableConfig session action =
-    Internal.withTable (unSession session) tableConfig (action . Table)
+withTableWith tableConfig (Session session) action =
+    LSMT.withTableWith tableConfig session (action . Table)
 
 {- |
 Create an empty table.
@@ -510,8 +482,8 @@ newTable ::
     forall k v.
     Session ->
     IO (Table k v)
-newTable session =
-    newTableWith defaultTableConfig session
+newTable (Session session) =
+    Table <$> LSMT.newTable session
 
 {- |
 Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
@@ -522,7 +494,7 @@ newTableWith ::
     Session ->
     IO (Table k v)
 newTableWith tableConfig (Session session) =
-    Table <$> Internal.new session tableConfig
+    Table <$> LSMT.newTableWith tableConfig session
 
 {- |
 Close a table.
@@ -542,7 +514,7 @@ closeTable ::
     Table k v ->
     IO ()
 closeTable (Table table) =
-    Internal.close table
+    LSMT.closeTable table
 
 --------------------------------------------------------------------------------
 -- Lookups
@@ -573,7 +545,8 @@ member ::
     Table k v ->
     k ->
     IO Bool
-member = (fmap isJust .) . lookup
+member (Table table) =
+    LSMT.member table
 
 {- |
 Variant of 'member' for batch membership tests.
@@ -596,7 +569,13 @@ members ::
     Table k v ->
     Vector k ->
     IO (Vector Bool)
-members = (fmap (fmap isJust) .) . lookups
+members (Table table) =
+    LSMT.members table
+
+-- | Internal helper. Get the value from a 'LSMT.LookupResult' from the full API.
+getValue :: LSMT.LookupResult (ResolveAsFirst v) (LSMT.BlobRef IO Void) -> Maybe v
+getValue =
+    fmap LSMT.unResolveAsFirst . LSMT.getValue
 
 {- |
 Look up the value associated with a key.
@@ -623,10 +602,8 @@ lookup ::
     Table k v ->
     k ->
     IO (Maybe v)
-lookup table k = do
-    mvs <- lookups table (V.singleton k)
-    let mmv = fst <$> V.uncons mvs
-    pure (join mmv)
+lookup (Table table) =
+    fmap getValue . LSMT.lookup table
 
 {- |
 Variant of 'lookup' for batch lookups.
@@ -649,16 +626,13 @@ lookups ::
     Table k v ->
     Vector k ->
     IO (Vector (Maybe v))
-lookups (Table table) keys = do
-    maybeEntries <- Internal.lookups const (fmap Internal.serialiseKey keys) table
-    pure $ (entryToMaybeValue =<<) <$> maybeEntries
-  where
-    entryToMaybeValue = \case
-        Entry.Insert !v -> Just (Internal.deserialiseValue v)
-        Entry.InsertWithBlob !v !_b -> Just (Internal.deserialiseValue v)
-        Entry.Mupdate !v -> Just (Internal.deserialiseValue v)
-        Entry.Delete -> Nothing
+lookups (Table table) =
+    fmap (fmap getValue) . LSMT.lookups table
 
+-- | Internal helper. Get a key\/value pair from an 'LSMT.Entry' from the full API.
+getKeyValue :: LSMT.Entry k (ResolveAsFirst v) (LSMT.BlobRef IO Void) -> (k, v)
+getKeyValue (LSMT.Entry k v)             = (k, LSMT.unResolveAsFirst v)
+getKeyValue (LSMT.EntryWithBlob k v !_b) = (k, LSMT.unResolveAsFirst v)
 
 {- |
 Look up a batch of values associated with keys in the given range.
@@ -683,10 +657,8 @@ rangeLookup ::
     Table k v ->
     Range k ->
     IO (Vector (k, v))
-rangeLookup (Table table) range =
-    Internal.rangeLookup const (Internal.serialiseKey <$> range) table $ \ !k !v !b ->
-        assert (null b) $
-            (Internal.deserialiseKey k, Internal.deserialiseValue v)
+rangeLookup (Table table) =
+    fmap (fmap getKeyValue) . LSMT.rangeLookup table
 
 --------------------------------------------------------------------------------
 -- Updates
@@ -715,8 +687,8 @@ insert ::
     k ->
     v ->
     IO ()
-insert table k v =
-    inserts table (V.singleton (k, v))
+insert (Table table) k v =
+    LSMT.insert table k (LSMT.ResolveAsFirst v) Nothing
 
 {- |
 Variant of 'insert' for batch insertions.
@@ -738,8 +710,8 @@ inserts ::
     Table k v ->
     Vector (k, v) ->
     IO ()
-inserts table entries =
-    updates table (fmap (second Just) entries)
+inserts (Table table) entries =
+    LSMT.inserts table (fmap (\(k, v) -> (k, LSMT.ResolveAsFirst v, Nothing)) entries)
 
 {- |
 Delete a key and its value from the table.
@@ -763,8 +735,8 @@ delete ::
     Table k v ->
     k ->
     IO ()
-delete table k =
-    deletes table (V.singleton k)
+delete (Table table) =
+    LSMT.delete table
 
 {- |
 Variant of 'delete' for batch deletions.
@@ -786,8 +758,13 @@ deletes ::
     Table k v ->
     Vector k ->
     IO ()
-deletes table entries =
-    updates table (fmap (,Nothing) entries)
+deletes (Table table) =
+    LSMT.deletes table
+
+-- | Internal helper. Convert from @'Maybe' v@ to an 'LSMT.Update'.
+maybeValueToUpdate :: Maybe v -> LSMT.Update (ResolveAsFirst v) Void
+maybeValueToUpdate =
+    maybe LSMT.Delete (\v -> LSMT.Insert (LSMT.ResolveAsFirst v) Nothing)
 
 {- |
 Update the value at a specific key:
@@ -814,8 +791,8 @@ update ::
     k ->
     Maybe v ->
     IO ()
-update table k mv =
-    updates table (V.singleton (k, mv))
+update (Table table) k =
+    LSMT.update table k . maybeValueToUpdate
 
 {- |
 Variant of 'update' for batch updates.
@@ -837,11 +814,8 @@ updates ::
     Table k v ->
     Vector (k, Maybe v) ->
     IO ()
-updates (Table table) entries =
-    Internal.updates const (serialiseUpdate <$> entries) table
-  where
-    serialiseUpdate (k, Just v) = (Internal.serialiseKey k, Entry.Insert (Internal.serialiseValue v))
-    serialiseUpdate (k, Nothing) = (Internal.serialiseKey k, Entry.Delete)
+updates (Table table) =
+    LSMT.updates table . fmap (second maybeValueToUpdate)
 
 --------------------------------------------------------------------------------
 -- Duplication
@@ -874,8 +848,8 @@ withDuplicate ::
     Table k v ->
     (Table k v -> IO a) ->
     IO a
-withDuplicate table =
-    bracket (duplicate table) closeTable
+withDuplicate (Table table) action =
+    LSMT.withDuplicate table (action . Table)
 
 {- |
 Duplicate a table.
@@ -899,7 +873,7 @@ duplicate ::
     Table k v ->
     IO (Table k v)
 duplicate (Table table) =
-    Table <$> Internal.duplicate table
+    Table <$> LSMT.duplicate table
 
 --------------------------------------------------------------------------------
 -- Union
@@ -934,8 +908,8 @@ withUnion ::
     Table k v ->
     (Table k v -> IO a) ->
     IO a
-withUnion table1 table2 =
-    bracket (table1 `union` table2) closeTable
+withUnion (Table table1) (Table table2) action =
+    LSMT.withUnion table1 table2 (action . Table)
 
 {- |
 Variant of 'withUnions' that takes any number of tables.
@@ -945,8 +919,8 @@ withUnions ::
     NonEmpty (Table k v) ->
     (Table k v -> IO a) ->
     IO a
-withUnions tables =
-    bracket (unions tables) closeTable
+withUnions tables action =
+    LSMT.withUnions (coerce tables) (action . Table)
 
 {- |
 Create a table that contains the left-biased union of the entries of the given tables.
@@ -974,8 +948,8 @@ union ::
     Table k v ->
     Table k v ->
     IO (Table k v)
-union table1 table2 =
-    unions (table1 :| table2 : [])
+union (Table table1) (Table table2) =
+    Table <$> LSMT.union table1 table2
 
 {- |
 Variant of 'union' that takes any number of tables.
@@ -984,12 +958,8 @@ unions ::
     forall k v.
     NonEmpty (Table k v) ->
     IO (Table k v)
-unions tables = do
-    bracketOnError (incrementalUnions tables) closeTable $ \table -> do
-      UnionDebt debt <- remainingUnionDebt table
-      UnionCredits leftovers <- supplyUnionCredits table (UnionCredits debt)
-      assert (leftovers >= 0) $ pure ()
-      pure table
+unions tables =
+    Table <$> LSMT.unions (coerce tables)
 
 {- |
 Run an action with access to a table that incrementally computes the union of the given tables.
@@ -1024,8 +994,8 @@ withIncrementalUnion ::
     Table k v ->
     (Table k v -> IO a) ->
     IO a
-withIncrementalUnion table1 table2 =
-    bracket (incrementalUnion table1 table2) closeTable
+withIncrementalUnion (Table table1) (Table table2) action =
+    LSMT.withIncrementalUnion table1 table2 (action . Table)
 
 {- |
 Variant of 'withIncrementalUnion' that takes any number of tables.
@@ -1042,8 +1012,8 @@ withIncrementalUnions ::
     NonEmpty (Table k v) ->
     (Table k v -> IO a) ->
     IO a
-withIncrementalUnions tables =
-    bracket (incrementalUnions tables) closeTable
+withIncrementalUnions tables action =
+    LSMT.withIncrementalUnions (coerce tables) (action . Table)
 
 {- |
 Create a table that incrementally computes the union of the given tables.
@@ -1072,8 +1042,8 @@ incrementalUnion ::
     Table k v ->
     Table k v ->
     IO (Table k v)
-incrementalUnion table1 table2 = do
-    incrementalUnions (table1 :| table2 : [])
+incrementalUnion (Table table1) (Table table2) = do
+    Table <$> LSMT.incrementalUnion table1 table2
 
 {- |
 Variant of 'incrementalUnion' for any number of tables.
@@ -1085,8 +1055,8 @@ incrementalUnions ::
     forall k v.
     NonEmpty (Table k v) ->
     IO (Table k v)
-incrementalUnions (Table table :| tables) = do
-    Table <$> Internal.unions (table :| fmap unTable tables)
+incrementalUnions tables = do
+    Table <$> LSMT.unions (coerce tables)
 
 {- |
 Get the amount of remaining union debt.
@@ -1099,7 +1069,7 @@ remainingUnionDebt ::
     Table k v ->
     IO UnionDebt
 remainingUnionDebt (Table table) =
-    Internal.remainingUnionDebt table
+    LSMT.remainingUnionDebt table
 
 {- |
 Supply the given amount of union credits.
@@ -1126,7 +1096,7 @@ supplyUnionCredits ::
     UnionCredits ->
     IO UnionCredits
 supplyUnionCredits (Table table) credits =
-    Internal.supplyUnionCredits const table credits
+    LSMT.supplyUnionCredits table credits
 
 --------------------------------------------------------------------------------
 -- Cursors
@@ -1144,8 +1114,7 @@ The name of this type references [database cursors](https://en.wikipedia.org/wik
 type role Cursor nominal nominal
 
 type Cursor :: Type -> Type -> Type
-newtype Cursor k v
-    = Cursor {unCursor :: (Internal.Cursor IO HandleIO)}
+newtype Cursor k v = Cursor (LSMT.Cursor IO k (ResolveAsFirst v) Void)
 
 {- |
 Run an action with access to a cursor.
@@ -1172,7 +1141,7 @@ withCursor ::
     (Cursor k v -> IO a) ->
     IO a
 withCursor (Table table) action =
-    Internal.withCursor const Internal.NoOffsetKey table (action . Cursor)
+    LSMT.withCursor table (action . Cursor)
 
 {- |
 Variant of 'withCursor' that starts at a given key.
@@ -1185,7 +1154,7 @@ withCursorAtOffset ::
     (Cursor k v -> IO a) ->
     IO a
 withCursorAtOffset (Table table) offsetKey action =
-    Internal.withCursor const (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table (action . Cursor)
+    LSMT.withCursorAtOffset table offsetKey (action . Cursor)
 
 {- |
 Create a cursor for the given table.
@@ -1209,7 +1178,7 @@ newCursor ::
     Table k v ->
     IO (Cursor k v)
 newCursor (Table table) =
-    Cursor <$> Internal.newCursor const Internal.NoOffsetKey table
+    Cursor <$> LSMT.newCursor table
 
 {- |
 Variant of 'newCursor' that starts at a given key.
@@ -1221,7 +1190,7 @@ newCursorAtOffset ::
     k ->
     IO (Cursor k v)
 newCursorAtOffset (Table table) offsetKey =
-    Cursor <$> Internal.newCursor const (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table
+    Cursor <$> LSMT.newCursorAtOffset table offsetKey
 
 {- |
 Close a cursor.
@@ -1238,7 +1207,8 @@ closeCursor ::
     forall k v.
     Cursor k v ->
     IO ()
-closeCursor = Internal.closeCursor . unCursor
+closeCursor (Cursor cursor) =
+    LSMT.closeCursor cursor
 
 {- |
 Read the next table entry from the cursor.
@@ -1257,10 +1227,8 @@ next ::
     (SerialiseKey k, SerialiseValue v) =>
     Cursor k v ->
     IO (Maybe (k, v))
-next iterator = do
-    -- TODO: implement this function in terms of 'readEntry'
-    entries <- take 1 iterator
-    pure $ fst <$> V.uncons entries
+next (Cursor cursor) =
+    fmap getKeyValue <$> LSMT.next cursor
 
 {- |
 Read the next batch of table entries from the cursor.
@@ -1289,9 +1257,7 @@ take ::
     Cursor k v ->
     IO (Vector (k, v))
 take n (Cursor cursor) =
-    Internal.readCursor const n cursor $ \ !k !v !b ->
-        assert (null b) $
-            (Internal.deserialiseKey k, Internal.deserialiseValue v)
+    fmap getKeyValue <$> LSMT.take n cursor
 
 {- |
 Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
@@ -1322,10 +1288,7 @@ takeWhile ::
     Cursor k v ->
     IO (Vector (k, v))
 takeWhile n p (Cursor cursor) =
-    -- TODO: implement this function using a variant of 'readCursorWhile'
-    --       that does not take the maximum batch size
-    Internal.readCursorWhile const (p . Internal.deserialiseKey) n cursor $ \ !k !v !_b ->
-        (Internal.deserialiseKey k, Internal.deserialiseValue v)
+    fmap getKeyValue <$> LSMT.takeWhile n p cursor
 
 --------------------------------------------------------------------------------
 -- Snapshots
@@ -1362,7 +1325,8 @@ saveSnapshot ::
     Table k v ->
     IO ()
 saveSnapshot snapName snapLabel (Table table) =
-    Internal.saveSnapshot snapName snapLabel Internal.SnapSimpleTable table
+    -- TODO: This sets the table type to 'SnapFullTable'.
+    LSMT.saveSnapshot snapName snapLabel table
 
 {- |
 Run an action with access to a table from a snapshot.
@@ -1393,8 +1357,8 @@ withTableFromSnapshot ::
     SnapshotLabel ->
     (Table k v -> IO a) ->
     IO a
-withTableFromSnapshot session snapName snapLabel =
-    bracket (openTableFromSnapshot session snapName snapLabel) closeTable
+withTableFromSnapshot (Session session) snapName snapLabel action =
+    LSMT.withTableFromSnapshot session snapName snapLabel (action . Table)
 
 {- |
 Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
@@ -1407,8 +1371,8 @@ withTableFromSnapshotWith ::
     SnapshotLabel ->
     (Table k v -> IO a) ->
     IO a
-withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
-    bracket (openTableFromSnapshotWith tableConfigOverride session snapName snapLabel) closeTable
+withTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel action =
+    LSMT.withTableFromSnapshotWith tableConfigOverride session snapName snapLabel (action . Table)
 
 {- |
 Open a table from a named snapshot.
@@ -1436,8 +1400,8 @@ openTableFromSnapshot ::
     SnapshotName ->
     SnapshotLabel ->
     IO (Table k v)
-openTableFromSnapshot session snapName snapLabel =
-    openTableFromSnapshotWith NoOverrideDiskCachePolicy session snapName snapLabel
+openTableFromSnapshot (Session session) snapName snapLabel =
+    Table <$> LSMT.openTableFromSnapshot @IO @k @(ResolveAsFirst v) session snapName snapLabel
 
 {- |
 Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
@@ -1450,7 +1414,7 @@ openTableFromSnapshotWith ::
     SnapshotLabel ->
     IO (Table k v)
 openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
-    Table <$> Internal.openTableFromSnapshot tableConfigOverride session snapName snapLabel Internal.SnapSimpleTable const
+    Table <$> LSMT.openTableFromSnapshotWith tableConfigOverride session snapName snapLabel
 
 {- |
 Delete the named snapshot.
@@ -1472,7 +1436,7 @@ deleteSnapshot ::
     SnapshotName ->
     IO ()
 deleteSnapshot (Session session) =
-    Internal.deleteSnapshot session
+    LSMT.deleteSnapshot session
 
 {- |
 Check if the named snapshot exists.
@@ -1489,7 +1453,7 @@ doesSnapshotExist ::
     SnapshotName ->
     IO Bool
 doesSnapshotExist (Session session) =
-    Internal.doesSnapshotExist session
+    LSMT.doesSnapshotExist session
 
 {- |
 List the names of all snapshots.
@@ -1506,7 +1470,7 @@ listSnapshots ::
     Session ->
     IO [SnapshotName]
 listSnapshots (Session session) =
-    Internal.listSnapshots session
+    LSMT.listSnapshots session
 
 --------------------------------------------------------------------------------
 -- Errors
@@ -1532,9 +1496,9 @@ data SessionDirCorruptedError
 
 {- | Internal helper. Convert:
 
-*   t'Internal.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
-*   t'Internal.SessionDirLockedError'       to t'SessionDirLockedError'; and
-*   t'Internal.SessionDirCorruptedError'    to t'SessionDirCorruptedError'.
+*   t'LSMT.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
+*   t'LSMT.SessionDirLockedError'       to t'SessionDirLockedError'; and
+*   t'LSMT.SessionDirCorruptedError'    to t'SessionDirCorruptedError'.
 -}
 _convertSessionDirErrors ::
     forall a.
@@ -1542,9 +1506,9 @@ _convertSessionDirErrors ::
     IO a ->
     IO a
 _convertSessionDirErrors sessionDir =
-    mapExceptionWithActionRegistry (\(Internal.ErrSessionDirDoesNotExist _fsErrorPath) -> SomeException $ ErrSessionDirDoesNotExist sessionDir)
-        . mapExceptionWithActionRegistry (\(Internal.ErrSessionDirLocked _fsErrorPath) -> SomeException $ ErrSessionDirLocked sessionDir)
-        . mapExceptionWithActionRegistry (\(Internal.ErrSessionDirCorrupted _fsErrorPath) -> SomeException $ ErrSessionDirCorrupted sessionDir)
+    mapExceptionWithActionRegistry (\(LSMT.ErrSessionDirDoesNotExist _fsErrorPath) -> SomeException $ ErrSessionDirDoesNotExist sessionDir)
+        . mapExceptionWithActionRegistry (\(LSMT.ErrSessionDirLocked _fsErrorPath) -> SomeException $ ErrSessionDirLocked sessionDir)
+        . mapExceptionWithActionRegistry (\(LSMT.ErrSessionDirCorrupted _fsErrorPath) -> SomeException $ ErrSessionDirCorrupted sessionDir)
 
 {-------------------------------------------------------------------------------
    Table union
@@ -1575,9 +1539,7 @@ data TableUnionNotCompatibleError
 
 {- | Internal helper. Convert:
 
-*   t'Internal.SessionDirDoesNotExistError' to t'SessionDirDoesNotExistError';
-*   t'Internal.SessionDirLockedError'       to t'SessionDirLockedError'; and
-*   t'Internal.SessionDirCorruptedError'    to t'SessionDirCorruptedError'.
+*   t'LSMT.TableUnionNotCompatibleError' to t'TableUnionNotCompatibleError';
 -}
 _convertTableUnionNotCompatibleError ::
     forall a.
@@ -1586,7 +1548,7 @@ _convertTableUnionNotCompatibleError ::
     IO a
 _convertTableUnionNotCompatibleError sessionDirFor =
     mapExceptionWithActionRegistry $ \case
-        Internal.ErrTableUnionHandleTypeMismatch i1 typeRep1 i2 typeRep2 ->
+        LSMT.ErrTableUnionHandleTypeMismatch i1 typeRep1 i2 typeRep2 ->
             ErrTableUnionHandleTypeMismatch i1 typeRep1 i2 typeRep2
-        Internal.ErrTableUnionSessionMismatch i1 _fsErrorPath1 i2 _fsErrorPath2 ->
+        LSMT.ErrTableUnionSessionMismatch i1 _fsErrorPath1 i2 _fsErrorPath2 ->
             ErrTableUnionSessionMismatch i1 (sessionDirFor i1) i2 (sessionDirFor i2)

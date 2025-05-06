@@ -16,7 +16,7 @@ tests = testGroup "Test.Database.LSMTree.Resolve"
     ]
 
 allProperties ::
-     forall v. (Show v, Arbitrary v, NFData v, ResolveValue v)
+     forall v. (Show v, Arbitrary v, NFData v, SerialiseValue v, ResolveValue v)
   => [TestTree]
 allProperties =
     [ testProperty "prop_resolveValidOutput" $ withMaxSuccess 1000 $
@@ -26,14 +26,14 @@ allProperties =
     ]
 
 prop_resolveValidOutput ::
-     forall v. (Show v, NFData v, ResolveValue v)
+     forall v. (Show v, NFData v, SerialiseValue v, ResolveValue v)
   => v -> v -> Property
 prop_resolveValidOutput x y =
     counterexample ("inputs: " <> show (x, y)) $
       resolveValidOutput x y
 
 prop_resolveAssociativity ::
-     forall v. (Show v, ResolveValue v)
+     forall v. (Show v, SerialiseValue v, ResolveValue v)
   => v -> v -> v -> Property
 prop_resolveAssociativity x y z =
     counterexample ("inputs: " <> show (x, y)) $

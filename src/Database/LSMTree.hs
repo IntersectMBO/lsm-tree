@@ -673,7 +673,7 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   member ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Table IO k v b ->
     k ->
     IO Bool
@@ -681,11 +681,13 @@ Throws the following exceptions:
 member ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Table m k v b ->
   k ->
   m Bool
-member = (fmap (isJust . getValue) .) . lookup
+member =
+  -- TODO: Technically, this does not need the 'SerialiseValue' constraint.
+  (fmap (isJust . getValue) .) . lookup
 
 {- |
 Variant of 'member' for batch membership tests.
@@ -704,7 +706,7 @@ prop> members table keys = traverse (member table) keys
 -}
 {-# SPECIALISE
   members ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Table IO k v b ->
     Vector k ->
     IO (Vector Bool)
@@ -712,11 +714,13 @@ prop> members table keys = traverse (member table) keys
 members ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Table m k v b ->
   Vector k ->
   m (Vector Bool)
-members = (fmap (fmap (isJust . getValue)) .) . lookups
+members =
+  -- TODO: Technically, this does not need the 'SerialiseValue' constraint.
+  (fmap (fmap (isJust . getValue)) .) . lookups
 
 data LookupResult v b
   = NotFound
@@ -809,7 +813,7 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   lookup ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Table IO k v b ->
     k ->
     IO (LookupResult v (BlobRef IO b))
@@ -817,7 +821,7 @@ Throws the following exceptions:
 lookup ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Table m k v b ->
   k ->
   m (LookupResult v (BlobRef m b))
@@ -843,7 +847,7 @@ prop> lookups table keys = traverse (lookup table) keys
 -}
 {-# SPECIALISE
   lookups ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Table IO k v b ->
     Vector k ->
     IO (Vector (LookupResult v (BlobRef IO b)))
@@ -851,7 +855,7 @@ prop> lookups table keys = traverse (lookup table) keys
 lookups ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Table m k v b ->
   Vector k ->
   m (Vector (LookupResult v (BlobRef m b)))
@@ -901,7 +905,7 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   rangeLookup ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Table IO k v b ->
     Range k ->
     IO (Vector (Entry k v (BlobRef IO b)))
@@ -909,7 +913,7 @@ Throws the following exceptions:
 rangeLookup ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Table m k v b ->
   Range k ->
   m (Vector (Entry k v (BlobRef m b)))
@@ -971,7 +975,7 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   insert ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     k ->
     v ->
@@ -981,7 +985,7 @@ Throws the following exceptions:
 insert ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   k ->
   v ->
@@ -1006,7 +1010,7 @@ prop> inserts table entries = traverse_ (uncurry $ insert table) entries
 -}
 {-# SPECIALISE
   inserts ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector (k, v, Maybe b) ->
     IO ()
@@ -1014,7 +1018,7 @@ prop> inserts table entries = traverse_ (uncurry $ insert table) entries
 inserts ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector (k, v, Maybe b) ->
   m ()
@@ -1069,7 +1073,7 @@ upsert table k v = do
 -}
 {-# SPECIALISE
   upsert ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     k ->
     v ->
@@ -1078,7 +1082,7 @@ upsert table k v = do
 upsert ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   k ->
   v ->
@@ -1102,7 +1106,7 @@ prop> upserts table entries = traverse_ (uncurry $ upsert table) entries
 -}
 {-# SPECIALISE
   upserts ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector (k, v) ->
     IO ()
@@ -1110,7 +1114,7 @@ prop> upserts table entries = traverse_ (uncurry $ upsert table) entries
 upserts ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector (k, v) ->
   m ()
@@ -1152,7 +1156,7 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   delete ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     k ->
     IO ()
@@ -1160,7 +1164,7 @@ Throws the following exceptions:
 delete ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   k ->
   m ()
@@ -1183,7 +1187,7 @@ prop> deletes table keys = traverse_ (delete table) keys
 -}
 {-# SPECIALISE
   deletes ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector k ->
     IO ()
@@ -1191,7 +1195,7 @@ prop> deletes table keys = traverse_ (delete table) keys
 deletes ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector k ->
   m ()
@@ -1235,7 +1239,7 @@ prop> update table k (Upsert v) = upsert table k v
 -}
 {-# SPECIALISE
   update ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     k ->
     Update v b ->
@@ -1244,7 +1248,7 @@ prop> update table k (Upsert v) = upsert table k v
 update ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   k ->
   Update v b ->
@@ -1268,7 +1272,7 @@ prop> updates table entries = traverse_ (uncurry $ update table) entries
 -}
 {-# SPECIALISE
   updates ::
-    (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector (k, Update v b) ->
     IO ()
@@ -1276,7 +1280,7 @@ prop> updates table entries = traverse_ (uncurry $ update table) entries
 updates ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v, SerialiseValue b) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector (k, Update v b) ->
   m ()
@@ -1929,14 +1933,14 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   next ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Cursor IO k v b ->
     IO (Maybe (Entry k v (BlobRef IO b)))
   #-}
 next ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Cursor m k v b ->
   m (Maybe (Entry k v (BlobRef m b)))
 next iterator = do
@@ -1966,7 +1970,7 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   take ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Int ->
     Cursor IO k v b ->
     IO (Vector (Entry k v (BlobRef IO b)))
@@ -1974,7 +1978,7 @@ Throws the following exceptions:
 take ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Int ->
   Cursor m k v b ->
   m (Vector (Entry k v (BlobRef m b)))
@@ -2006,7 +2010,7 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   takeWhile ::
-    (SerialiseKey k, ResolveValue v) =>
+    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
     Int ->
     (k -> Bool) ->
     Cursor IO k v b ->
@@ -2015,7 +2019,7 @@ Throws the following exceptions:
 takeWhile ::
   forall m k v b.
   (IOLike m) =>
-  (SerialiseKey k, ResolveValue v) =>
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
   Int ->
   (k -> Bool) ->
   Cursor m k v b ->
