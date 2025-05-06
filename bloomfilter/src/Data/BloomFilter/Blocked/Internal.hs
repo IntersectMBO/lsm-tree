@@ -61,6 +61,12 @@ import           Data.BloomFilter.Hash
 -- Note that the format produced does not include this version. Version
 -- checking is the responsibility of the user of the library.
 --
+-- The library guarantes that the format version value for the classic
+-- ("Data.BloomFilter.Classic") and blocked ("Data.BloomFilter.Blocked")
+-- implementation will not overlap with each other or any previous value used
+-- by either implementation. So switching between the two implementations will
+-- always be detectable and unambigious.
+--
 formatVersion :: Int
 formatVersion = 1000
 
