@@ -33,10 +33,14 @@ tests =
         ]
     , testGroup "Blocked"
         [ testGroup "calculations" $
-            -- for the Blocked impl, the calculations are approximations
-            -- based on regressions, so we have to use much looser tolerances:
+            -- For the Blocked impl, the calculations are approximations
+            -- based on regressions. Since they are approximations then we have
+            -- to use much looser tolerances. Also, the regression only covered
+            -- the range of 2 bits to 24 bits, so we only cover that range here.
+            -- And the precision at around 2 bits is poor, so we only look at 3
+            -- bits and above.
             test_calculations proxyBlocked
-              (FPR 1e-4, FPR 1e-1)  (BitsPerEntry 3, BitsPerEntry 24) 1e-2
+              (FPR 1e-4, FPR 1e-1) (BitsPerEntry 3, BitsPerEntry 24) 1e-2
         , test_fromList     proxyBlocked
         ]
     , tests_hashes
