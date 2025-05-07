@@ -307,7 +307,7 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     let filterPath = forRunFilterRaw paths
     checkCRC CacheRunData (forRunFilterRaw expectedChecksums) filterPath
     runFilter <- FS.withFile fs filterPath FS.ReadMode $
-                   bloomFilterFromFile fs filterPath
+                   bloomFilterFromFile fs
 
     (runNumEntries, runIndex) <-
       CRC.expectValidFile fs (forRunIndexRaw paths) CRC.FormatIndexFile

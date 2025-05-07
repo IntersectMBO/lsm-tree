@@ -89,7 +89,7 @@ bloomFilterFromBS bs =
         void $ FS.hPutAllStrict hfs h bs
       -- deserialise from file
       FS.withFile hfs file FS.ReadMode $ \h ->
-        bloomFilterFromFile hfs file h
+        bloomFilterFromFile hfs h
 
 -- Length is in Word64s. A large length would require significant amount of
 -- memory, so we make it 'Small'.

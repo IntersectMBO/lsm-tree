@@ -57,7 +57,6 @@ bloomFilterToLBS bf =
 
 {-# SPECIALISE bloomFilterFromFile ::
      HasFS IO h
-  -> FsPath
   -> Handle h
   -> IO (BF.Bloom a) #-}
 -- | Read a 'BF.Bloom' from a file.
@@ -65,10 +64,9 @@ bloomFilterToLBS bf =
 bloomFilterFromFile ::
      (PrimMonad m, MonadCatch m)
   => HasFS m h
-  -> FsPath    -- ^ File path just for error reporting
   -> Handle h  -- ^ The open file, in read mode
   -> m (BF.Bloom a)
-bloomFilterFromFile hfs fp h = do
+bloomFilterFromFile hfs h = do
     header <- rethrowEOFError "Doesn't contain a header" $
               hGetByteArrayExactly hfs h 16
 
@@ -107,7 +105,8 @@ bloomFilterFromFile hfs fp h = do
   where
     throwFormatError = throwIO
                      . ErrFileFormatInvalid
-                         (mkFsErrorPath hfs fp) FormatBloomFilterFile
+                         (mkFsErrorPath hfs (handlePath h))
+                         FormatBloomFilterFile
     rethrowEOFError msg =
       handleJust
         (\e -> if isFsErrorType FsReachedEOF e then Just e else Nothing)
