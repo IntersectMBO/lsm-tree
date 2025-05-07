@@ -16,7 +16,6 @@ module Database.LSMTree.Internal.Config (
   , WriteBufferAlloc (..)
     -- * Bloom filter allocation
   , BloomFilterAlloc (..)
-  , defaultBloomFilterAlloc
   , bloomFilterAllocForLevel
     -- * Fence pointer index
   , FencePointerIndexType (..)
@@ -27,7 +26,6 @@ module Database.LSMTree.Internal.Config (
   , diskCachePolicyForLevel
     -- * Merge schedule
   , MergeSchedule (..)
-  , defaultMergeSchedule
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -98,10 +96,10 @@ defaultTableConfig =
       { confMergePolicy       = LazyLevelling
       , confSizeRatio         = Four
       , confWriteBufferAlloc  = AllocNumEntries 20_000
-      , confBloomFilterAlloc  = defaultBloomFilterAlloc
+      , confBloomFilterAlloc  = AllocFixed 10
       , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
-      , confMergeSchedule     = defaultMergeSchedule
+      , confMergeSchedule     = Incremental
       }
 
 data RunLevelNo = RegularLevel LevelNo | UnionLevel
@@ -182,9 +180,6 @@ data BloomFilterAlloc =
 instance NFData BloomFilterAlloc where
   rnf (AllocFixed n)        = rnf n
   rnf (AllocRequestFPR fpr) = rnf fpr
-
-defaultBloomFilterAlloc :: BloomFilterAlloc
-defaultBloomFilterAlloc = AllocFixed 10
 
 bloomFilterAllocForLevel :: TableConfig -> RunLevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel conf _levelNo =
@@ -327,10 +322,3 @@ data MergeSchedule =
 instance NFData MergeSchedule where
   rnf OneShot     = ()
   rnf Incremental = ()
-
--- | The default 'MergeSchedule'.
---
--- >>> defaultMergeSchedule
--- Incremental
-defaultMergeSchedule :: MergeSchedule
-defaultMergeSchedule = Incremental
