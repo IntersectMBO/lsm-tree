@@ -61,7 +61,7 @@ module Database.LSMTree.Model.Session (
   , updates
   , inserts
   , deletes
-  , mupserts
+  , upserts
     -- ** Blobs
   , BlobRef
   , retrieveBlobs
@@ -471,7 +471,7 @@ deletes ::
   -> m ()
 deletes r = updates r . fmap (,Model.Delete)
 
-mupserts ::
+upserts ::
      ( MonadState Model m
      , MonadError Err m
      , SerialiseKey k
@@ -483,7 +483,7 @@ mupserts ::
   -> V.Vector (k, v)
   -> Table k v b
   -> m ()
-mupserts r = updates r . fmap (fmap Model.Upsert)
+upserts r = updates r . fmap (fmap Model.Upsert)
 
 {-------------------------------------------------------------------------------
   Blobs

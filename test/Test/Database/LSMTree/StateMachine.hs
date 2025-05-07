@@ -1402,7 +1402,7 @@ runModel lookUp (Action merrs action') = case action' of
     Mupserts kmups tableVar ->
       wrap MUnit
       . Model.runModelMWithInjectedErrors merrs
-          (Model.mupserts Model.getResolve kmups (getTable $ lookUp tableVar))
+          (Model.upserts Model.getResolve kmups (getTable $ lookUp tableVar))
           (pure ()) -- TODO(err)
     RetrieveBlobs blobsVar ->
       wrap (MVector . fmap (MBlob . WrapBlob))
@@ -1548,7 +1548,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
             (\_ -> pure ()) -- TODO(err)
         Mupserts kmups tableVar ->
           runRealWithInjectedErrors "Mupserts" env merrs
-            (Class.mupserts (unwrapTable $ lookUp' tableVar) kmups)
+            (Class.upserts (unwrapTable $ lookUp' tableVar) kmups)
             (\_ -> pure ()) -- TODO(err)
         RetrieveBlobs blobRefsVar ->
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
@@ -1659,7 +1659,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
             (\_ -> pure ()) -- TODO(err)
         Mupserts kmups tableVar ->
           runRealWithInjectedErrors "Mupserts" env merrs
-            (Class.mupserts (unwrapTable $ lookUp' tableVar) kmups)
+            (Class.upserts (unwrapTable $ lookUp' tableVar) kmups)
             (\_ -> pure ()) -- TODO(err)
         RetrieveBlobs blobRefsVar ->
           runRealWithInjectedErrors "RetrieveBlobs" env merrs
@@ -2716,7 +2716,7 @@ data FinalTag =
   | NumDeletes String
     -- | Number of 'Class.Mupsert's successfully submitted to a table
     -- (this includes submissions through both 'Class.updates' and
-    -- 'Class.mupserts')
+    -- 'Class.upserts')
   | NumMupserts String
     -- | Total number of actions (failing, succeeding, either)
   | NumActions String

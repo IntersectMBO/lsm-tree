@@ -73,7 +73,7 @@ instance Class.IsTable Table where
     updates (Table s t) x1 = runInOpenSession s (Model.updates Model.getResolve x1 t)
     inserts (Table s t) x1 = runInOpenSession s (Model.inserts Model.getResolve x1 t)
     deletes (Table s t) x1 = runInOpenSession s (Model.deletes Model.getResolve x1 t)
-    mupserts (Table s t) x1 = runInOpenSession s (Model.mupserts Model.getResolve x1 t)
+    upserts (Table s t) x1 = runInOpenSession s (Model.upserts Model.getResolve x1 t)
 
     rangeLookup (Table s t) x1 = fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.rangeLookup x1 t)

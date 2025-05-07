@@ -557,7 +557,7 @@ prop_lookupUpdate h ups k v1 mb1 v2 = ioProperty $ do
 
       -- the main dish
       inserts tbl (V.singleton (k, v1, mb1))
-      mupserts tbl (V.singleton (k, v2))
+      upserts tbl (V.singleton (k, v2))
       res <- lookupsWithBlobs tbl s (V.singleton k)
 
       -- notice the order.

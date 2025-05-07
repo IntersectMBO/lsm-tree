@@ -129,7 +129,7 @@ class (IsSession (Session h)) => IsTable h where
         -> V.Vector k
         -> m ()
 
-    mupserts ::
+    upserts ::
            ( IOLike m
            , C k v b
            )
@@ -278,7 +278,7 @@ instance IsTable R.Table where
     updates = R.updates
     inserts = R.inserts
     deletes = R.deletes
-    mupserts = R.upserts
+    upserts = R.upserts
 
     rangeLookup = R.rangeLookup
     retrieveBlobs _ = R.retrieveBlobs
