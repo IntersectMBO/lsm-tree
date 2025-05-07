@@ -267,15 +267,25 @@ instance DecodeVersioned SnapshotRun where
 -- TableConfig
 
 instance Encode TableConfig where
-  encode TableConfig {..} =
-         encodeListLen 7
-      <> encode confMergePolicy
-      <> encode confMergeSchedule
-      <> encode confSizeRatio
-      <> encode confWriteBufferAlloc
-      <> encode confBloomFilterAlloc
-      <> encode confFencePointerIndex
-      <> encode confDiskCachePolicy
+  encode
+    ( TableConfig
+        { confMergePolicy = mergePolicy
+        , confMergeSchedule = mergeSchedule
+        , confSizeRatio = sizeRatio
+        , confWriteBufferAlloc = writeBufferAlloc
+        , confBloomFilterAlloc = bloomFilterAlloc
+        , confFencePointerIndex = fencePointerIndex
+        , confDiskCachePolicy = diskCachePolicy
+        }
+      ) =
+      encodeListLen 7
+        <> encode mergePolicy
+        <> encode mergeSchedule
+        <> encode sizeRatio
+        <> encode writeBufferAlloc
+        <> encode bloomFilterAlloc
+        <> encode fencePointerIndex
+        <> encode diskCachePolicy
 
 instance DecodeVersioned TableConfig where
   decodeVersioned v@V0 = do
