@@ -85,10 +85,21 @@ instance NFData TableConfig where
   rnf (TableConfig a b c d e f g) =
       rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f `seq` rnf g
 
--- | A reasonable default 'TableConfig'.
+-- | The 'defaultTableConfig' defines reasonable defaults for all 'TableConfig' parameters.
 --
--- This uses a write buffer with up to 20,000 elements and a generous amount of
--- memory for Bloom filters (FPR of 1%).
+-- >>> :{
+-- defaultTableConfig ==
+--     TableConfig
+--       { confMergePolicy       = LazyLevelling
+--       , confSizeRatio         = Four
+--       , confWriteBufferAlloc  = AllocNumEntries 20_000
+--       , confBloomFilterAlloc  = AllocFixed 10
+--       , confFencePointerIndex = OrdinaryIndex
+--       , confDiskCachePolicy   = DiskCacheAll
+--       , confMergeSchedule     = Incremental
+--       }
+-- :}
+-- True
 --
 defaultTableConfig :: TableConfig
 defaultTableConfig =
