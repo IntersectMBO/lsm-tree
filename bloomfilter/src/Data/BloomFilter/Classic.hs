@@ -248,7 +248,7 @@ deserialise bloomsize fill = do
 
 -- $differences
 --
--- This package is (almost entirely rewritten) fork of
+-- This package is an entirely rewritten fork of
 -- [bloomfilter](https://hackage.haskell.org/package/bloomfilter) package.
 --
 -- The main differences are
@@ -256,10 +256,17 @@ deserialise bloomsize fill = do
 -- * This packages support bloomfilters of arbitrary sizes
 --   (not limited to powers of two). Also sizes over 2^32 are supported.
 --
--- * The 'Bloom' and 'MBloom' types are parametrised over 'Hashes' variable,
---   instead of having a @a -> ['Hash']@ typed field.
---   This separation allows clean de/serialization of Bloom filters in this
---   package, as the hashing scheme is a static.
+-- * The 'Bloom' and 'MBloom' types are parametrised over a 'Hashable' type
+--   class, instead of having a @a -> ['Hash']@ typed field.
+--   This separation allows clean de\/serialization of Bloom filters in this
+--   package, as the hashing scheme is static.
 --
--- * [XXH3 hash](https://xxhash.com/) is used instead of Jenkins'
---   lookup3.
+-- * [@XXH3@ hash](https://xxhash.com/) is used instead of Jenkins'
+--   @lookup3@.
+--
+-- * Support for both classic and \"blocked\" Bloom filters. Blocked-structured
+--   Bloom filters arrange all the bits for each insert or lookup into a single
+--   cache line, which greatly reduces the number of slow uncached memory reads.
+--   The trade-off for this performance optimisation is a slightly worse
+--   trade-off between bits per element and the FPR. In practice for typical
+--   FPRs of 1-e3 -- 1e-4, this requires a couple extra bits per element.
