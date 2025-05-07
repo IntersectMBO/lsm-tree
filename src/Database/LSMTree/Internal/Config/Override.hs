@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- Definitions for override table config options.
@@ -88,7 +89,15 @@ instance Override DiskCachePolicy SnapshotMetaData where
 
 instance Override DiskCachePolicy TableConfig where
   override confDiskCachePolicy' TableConfig {..}
-    = TableConfig {confDiskCachePolicy = confDiskCachePolicy', ..}
+    = TableConfig
+        { confMergePolicy,
+          confMergeSchedule,
+          confSizeRatio,
+          confWriteBufferAlloc,
+          confBloomFilterAlloc,
+          confFencePointerIndex,
+          confDiskCachePolicy = confDiskCachePolicy'
+        }
 
 instance Override DiskCachePolicy (SnapLevels SnapshotRun) where
   override dcp (SnapLevels (vec :: V.Vector (SnapLevel SnapshotRun))) =
