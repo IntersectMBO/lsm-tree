@@ -310,10 +310,10 @@ popResolved resolve mergeType readers = readEntry
                 -> m (SerialisedKey, RunReader.Entry m h, HasMore)
     handleLevel key entry =
         case entry of
-          Mupdate v ->
+          Upsert v ->
             handleMupdate key v
           _ -> do
-            -- Anything but Mupdate supersedes all previous entries of
+            -- Anything but Upsert supersedes all previous entries of
             -- the same key, so we can simply drop them and are done.
             hasMore' <- dropRemaining key
             return (key, RunReader.Entry entry, hasMore')
@@ -327,10 +327,10 @@ popResolved resolve mergeType readers = readEntry
         if nextKey /= key
           then
             -- No more entries for same key, done.
-            return (key, RunReader.Entry (Mupdate v), HasMore)
+            return (key, RunReader.Entry (Upsert v), HasMore)
           else do
             (_, nextEntry, hasMore) <- pop resolve readers
-            let resolved = Entry.combine resolve (Mupdate v)
+            let resolved = Entry.combine resolve (Upsert v)
                              (RunReader.toFullEntry nextEntry)
             case hasMore of
               HasMore -> handleLevel key resolved

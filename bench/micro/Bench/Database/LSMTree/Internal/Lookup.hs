@@ -269,7 +269,7 @@ randomEntry g = frequency [
                       -- them tiny to not slow down the setup.
                       (!b, !g''') = randomByteStringR (0, 100) g''
                   in  (InsertWithBlob v b, g'''))
-    , (2,  \g' -> let (!v, !g'') = uniform g' in (Mupdate v, g''))
+    , (2,  \g' -> let (!v, !g'') = uniform g' in (Upsert v, g''))
     , (2,  \g' -> (Delete, g'))
     ] g
 

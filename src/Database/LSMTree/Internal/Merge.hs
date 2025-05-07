@@ -351,10 +351,10 @@ doStepsLevel m@Merge {..} requestedSteps = go 0
               writeMutVar mergeState $! MergingDone
               pure (n + 1, MergeDone)
 
-    handleEntry !n !key (Reader.Entry (Mupdate v)) =
+    handleEntry !n !key (Reader.Entry (Upsert v)) =
         -- resolve small mupsert vals with the following entries of the same key
         handleMupdate n key v
-    handleEntry !n !key (Reader.EntryOverflow (Mupdate v) _ len overflowPages) =
+    handleEntry !n !key (Reader.EntryOverflow (Upsert v) _ len overflowPages) =
         -- resolve large mupsert vals with following entries of the same key
         handleMupdate n key (Reader.appendOverflow len overflowPages v)
     handleEntry !n !key entry = do
@@ -368,17 +368,17 @@ doStepsLevel m@Merge {..} requestedSteps = go 0
         if nextKey /= key
           then do
             -- resolved all entries for this key, write it
-            writeSerialisedEntry m key (Mupdate v)
+            writeSerialisedEntry m key (Upsert v)
             go n
           else do
             (_, nextEntry, hasMore) <- Readers.pop mergeResolve mergeReaders
             -- for resolution, we need the full second value to be present
             let resolved = combine mergeResolve
-                             (Mupdate v)
+                             (Upsert v)
                              (Reader.toFullEntry nextEntry)
             case hasMore of
               Readers.HasMore -> case resolved of
-                Mupdate v' ->
+                Upsert v' ->
                   -- still a mupsert, keep resolving
                   handleMupdate (n + 1) key v'
                 _ -> do
@@ -490,7 +490,7 @@ writeSerialisedEntry m key entry =
     when (shouldWriteEntry m entry) $
       Builder.addKeyOp (mergeBuilder m) key entry
 
--- On the last level we could also turn Mupdate into Insert, but no need to
+-- On the last level we could also turn Upsert into Insert, but no need to
 -- complicate things.
 shouldWriteEntry :: Merge t m h -> Entry v b -> Bool
 shouldWriteEntry m Delete = not (mergeIsLastLevel m)

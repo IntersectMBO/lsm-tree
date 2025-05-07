@@ -434,7 +434,7 @@ randomRunData Config {..} runentries g0 =
           )
         , ( fmupserts
           , \g -> let (!v, !g') = randomValue g
-                  in  (Mupdate v, g')
+                  in  (Upsert v, g')
           )
         ]
 

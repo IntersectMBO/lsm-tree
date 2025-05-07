@@ -188,7 +188,7 @@ liftArbitrary2Entry :: Gen v -> Gen b -> Gen (Entry v b)
 liftArbitrary2Entry genVal genBlob = frequency
     [ (1, Insert <$> genVal)
     , (1, InsertWithBlob <$> genVal <*> genBlob)
-    , (1, Mupdate <$> genVal)
+    , (1, Upsert <$> genVal)
     , (1, pure Delete)
     ]
 
@@ -199,7 +199,7 @@ liftShrink2Entry shrinkVal shrinkBlob = \case
                        ++ [ InsertWithBlob v' b'
                           | (v', b') <- liftShrink2 shrinkVal shrinkBlob (v, b)
                           ]
-    Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
+    Upsert v          -> Delete : Insert v : (Upsert <$> shrinkVal v)
     Delete             -> []
 
 {-------------------------------------------------------------------------------
@@ -210,12 +210,12 @@ updateToEntry :: Full.Update v b -> Entry v b
 updateToEntry = \case
     Full.Insert v Nothing  -> Insert v
     Full.Insert v (Just b) -> InsertWithBlob v b
-    Full.Upsert v          -> Mupdate v
+    Full.Upsert v          -> Upsert v
     Full.Delete            -> Delete
 
 entryToUpdate :: Entry v b -> Full.Update v b
 entryToUpdate = \case
     Insert v           -> Full.Insert v Nothing
     InsertWithBlob v b -> Full.Insert v (Just b)
-    Mupdate v          -> Full.Upsert v
+    Upsert v          -> Full.Upsert v
     Delete             -> Full.Delete

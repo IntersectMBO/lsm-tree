@@ -170,7 +170,7 @@ prop_roundtripCursor lb ub kops = ioProperty $
     entryToValue = \case
       Insert v           -> Just (v, Nothing)
       InsertWithBlob v b -> Just (v, Just b)
-      Mupdate v          -> Just (v, Nothing)
+      Upsert v          -> Just (v, Nothing)
       Delete             -> Nothing
 
     duplicates :: Map.Map SerialisedKey Int

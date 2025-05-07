@@ -213,7 +213,7 @@ randomKOps Config {..} = take nentries . List.unfoldr (Just . randomKOp) .
           )
         , ( fmupserts
           , \g -> let (!v, !g') = randomValue g
-                  in  (Mupdate v, g')
+                  in  (Upsert v, g')
           )
         ]
 

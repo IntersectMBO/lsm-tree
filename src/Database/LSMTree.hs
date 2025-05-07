@@ -863,7 +863,7 @@ lookups (Table table :: Table m k v b) keys = do
   entryToLookupResult = \case
     Entry.Insert !v -> Found (Internal.deserialiseValue v)
     Entry.InsertWithBlob !v !b -> FoundWithBlob (Internal.deserialiseValue v) (BlobRef b)
-    Entry.Mupdate !v -> Found (Internal.deserialiseValue v)
+    Entry.Upsert !v -> Found (Internal.deserialiseValue v)
     Entry.Delete -> NotFound
 
 data Entry k v b
@@ -1305,7 +1305,7 @@ updates (Table table :: Table m k v b) entries =
     Insert v (Just b) -> Entry.InsertWithBlob (Internal.serialiseValue v) (Internal.serialiseBlob b)
     Insert v Nothing -> Entry.Insert (Internal.serialiseValue v)
     Delete -> Entry.Delete
-    Upsert v -> Entry.Mupdate (Internal.serialiseValue v)
+    Upsert v -> Entry.Upsert (Internal.serialiseValue v)
 
 --------------------------------------------------------------------------------
 -- Duplication

@@ -137,7 +137,7 @@ maxBlobRefsMap = 12 -- 768 / 64
 --
 sizeofEntry :: SerialisedKey -> Entry SerialisedValue b -> Int
 sizeofEntry k Delete               = sizeofKey k
-sizeofEntry k (Mupdate v)          = sizeofKey k + sizeofValue v
+sizeofEntry k (Upsert v)           = sizeofKey k + sizeofValue v
 sizeofEntry k (Insert v)           = sizeofKey k + sizeofValue v
 sizeofEntry k (InsertWithBlob v _) = sizeofKey k + sizeofValue v + 12
 
@@ -160,7 +160,7 @@ hasBlobRef _                    = False
 entryCrumb :: Entry SerialisedValue BlobSpan -> Word64
 entryCrumb Insert {}         = 0
 entryCrumb InsertWithBlob {} = 0
-entryCrumb Mupdate {}        = 1
+entryCrumb Upsert {}         = 1
 entryCrumb Delete {}         = 2
 
 -- | Entry value. Return 'emptyValue' for 'Delete'
@@ -168,7 +168,7 @@ entryCrumb Delete {}         = 2
 entryValue :: Entry SerialisedValue BlobSpan -> SerialisedValue
 entryValue (Insert v)           = v
 entryValue (InsertWithBlob v _) = v
-entryValue (Mupdate v)          = v
+entryValue (Upsert v)           = v
 entryValue Delete               = emptyValue
 
 emptyValue :: SerialisedValue

@@ -99,7 +99,7 @@ singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
     SerialisedKey      (RawBytes (VP.Vector koff klen kba)) = k
     SerialisedValue v'@(RawBytes (VP.Vector voff vlen vba)) = v
 
-singletonPage k (Mupdate v) = runST $ do
+singletonPage k (Upsert v) = runST $ do
     -- allocate bytearray
     ba <- P.newPinnedByteArray pageSize :: ST s (P.MutableByteArray s)
     P.fillByteArray ba 0 pageSize 0

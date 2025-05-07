@@ -20,54 +20,54 @@ import           Data.Bifunctor (Bifunctor (..))
 data Entry v b
     = Insert !v
     | InsertWithBlob !v !b
-    | Mupdate !v
+    | Upsert !v
     | Delete
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
 hasBlob :: Entry v b -> Bool
 hasBlob Insert{}         = False
 hasBlob InsertWithBlob{} = True
-hasBlob Mupdate{}        = False
+hasBlob Upsert{}         = False
 hasBlob Delete{}         = False
 
 instance (NFData v, NFData b) => NFData (Entry v b) where
     rnf (Insert v)            = rnf v
     rnf (InsertWithBlob v br) = rnf v `seq` rnf br
-    rnf (Mupdate v)           = rnf v
+    rnf (Upsert v)            = rnf v
     rnf Delete                = ()
 
 onValue :: v' -> (v -> v') -> Entry v b -> v'
 onValue def f = \case
     Insert v           -> f v
     InsertWithBlob v _ -> f v
-    Mupdate v          -> f v
+    Upsert v          -> f v
     Delete             -> def
 
 onBlobRef :: b' -> (b -> b') -> Entry v b -> b'
 onBlobRef def g = \case
     Insert{}            -> def
     InsertWithBlob _ br -> g br
-    Mupdate{}           -> def
+    Upsert{}           -> def
     Delete              -> def
 
 instance Bifunctor Entry where
   first f = \case
       Insert v            -> Insert (f v)
       InsertWithBlob v br -> InsertWithBlob (f v) br
-      Mupdate v           -> Mupdate (f v)
+      Upsert v           -> Upsert (f v)
       Delete              -> Delete
 
   second g = \case
       Insert v            -> Insert v
       InsertWithBlob v br -> InsertWithBlob v (g br)
-      Mupdate v           -> Mupdate v
+      Upsert v           -> Upsert v
       Delete              -> Delete
 
 instance Bifoldable Entry where
   bifoldMap f g = \case
       Insert v            -> f v
       InsertWithBlob v br -> f v <> g br
-      Mupdate v           -> f v
+      Upsert v           -> f v
       Delete              -> mempty
 
 -- | A count of entries, for example the number of entries in a run.
@@ -100,13 +100,13 @@ unNumEntries (NumEntries x) = x
 -- Note: 'Entry' is a semigroup with 'combine' if the @(v -> v -> v)@ argument
 -- is associative.
 combine :: (v -> v -> v) -> Entry v b -> Entry v b -> Entry v b
-combine _ e@Delete            _                    = e
-combine _ e@Insert {}         _                    = e
-combine _ e@InsertWithBlob {} _                    = e
-combine _   (Mupdate u)       Delete               = Insert u
-combine f   (Mupdate u)       (Insert v)           = Insert (f u v)
-combine f   (Mupdate u)       (InsertWithBlob v _) = Insert (f u v)
-combine f   (Mupdate u)       (Mupdate v)          = Mupdate (f u v)
+combine _ e@Delete            _                   = e
+combine _ e@Insert {}         _                   = e
+combine _ e@InsertWithBlob {} _                   = e
+combine _   (Upsert u)       Delete               = Insert u
+combine f   (Upsert u)       (Insert v)           = Insert (f u v)
+combine f   (Upsert u)       (InsertWithBlob v _) = Insert (f u v)
+combine f   (Upsert u)       (Upsert v)           = Upsert (f u v)
 
 -- | Combine two entries of runs that have been 'union'ed together. If any one
 -- has a value, the result should have a value (represented by 'Insert'). If
@@ -118,19 +118,19 @@ combine f   (Mupdate u)       (Mupdate v)          = Mupdate (f u v)
 combineUnion :: (v -> v -> v) -> Entry v b -> Entry v b -> Entry v b
 combineUnion f = go
   where
-    go Delete               (Mupdate v)          = Insert v
+    go Delete               (Upsert v)           = Insert v
     go Delete               e                    = e
-    go (Mupdate u)          Delete               = Insert u
+    go (Upsert u)          Delete                = Insert u
     go e                    Delete               = e
     go (Insert u)           (Insert v)           = Insert (f u v)
     go (Insert u)           (InsertWithBlob v _) = Insert (f u v)
-    go (Insert u)           (Mupdate v)          = Insert (f u v)
+    go (Insert u)           (Upsert v)           = Insert (f u v)
     go (InsertWithBlob u b) (Insert v)           = InsertWithBlob (f u v) b
     go (InsertWithBlob u b) (InsertWithBlob v _) = InsertWithBlob (f u v) b
-    go (InsertWithBlob u b) (Mupdate v)          = InsertWithBlob (f u v) b
-    go (Mupdate u)          (Insert v)           = Insert (f u v)
-    go (Mupdate u)          (InsertWithBlob v _) = Insert (f u v)
-    go (Mupdate u)          (Mupdate v)          = Insert (f u v)
+    go (InsertWithBlob u b) (Upsert v)           = InsertWithBlob (f u v) b
+    go (Upsert u)          (Insert v)            = Insert (f u v)
+    go (Upsert u)          (InsertWithBlob v _)  = Insert (f u v)
+    go (Upsert u)          (Upsert v)            = Insert (f u v)
 
 combineMaybe :: (v -> v -> v) -> Maybe (Entry v b) -> Maybe (Entry v b) -> Maybe (Entry v b)
 combineMaybe _ e1 Nothing          = e1
