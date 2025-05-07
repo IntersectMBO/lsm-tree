@@ -181,6 +181,7 @@ testAll test = [
     , test (Proxy @TreeMergeType)
     , test (Proxy @(SnapMergingTree SnapshotRun))
     , test (Proxy @(SnapMergingTreeState SnapshotRun))
+    , test (Proxy @(SnapMergingRun TreeMergeType SnapshotRun))
     , test (Proxy @(SnapPendingMerge SnapshotRun))
     , test (Proxy @(SnapPreExistingRun SnapshotRun))
     ]
