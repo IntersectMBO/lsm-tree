@@ -169,6 +169,8 @@ unfold bloomsize f k =
                     Nothing      -> return ()
                     Just (a, j') -> insert mb a >> loop j'
 
+
+{-# INLINEABLE fromList #-}
 -- | Create a Bloom filter, populating it from a sequence of values.
 --
 -- For example
