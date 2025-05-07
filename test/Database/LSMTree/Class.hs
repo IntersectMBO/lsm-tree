@@ -48,7 +48,7 @@ class (IsSession (Session h)) => IsTable h where
         -> Session h m
         -> m (h m k v b)
 
-    close ::
+    closeTable ::
            ( IOLike m
            , C k v b
            )
@@ -206,7 +206,7 @@ withTableNew :: forall h m k v b a.
   -> TableConfig h
   -> (h m k v b -> m a)
   -> m a
-withTableNew sesh conf = bracket (newTableWith conf sesh) close
+withTableNew sesh conf = bracket (newTableWith conf sesh) closeTable
 
 withTableFromSnapshot :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
@@ -215,14 +215,14 @@ withTableFromSnapshot :: forall h m k v b a.
   -> SnapshotName
   -> (h m k v b -> m a)
   -> m a
-withTableFromSnapshot sesh label snap = bracket (openTableFromSnapshot sesh snap label) close
+withTableFromSnapshot sesh label snap = bracket (openTableFromSnapshot sesh snap label) closeTable
 
 withTableDuplicate :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
   => h m k v b
   -> (h m k v b -> m a)
   -> m a
-withTableDuplicate table = bracket (duplicate table) close
+withTableDuplicate table = bracket (duplicate table) closeTable
 
 withTableUnion :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
@@ -230,14 +230,14 @@ withTableUnion :: forall h m k v b a.
   -> h m k v b
   -> (h m k v b -> m a)
   -> m a
-withTableUnion table1 table2 = bracket (table1 `union` table2) close
+withTableUnion table1 table2 = bracket (table1 `union` table2) closeTable
 
 withTableUnions :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
   => NonEmpty (h m k v b)
   -> (h m k v b -> m a)
   -> m a
-withTableUnions tables = bracket (unions tables) close
+withTableUnions tables = bracket (unions tables) closeTable
 
 withCursor :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
@@ -273,7 +273,7 @@ instance IsTable R.Table where
     type Cursor R.Table = R.Cursor
 
     newTableWith = R.newTableWith
-    close = R.closeTable
+    closeTable = R.closeTable
     lookups = R.lookups
     updates = R.updates
     inserts = R.inserts

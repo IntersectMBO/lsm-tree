@@ -67,7 +67,7 @@ instance Class.IsTable Table where
     type Cursor Table = Cursor
 
     newTableWith x s = Table s <$> runInOpenSession s (Model.new x)
-    close (Table s t) = runInOpenSession s (Model.close t)
+    closeTable (Table s t) = runInOpenSession s (Model.close t)
     lookups (Table s t) x1 = fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.lookups x1 t)
     updates (Table s t) x1 = runInOpenSession s (Model.updates Model.getResolve x1 t)

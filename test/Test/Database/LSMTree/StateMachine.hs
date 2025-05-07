@@ -1512,7 +1512,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
             (\_ -> pure ()) -- TODO(err)
         Close tableVar ->
           runRealWithInjectedErrors "Close" env merrs
-            (Class.close (unwrapTable $ lookUp' tableVar))
+            (Class.closeTable (unwrapTable $ lookUp' tableVar))
             (\_ -> pure ()) -- TODO(err)
         Lookups ks tableVar ->
           runRealWithInjectedErrors "Lookups" env merrs
@@ -1563,7 +1563,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
             (WrapTable <$> Class.openTableFromSnapshot session name label)
-            (\(WrapTable t) -> Class.close t)
+            (\(WrapTable t) -> Class.closeTable t)
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs
             (Class.deleteSnapshot session name)
@@ -1623,7 +1623,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
             (\_ -> pure ()) -- TODO(err)
         Close tableVar ->
           runRealWithInjectedErrors "Close" env merrs
-            (Class.close (unwrapTable $ lookUp' tableVar))
+            (Class.closeTable (unwrapTable $ lookUp' tableVar))
             (\_ -> pure ()) -- TODO(err)
         Lookups ks tableVar ->
           runRealWithInjectedErrors "Lookups" env merrs
@@ -1674,7 +1674,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
             (WrapTable <$> Class.openTableFromSnapshot session name label)
-            (\(WrapTable t) -> Class.close t)
+            (\(WrapTable t) -> Class.closeTable t)
         DeleteSnapshot name ->
           runRealWithInjectedErrors "DeleteSnapshot" env merrs
             (Class.deleteSnapshot session name)
