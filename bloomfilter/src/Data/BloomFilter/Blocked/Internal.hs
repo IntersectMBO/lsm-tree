@@ -172,9 +172,11 @@ type role Bloom nominal
 bloomInvariant :: Bloom a -> Bool
 bloomInvariant Bloom {
                  numBlocks = NumBlocks nb,
+                 numHashes,
                  bitArray  = BitArray.BitArray pa
                } =
     nb * 8 == sizeofPrimArray pa
+ && numHashes > 0
 
 instance Show (Bloom a) where
     show mb = "Bloom { " ++ show numBits ++ " bits } "
