@@ -40,12 +40,12 @@ class (IsSession (Session h)) => IsTable h where
     type BlobRef h :: (Type -> Type) -> Type -> Type
     type Cursor h :: (Type -> Type) -> Type -> Type -> Type -> Type
 
-    new ::
+    newTableWith ::
            ( IOLike m
            , C k v b
            )
-        => Session h m
-        -> TableConfig h
+        => TableConfig h
+        -> Session h m
         -> m (h m k v b)
 
     close ::
@@ -206,7 +206,7 @@ withTableNew :: forall h m k v b a.
   -> TableConfig h
   -> (h m k v b -> m a)
   -> m a
-withTableNew sesh conf = bracket (new sesh conf) close
+withTableNew sesh conf = bracket (newTableWith conf sesh) close
 
 withTableFromSnapshot :: forall h m k v b a.
      (IOLike m, IsTable h, C k v b)
@@ -272,7 +272,7 @@ instance IsTable R.Table where
     type BlobRef R.Table = R.BlobRef
     type Cursor R.Table = R.Cursor
 
-    new = flip R.newTableWith
+    newTableWith = R.newTableWith
     close = R.closeTable
     lookups = R.lookups
     updates = R.updates

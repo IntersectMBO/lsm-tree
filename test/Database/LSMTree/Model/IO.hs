@@ -66,7 +66,7 @@ instance Class.IsTable Table where
     type BlobRef Table = BlobRef
     type Cursor Table = Cursor
 
-    new s x = Table s <$> runInOpenSession s (Model.new x)
+    newTableWith x s = Table s <$> runInOpenSession s (Model.new x)
     close (Table s t) = runInOpenSession s (Model.close t)
     lookups (Table s t) x1 = fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.lookups x1 t)

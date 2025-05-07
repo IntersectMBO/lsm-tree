@@ -1508,7 +1508,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
     aux env (Action merrs action') = case action' of
         New _ cfg ->
           runRealWithInjectedErrors "New" env merrs
-            (WrapTable <$> Class.new session cfg)
+            (WrapTable <$> Class.newTableWith cfg session)
             (\_ -> pure ()) -- TODO(err)
         Close tableVar ->
           runRealWithInjectedErrors "Close" env merrs
@@ -1619,7 +1619,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
     aux env (Action merrs action') = case action' of
         New _ cfg ->
           runRealWithInjectedErrors "New" env merrs
-            (WrapTable <$> Class.new session cfg)
+            (WrapTable <$> Class.newTableWith cfg session)
             (\_ -> pure ()) -- TODO(err)
         Close tableVar ->
           runRealWithInjectedErrors "Close" env merrs
