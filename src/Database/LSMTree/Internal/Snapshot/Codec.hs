@@ -270,23 +270,23 @@ instance Encode TableConfig where
   encode TableConfig {..} =
          encodeListLen 7
       <> encode confMergePolicy
+      <> encode confMergeSchedule
       <> encode confSizeRatio
       <> encode confWriteBufferAlloc
       <> encode confBloomFilterAlloc
       <> encode confFencePointerIndex
       <> encode confDiskCachePolicy
-      <> encode confMergeSchedule
 
 instance DecodeVersioned TableConfig where
   decodeVersioned v@V0 = do
       _ <- decodeListLenOf 7
       confMergePolicy <- decodeVersioned v
+      confMergeSchedule <- decodeVersioned v
       confSizeRatio <- decodeVersioned v
       confWriteBufferAlloc <- decodeVersioned v
       confBloomFilterAlloc <- decodeVersioned v
       confFencePointerIndex <- decodeVersioned v
       confDiskCachePolicy <- decodeVersioned v
-      confMergeSchedule <- decodeVersioned v
       pure TableConfig {..}
 
 -- MergePolicy
