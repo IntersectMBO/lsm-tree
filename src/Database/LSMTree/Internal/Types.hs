@@ -1,4 +1,5 @@
 {-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE DefaultSignatures #-}
 
 module Database.LSMTree.Internal.Types (
     Session (..),
@@ -138,13 +139,15 @@ Instances should satisfy the following:
 -- TODO(optimisation): Include a function that determines whether or not it is safe to remove and Update from the last level of an LSM-tree.
 -- TODO(optimisation): Include a function @v -> RawBytes -> RawBytes@ that can be used to merged deserialised and serialised values.
 --                     This can be used when inserting values into the write buffer.
-class (SerialiseValue v) => ResolveValue v where
+class ResolveValue v where
   {-# MINIMAL resolve | resolveSerialised #-}
 
   {- |
   Combine two values.
   -}
   resolve :: v -> v -> v
+
+  default resolve :: SerialiseValue v => v -> v -> v
   resolve v1 v2 =
     deserialiseValue $
       resolveSerialised (Proxy :: Proxy v) (serialiseValue v1) (serialiseValue v2)
@@ -156,27 +159,28 @@ class (SerialiseValue v) => ResolveValue v where
   The inputs are only ever produced by 'serialiseValue' and 'resolveSerialised'.
   -}
   resolveSerialised :: Proxy v -> RawBytes -> RawBytes -> RawBytes
+  default resolveSerialised :: SerialiseValue v => Proxy v -> RawBytes -> RawBytes -> RawBytes
   resolveSerialised Proxy rb1 rb2 =
     serialiseValue (resolve (deserialiseValue @v rb1) (deserialiseValue @v rb2))
 
 {- |
 Test the __Compatibility__ law for the 'ResolveValue' class.
 -}
-resolveCompatibility :: (ResolveValue v) => v -> v -> Bool
+resolveCompatibility :: (SerialiseValue v, ResolveValue v) => v -> v -> Bool
 resolveCompatibility (v1 :: v) v2 =
   serialiseValue (resolve v1 v2) == resolveSerialised (Proxy @v) (serialiseValue v1) (serialiseValue v2)
 
 {- |
 Test the __Associativity__ law for the 'ResolveValue' class.
 -}
-resolveAssociativity :: (ResolveValue v) => v -> v -> v -> Bool
+resolveAssociativity :: (SerialiseValue v, ResolveValue v) => v -> v -> v -> Bool
 resolveAssociativity v1 v2 v3 =
   serialiseValue (v1 `resolve` (v2 `resolve` v3)) == serialiseValue ((v1 `resolve` v2) `resolve` v3)
 
 {- |
 Test the __Valid Output__ law for the 'ResolveValue' class.
 -}
-resolveValidOutput :: (ResolveValue v, NFData v) => v -> v -> Bool
+resolveValidOutput :: (SerialiseValue v, ResolveValue v, NFData v) => v -> v -> Bool
 resolveValidOutput (v1 :: v) (v2 :: v) =
   deserialiseValue @v (resolveSerialised (Proxy @v) (serialiseValue v1) (serialiseValue v2)) `deepseq` True
 
@@ -201,11 +205,11 @@ The name 'ResolveAsFirst' is in reference to the wrapper 'Data.Semigroup.First' 
 
 prop> resolve = const
 -}
-newtype ResolveAsFirst v = ResolveAsFirst v
+newtype ResolveAsFirst v = ResolveAsFirst {unResolveAsFirst:: v}
   deriving stock (Eq, Show)
   deriving newtype (SerialiseValue)
 
-instance (SerialiseValue v) => ResolveValue (ResolveAsFirst v) where
+instance ResolveValue (ResolveAsFirst v) where
   resolve :: ResolveAsFirst v -> ResolveAsFirst v -> ResolveAsFirst v
   resolve = const
   resolveSerialised :: Proxy (ResolveAsFirst v) -> RawBytes -> RawBytes -> RawBytes

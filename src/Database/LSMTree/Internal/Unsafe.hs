@@ -1177,7 +1177,6 @@ data SnapshotExistsError
 {-# SPECIALISE saveSnapshot ::
      SnapshotName
   -> SnapshotLabel
-  -> SnapshotTableType
   -> Table IO h
   -> IO () #-}
 -- |  See 'Database.LSMTree.saveSnapshot'.
@@ -1185,10 +1184,9 @@ saveSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => SnapshotName
   -> SnapshotLabel
-  -> SnapshotTableType
   -> Table m h
   -> m ()
-saveSnapshot snap label tableType t = do
+saveSnapshot snap label t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
     withOpenTable t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
@@ -1241,7 +1239,6 @@ saveSnapshot snap label tableType t = do
 
         let snapMetaData = SnapshotMetaData
                 label
-                tableType
                 (tableConfig t)
                 snapWriteBufferNumber
                 snapLevels'
@@ -1269,15 +1266,7 @@ data SnapshotCorruptedError
 
 -- | The named snapshot is not compatible with the expected type.
 data SnapshotNotCompatibleError
-    = -- | The named snapshot is not compatible with the current public API module.
-      --   For instance, the snapshot was created using the simple API, but was opened using the full API.
-      ErrSnapshotWrongTableType
-        !SnapshotName
-        -- | Expected type
-        !SnapshotTableType
-        -- | Actual type
-        !SnapshotTableType
-    | -- | The named snapshot is not compatible with the given label.
+    = -- | The named snapshot is not compatible with the given label.
       ErrSnapshotWrongLabel
         !SnapshotName
         -- | Expected label
@@ -1292,7 +1281,6 @@ data SnapshotNotCompatibleError
   -> Session IO h
   -> SnapshotName
   -> SnapshotLabel
-  -> SnapshotTableType
   -> ResolveSerialisedValue
   -> IO (Table IO h) #-}
 -- |  See 'Database.LSMTree.openTableFromSnapshot'.
@@ -1302,10 +1290,9 @@ openTableFromSnapshot ::
   -> Session m h
   -> SnapshotName
   -> SnapshotLabel -- ^ Expected label
-  -> SnapshotTableType -- ^ Expected table type
   -> ResolveSerialisedValue
   -> m (Table m h)
-openTableFromSnapshot policyOveride sesh snap label tableType resolve =
+openTableFromSnapshot policyOveride sesh snap label resolve =
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
     traceWith (sessionTracer sesh) $ TraceOpenTableFromSnapshot snap policyOveride
     withOpenSession sesh $ \seshEnv -> do
@@ -1324,11 +1311,8 @@ openTableFromSnapshot policyOveride sesh snap label tableType resolve =
 
         snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath
 
-        let SnapshotMetaData label' tableType' conf snapWriteBuffer snapLevels mTreeOpt
+        let SnapshotMetaData label' conf snapWriteBuffer snapLevels mTreeOpt
               = overrideDiskCachePolicy policyOveride snapMetaData
-
-        unless (tableType == tableType') $
-          throwIO (ErrSnapshotWrongTableType snap tableType tableType')
 
         unless (label == label') $
           throwIO (ErrSnapshotWrongLabel snap label label')

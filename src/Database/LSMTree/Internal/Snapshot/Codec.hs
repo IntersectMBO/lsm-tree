@@ -215,10 +215,9 @@ instance Decode SnapshotVersion where
 -- SnapshotMetaData
 
 instance Encode SnapshotMetaData where
-  encode (SnapshotMetaData label tableType config writeBuffer levels mergingTree) =
-         encodeListLen 6
+  encode (SnapshotMetaData label config writeBuffer levels mergingTree) =
+         encodeListLen 5
       <> encode label
-      <> encode tableType
       <> encode config
       <> encode writeBuffer
       <> encode levels
@@ -226,10 +225,9 @@ instance Encode SnapshotMetaData where
 
 instance DecodeVersioned SnapshotMetaData where
   decodeVersioned ver@V0 = do
-      _ <- decodeListLenOf 6
+      _ <- decodeListLenOf 5
       SnapshotMetaData
         <$> decodeVersioned ver
-        <*> decodeVersioned ver
         <*> decodeVersioned ver
         <*> decodeVersioned ver
         <*> decodeVersioned ver
@@ -242,20 +240,6 @@ instance Encode SnapshotLabel where
 
 instance DecodeVersioned SnapshotLabel where
   decodeVersioned V0 = SnapshotLabel <$> decodeString
-
--- TableType
-
-instance Encode SnapshotTableType where
-  encode SnapSimpleTable = encodeWord 0
-  encode SnapFullTable   = encodeWord 1
-
-instance DecodeVersioned SnapshotTableType where
-  decodeVersioned V0 = do
-      tag <- decodeWord
-      case tag of
-        0 -> pure SnapSimpleTable
-        1 -> pure SnapFullTable
-        _ -> fail ("[SnapshotTableType] Unexpected tag: " <> show tag)
 
 instance Encode SnapshotRun where
   encode SnapshotRun { snapRunNumber, snapRunCaching, snapRunIndex } =

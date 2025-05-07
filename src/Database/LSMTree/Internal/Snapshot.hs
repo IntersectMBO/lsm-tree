@@ -3,7 +3,6 @@
 module Database.LSMTree.Internal.Snapshot (
     -- * Snapshot metadata
     SnapshotLabel (..)
-  , SnapshotTableType (..)
   , SnapshotMetaData (..)
     -- * Levels snapshot format
   , SnapLevels (..)
@@ -94,16 +93,6 @@ newtype SnapshotLabel = SnapshotLabel Text
   deriving stock (Show, Eq)
   deriving newtype (NFData, IsString)
 
--- TODO: revisit if we need three table types.
-data SnapshotTableType
-  = SnapSimpleTable
-  | SnapFullTable
-  deriving stock (Eq, Show)
-
-instance NFData SnapshotTableType where
-  rnf SnapSimpleTable = ()
-  rnf SnapFullTable   = ()
-
 data SnapshotMetaData = SnapshotMetaData {
     -- | See 'SnapshotLabel'.
     --
@@ -111,24 +100,22 @@ data SnapshotMetaData = SnapshotMetaData {
     -- type information, but the file name of snapshot metadata is not guarded
     -- by a checksum, whereas the contents of the file are. Therefore using the
     -- 'SnapshotLabel' is safer.
-    snapMetaLabel     :: !SnapshotLabel
-    -- | Whether a table is simple or full-featured.
-  , snapMetaTableType :: !SnapshotTableType
+    snapMetaLabel   :: !SnapshotLabel
     -- | The 'TableConfig' for the snapshotted table.
-  , snapMetaConfig    :: !TableConfig
+  , snapMetaConfig  :: !TableConfig
     -- | The write buffer.
-  , snapWriteBuffer   :: !RunNumber
+  , snapWriteBuffer :: !RunNumber
     -- | The shape of the levels of the LSM tree.
-  , snapMetaLevels    :: !(SnapLevels SnapshotRun)
+  , snapMetaLevels  :: !(SnapLevels SnapshotRun)
     -- | The state of tree merging of the LSM tree.
-  , snapMergingTree   :: !(Maybe (SnapMergingTree SnapshotRun))
+  , snapMergingTree :: !(Maybe (SnapMergingTree SnapshotRun))
   }
   deriving stock Eq
 
 instance NFData SnapshotMetaData where
-  rnf (SnapshotMetaData a b c d e f) =
+  rnf (SnapshotMetaData a b c d e) =
     rnf a `seq` rnf b `seq` rnf c `seq`
-    rnf d `seq` rnf e `seq` rnf f
+    rnf d `seq` rnf e
 
 {-------------------------------------------------------------------------------
   Levels snapshot format
