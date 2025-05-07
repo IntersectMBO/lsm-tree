@@ -126,10 +126,11 @@ data Bloom a = Bloom {
 type role Bloom nominal
 
 bloomInvariant :: Bloom a -> Bool
-bloomInvariant Bloom { numBits, bitArray = BitArray.BitArray pa } =
+bloomInvariant Bloom { numBits, numHashes, bitArray = BitArray.BitArray pa } =
        numBits > 0
     && numBits <= 2^(48 :: Int)
     && ceilDiv64 numBits == sizeofPrimArray pa
+    && numHashes > 0
   where
     ceilDiv64 x = unsafeShiftR (x + 63) 6
 
