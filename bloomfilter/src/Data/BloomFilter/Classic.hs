@@ -209,9 +209,10 @@ deserialise bloomsize fill = do
 -- or a number of bits per element, and the number of elements in the filter.
 -- For example:
 --
--- * @'sizeForFPR' 1e-3 10_000@ for a Bloom filter sizes for 10,000 elements
+-- * @'sizeForFPR' 1e-3 10_000@ for a Bloom filter sized for 10,000 elements
 --   with a false positive rate of 1 in 1000
--- * @'sizeForBits' 10 10_000@ for a Bloom filter sizes for 10,000 elements
+--
+-- * @'sizeForBits' 10 10_000@ for a Bloom filter sized for 10,000 elements
 --   with 10 bits per element
 --
 -- Depending on the application it may be more important to target a fixed
