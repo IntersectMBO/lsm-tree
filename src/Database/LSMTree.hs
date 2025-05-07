@@ -685,7 +685,7 @@ member ::
   k ->
   m Bool
 member =
-  -- TODO: Technically, this does not need the 'SerialiseValue' constraint.
+  -- Technically, this does not need the 'SerialiseValue' constraint.
   (fmap (isJust . getValue) .) . lookup
 
 {- |
@@ -718,7 +718,7 @@ members ::
   Vector k ->
   m (Vector Bool)
 members =
-  -- TODO: Technically, this does not need the 'SerialiseValue' constraint.
+  -- Technically, this does not need the 'SerialiseValue' constraint.
   (fmap (fmap (isJust . getValue)) .) . lookups
 
 data LookupResult v b
