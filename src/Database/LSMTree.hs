@@ -958,10 +958,12 @@ runExample $ \session table -> do
 :}
 Found (Value "Goodbye")
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{n}{P})\).
 
 Throws the following exceptions:
 
@@ -994,10 +996,12 @@ insert table k v b =
 {- |
 Variant of 'insert' for batch insertions.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(b \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -1047,10 +1051,12 @@ runExample $ \session table -> do
 :}
 Found (Value "Goodbye Hello")
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{n}{P})\).
 
 Throws the following exceptions:
 
@@ -1090,10 +1096,12 @@ upsert table k v =
 {- |
 Variant of 'upsert' for batch insertions.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(b \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -1139,10 +1147,12 @@ runExample $ \session table -> do
 :}
 Found (Value "Hello")
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{n}{P})\).
 
 Throws the following exceptions:
 
@@ -1171,10 +1181,12 @@ delete table k =
 {- |
 Variant of 'delete' for batch deletions.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(b \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -1216,10 +1228,18 @@ instance (NFData v, NFData b) => NFData (Update v b) where
 {- |
 Update generalises 'insert', 'delete', and 'upsert'.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(\log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{n}{P})\).
+
+The following properties hold:
+
+prop> update table k (Insert v mb) = insert table k v mb
+prop> update table k Delete = delete table k
+prop> update table k (Upsert v) = upsert table k v
 
 Throws the following exceptions:
 
@@ -1227,12 +1247,6 @@ Throws the following exceptions:
     If the session is closed.
 ['TableClosedError']:
     If the table is closed.
-
-The following properties hold:
-
-prop> update table k (Insert v mb) = insert table k v mb
-prop> update table k Delete = delete table k
-prop> update table k (Upsert v) = upsert table k v
 -}
 {-# SPECIALISE
   update ::
@@ -1256,10 +1270,12 @@ update table k mv =
 {- |
 Variant of 'update' for batch updates.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
 
-['LazyLevelling']:
-    \(O(b \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'Incremental']:
+    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+['LazyLevelling'\/'OneShot']:
+    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
 
 The variable \(b\) refers to the length of the input vector.
 
