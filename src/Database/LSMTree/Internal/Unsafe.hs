@@ -1685,9 +1685,10 @@ ensureSessionsMatch (t :| ts) = do
 -------------------------------------------------------------------------------}
 
 {- |
-The amount of union debt is an upper bound on the amount of computation that
-needs to be performed before an incremental union is completed. This includes
-the cost of completing incremental unions that were part of a union's input.
+Union debt represents the amount of computation that must be performed before an incremental union is completed.
+This includes the cost of completing incremental unions that were part of a union's input.
+
+__Warning:__ The 'UnionDebt' returned by 'Database.LSMTree.remainingUnionDebt' is an /upper bound/ on the remaining union debt, not the exact union debt.
 -}
 newtype UnionDebt = UnionDebt Int
   deriving newtype (Show, Eq, Ord, Num)
@@ -1709,8 +1710,7 @@ remainingUnionDebt t = do
             pure (UnionDebt c)
 
 {- |
-The amount of union credits determines the amount of computation performed to
-incrementally complete a union.
+Union credits are passed to 'Database.LSMTree.supplyUnionCredits' to perform some amount of computation to incrementally complete a union.
 -}
 newtype UnionCredits = UnionCredits Int
   deriving newtype (Show, Eq, Ord, Num)

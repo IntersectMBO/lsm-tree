@@ -290,16 +290,10 @@ import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..),
 
 The examples in this module use the types @Key@, @Value@, and @Blob@ for keys, values and BLOBs.
 
->>>  import Control.Exception (bracket)
-
 >>> import Data.ByteString (ByteString)
-
 >>> import Data.ByteString.Short (ShortByteString)
-
 >>> import Data.Proxy (Proxy)
-
 >>> import Data.String (IsString)
-
 >>> import Data.Word (Word64)
 
 The type @Key@ is a newtype wrapper around 'Data.Word.Word64'.
@@ -307,7 +301,7 @@ The required instance of 'SerialiseKey' is derived by @GeneralisedNewtypeDerivin
 
 >>> :{
 newtype Key = Key Word64
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Ord, Show)
   deriving newtype (Num, SerialiseKey)
 :}
 
@@ -331,9 +325,9 @@ The /first/ argument of 'resolve' and 'resolveSerialised' is the /new/ value and
 >>> :{
 instance ResolveValue Value where
   resolve :: Value -> Value -> Value
-  resolve (Value new) (Value old) = Value (old <> " " <> new)
+  resolve (Value new) (Value old) = Value (new <> " " <> old)
   resolveSerialised :: Proxy Value -> RawBytes -> RawBytes -> RawBytes
-  resolveSerialised _ new old = old <> " " <> new
+  resolveSerialised _ new old = new <> " " <> old
 :}
 
 The type @Blob@ is a newtype wrapper around 'Data.ByteString.ByteString',
@@ -351,19 +345,23 @@ The examples in this module are wrapped in a call to @runExample@,
 which creates a temporary session directory and
 runs the example with access to an open 'Session' and a fresh 'Table'.
 
+>>> import           Control.Exception (bracket, bracket_, finally)
+>>> import           Data.Foldable (traverse_)
 >>> import qualified System.Directory as Dir
-
 >>> import           System.FilePath ((</>))
-
+>>> import           System.Process (getCurrentPid)
 >>> :{
 runExample :: (Session IO -> Table IO Key Value Blob -> IO a) -> IO a
 runExample action = do
   tmpDir <- Dir.getTemporaryDirectory
-  let sessionDir = tmpDir </> "doctest_Database_LSMTree"
-  Dir.createDirectoryIfMissing True sessionDir
-  LSMT.withSessionIO mempty sessionDir $ \session ->
-    LSMT.withTable session $ \table ->
-      action session table
+  pid <- getCurrentPid
+  let sessionDir = tmpDir </> "doctest_Database_LSMTree" </> show pid
+  let createSessionDir = Dir.createDirectoryIfMissing True sessionDir
+  let removeSessionDir = Dir.removeDirectoryRecursive sessionDir
+  bracket_ createSessionDir removeSessionDir $ do
+    LSMT.withSessionIO mempty sessionDir $ \session -> do
+      LSMT.withTable session $ \table ->
+        action session table
 :}
 -}
 
@@ -1028,10 +1026,10 @@ Otherwise, 'upsert' updates the value associated with the given key by combining
 >>> :{
 runExample $ \session table -> do
   LSMT.upsert table 0 "Hello"
-  LSMT.upsert table 0 "World"
+  LSMT.upsert table 0 "Goodbye"
   print =<< LSMT.lookup table 0
 :}
-Found (Value "Hello World")
+Found (Value "Goodbye Hello")
 
 __Warning:__
 Upsert deletes any BLOB previously associated with the given key.
@@ -1044,7 +1042,7 @@ runExample $ \session table -> do
     =<< traverse (LSMT.retrieveBlob session)
     =<< LSMT.lookup table 0
 :}
-Found (Value "Hello Goodbye")
+Found (Value "Goodbye Hello")
 
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
@@ -1393,6 +1391,23 @@ duplicate (Table table) =
 {- |
 Run an action with access to a table that contains the union of the entries of the given tables.
 
+>>> :{
+runExample $ \session table1 -> do
+  LSMT.insert table1 0 "Hello" Nothing
+  LSMT.withTable session $ \table2 -> do
+    LSMT.insert table2 0 "World" Nothing
+    LSMT.insert table2 1 "Goodbye" Nothing
+    LSMT.withUnion table1 table2 $ \table3 -> do
+      print =<< LSMT.lookup table3 0
+      print =<< LSMT.lookup table3 1
+    print =<< LSMT.lookup table1 0
+    print =<< LSMT.lookup table2 0
+:}
+Found (Value "Hello World")
+Found (Value "Goodbye")
+Found (Value "Hello")
+Found (Value "World")
+
 The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
@@ -1459,6 +1474,23 @@ If the given key is a member of a single input table, then the same key and valu
 Otherwise, the values for duplicate keys are combined using 'resolve' from left to right.
 If the 'resolve' function behaves like 'const', then this computes a left-biased union.
 
+>>> :{
+runExample $ \session table1 -> do
+  LSMT.insert table1 0 "Hello" Nothing
+  LSMT.withTable session $ \table2 -> do
+    LSMT.insert table2 0 "World" Nothing
+    LSMT.insert table2 1 "Goodbye" Nothing
+    bracket (LSMT.union table1 table2) LSMT.closeTable $ \table3 -> do
+      print =<< LSMT.lookup table3 0
+      print =<< LSMT.lookup table3 1
+    print =<< LSMT.lookup table1 0
+    print =<< LSMT.lookup table2 0
+:}
+Found (Value "Hello World")
+Found (Value "Goodbye")
+Found (Value "Hello")
+Found (Value "World")
+
 The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
@@ -1518,6 +1550,23 @@ unions tables = do
 
 {- |
 Run an action with access to a table that incrementally computes the union of the given tables.
+
+>>> :{
+runExample $ \session table1 -> do
+  LSMT.insert table1 0 "Hello" Nothing
+  LSMT.withTable session $ \table2 -> do
+    LSMT.insert table2 0 "World" Nothing
+    LSMT.insert table2 1 "Goodbye" Nothing
+    LSMT.withIncrementalUnion table1 table2 $ \table3 -> do
+      print =<< LSMT.lookup table3 0
+      print =<< LSMT.lookup table3 1
+    print =<< LSMT.lookup table1 0
+    print =<< LSMT.lookup table2 0
+:}
+Found (Value "Hello World")
+Found (Value "Goodbye")
+Found (Value "Hello")
+Found (Value "World")
 
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
@@ -1580,6 +1629,23 @@ withIncrementalUnions tables =
 
 {- |
 Create a table that incrementally computes the union of the given tables.
+
+>>> :{
+runExample $ \session table1 -> do
+  LSMT.insert table1 0 "Hello" Nothing
+  LSMT.withTable session $ \table2 -> do
+    LSMT.insert table2 0 "World" Nothing
+    LSMT.insert table2 1 "Goodbye" Nothing
+    bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
+      print =<< LSMT.lookup table3 0
+      print =<< LSMT.lookup table3 1
+    print =<< LSMT.lookup table1 0
+    print =<< LSMT.lookup table2 0
+:}
+Found (Value "Hello World")
+Found (Value "Goodbye")
+Found (Value "Hello")
+Found (Value "World")
 
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
@@ -1656,10 +1722,28 @@ _withInternalTables (Table (table :: Internal.Table m h) :| tables) action =
     | otherwise = throwIO $ ErrTableUnionHandleTypeMismatch 0 (typeRep $ Proxy @h) i (typeRep $ Proxy @h')
 
 {- |
-Get the amount of remaining union debt.
+Get an /upper bound/ for the amount of remaining union debt.
 This includes the union debt of any table that was part of the union's input.
 
+>>> :{
+runExample $ \session table1 -> do
+  LSMT.insert table1 0 "Hello" Nothing
+  LSMT.withTable session $ \table2 -> do
+    LSMT.insert table2 0 "World" Nothing
+    LSMT.insert table2 1 "Goodbye" Nothing
+    bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
+      putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
+:}
+UnionDebt: 4
+
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['TableClosedError']:
+    If the table is closed.
 -}
 {-# SPECIALISE
   remainingUnionDebt ::
@@ -1678,10 +1762,32 @@ remainingUnionDebt (Table table) =
 Supply the given amount of union credits.
 
 This reduces the union debt by /at least/ the number of supplied union credits.
-It is therefore advisable to query 'remainingUnionDebt' every once in a while to see what the current debt is.
+It is therefore advisable to query 'remainingUnionDebt' every once in a while to get an upper bound on the current debt.
 
 This function returns any surplus of union credits as /leftover/ credits when a union has finished.
 In particular, if the returned number of credits is positive, then the union is finished.
+
+>>> :{
+runExample $ \session table1 -> do
+  LSMT.insert table1 0 "Hello" Nothing
+  LSMT.withTable session $ \table2 -> do
+    LSMT.insert table2 0 "World" Nothing
+    LSMT.insert table2 1 "Goodbye" Nothing
+    bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
+      putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
+      putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 2
+      putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
+      putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 4
+:}
+UnionDebt: 4
+Leftovers: 0
+UnionDebt: 2
+Leftovers: 3
+
+__NOTE:__
+The 'remainingUnionDebt' functions gets an /upper bound/ for the amount of remaning union debt.
+In the example above, the second call to 'remainingUnionDebt' reports @2@, but the union debt is @1@.
+Therefore, the second call to 'supplyUnionCredits' returns more leftovers than expected.
 
 The worst-case disk I\/O complexity of this operation is \(O(b)\),
 where the variable \(b\) refers to the amount of credits supplied.
@@ -1718,6 +1824,15 @@ supplyUnionCredits (Table table :: Table m k v b) credits =
 
 {- |
 Retrieve the blob value from a blob reference.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" (Just "World")
+  print
+    =<< traverse (LSMT.retrieveBlob session)
+    =<< LSMT.lookup table 0
+:}
+FoundWithBlob (Value "Hello") (Blob "World")
 
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
@@ -1793,6 +1908,17 @@ retrieveBlobs (Session (session :: Internal.Session m h)) blobRefs = do
 {- |
 Run an action with access to a cursor.
 
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.withCursor table $ \cursor -> do
+    traverse_ print
+      =<< LSMT.take 32 cursor
+:}
+Entry (Key 0) (Value "Hello")
+Entry (Key 1) (Value "World")
+
 The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
@@ -1825,6 +1951,16 @@ withCursor (Table table) action =
 
 {- |
 Variant of 'withCursor' that starts at a given key.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.withCursorAtOffset table 1 $ \cursor -> do
+    traverse_ print
+      =<< LSMT.take 32 cursor
+:}
+Entry (Key 1) (Value "World")
 -}
 {-# SPECIALISE
   withCursorAtOffset ::
@@ -1847,6 +1983,17 @@ withCursorAtOffset (Table table) offsetKey action =
 
 {- |
 Create a cursor for the given table.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  bracket (LSMT.newCursor table) LSMT.closeCursor $ \cursor -> do
+    traverse_ print
+      =<< LSMT.take 32 cursor
+:}
+Entry (Key 0) (Value "Hello")
+Entry (Key 1) (Value "World")
 
 The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
 
@@ -1876,6 +2023,16 @@ newCursor (Table table) =
 
 {- |
 Variant of 'newCursor' that starts at a given key.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  bracket (LSMT.newCursorAtOffset table 1) LSMT.closeCursor $ \cursor -> do
+    traverse_ print
+      =<< LSMT.take 32 cursor
+:}
+Entry (Key 1) (Value "World")
 -}
 {-# SPECIALISE
   newCursorAtOffset ::
@@ -1918,6 +2075,19 @@ closeCursor (Cursor cursor) =
 {- |
 Read the next table entry from the cursor.
 
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.withCursor table $ \cursor -> do
+    print =<< LSMT.next cursor
+    print =<< LSMT.next cursor
+    print =<< LSMT.next cursor
+:}
+Just (Entry (Key 0) (Value "Hello"))
+Just (Entry (Key 1) (Value "World"))
+Nothing
+
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 Throws the following exceptions:
@@ -1946,6 +2116,17 @@ next iterator = do
 
 {- |
 Read the next batch of table entries from the cursor.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.withCursor table $ \cursor -> do
+    traverse_ print
+      =<< LSMT.take 32 cursor
+:}
+Entry (Key 0) (Value "Hello")
+Entry (Key 1) (Value "World")
 
 The worst-case disk I\/O complexity of this operation is \(O(b)\),
 where the variable \(b\) refers to the length of the /output/ vector,
@@ -1985,6 +2166,16 @@ take n (Cursor cursor :: Cursor m k v b) =
 
 {- |
 Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
+
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.withCursor table $ \cursor -> do
+    traverse_ print
+      =<< LSMT.takeWhile 32 (<1) cursor
+:}
+Entry (Key 0) (Value "Hello")
 
 The worst-case disk I\/O complexity of this operation is \(O(b)\),
 where the variable \(b\) refers to the length of the /output/ vector,
@@ -2040,6 +2231,13 @@ Saving a snapshot /does not/ close the table.
 Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
 However, it is not so cheap that one should use it after every operation.
 
+>>> :{
+runExample $ \session table -> do
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+:}
+
 The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -2071,6 +2269,21 @@ saveSnapshot snapName snapLabel (Table table) =
 
 {- |
 Run an action with access to a table from a snapshot.
+
+>>> :{
+runExample $ \session table -> do
+  -- Save snapshot
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+  -- Open snapshot
+  LSMT.withTableFromSnapshot @_ @Key @Value @Blob session "example" "Key Value Blob" $ \table' -> do
+      LSMT.withCursor table' $ \cursor ->
+        traverse_ print
+          =<< LSMT.take 32 cursor
+:}
+Entry (Key 0) (Value "Hello")
+Entry (Key 1) (Value "World")
 
 The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
@@ -2142,6 +2355,23 @@ withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
 {- |
 Open a table from a named snapshot.
 
+>>> :{
+runExample $ \session table -> do
+  -- Save snapshot
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+  -- Open snapshot
+  bracket
+    (LSMT.openTableFromSnapshot @_ @Key @Value @Blob session "example" "Key Value Blob")
+    LSMT.closeTable $ \table' -> do
+      LSMT.withCursor table' $ \cursor ->
+        traverse_ print
+          =<< LSMT.take 32 cursor
+:}
+Entry (Key 0) (Value "Hello")
+Entry (Key 1) (Value "World")
+
 The worst-case disk I\/O complexity of this operation is \(O(n)\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
@@ -2207,6 +2437,16 @@ openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLab
 {- |
 Delete the named snapshot.
 
+>>> :{
+runExample $ \session table -> do
+  -- Save snapshot
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+  -- Delete snapshot
+  LSMT.deleteSnapshot session "example"
+:}
+
 The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
@@ -2234,6 +2474,19 @@ deleteSnapshot (Session session) =
 {- |
 Check if the named snapshot exists.
 
+>>> :{
+runExample $ \session table -> do
+  -- Save snapshot
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+  -- Check snapshots
+  print =<< doesSnapshotExist session "example"
+  print =<< doesSnapshotExist session "this_snapshot_does_not_exist"
+:}
+True
+False
+
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
 Throws the following exceptions:
@@ -2258,6 +2511,18 @@ doesSnapshotExist (Session session) =
 
 {- |
 List the names of all snapshots.
+
+>>> :{
+runExample $ \session table -> do
+  -- Save snapshot
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+  -- List snapshots
+  traverse_ print
+    =<< listSnapshots session
+:}
+"example"
 
 The worst-case disk I\/O complexity of this operation is \(O(s)\),
 where \(s\) refers to the number of snapshots in the session.

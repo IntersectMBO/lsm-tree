@@ -32,7 +32,8 @@ cabal-docspec \
     -XTypeFamilies \
     -XNumericUnderscores \
     -XInstanceSigs \
+    --extra-package blockio \
+    --extra-package blockio:sim \
     --extra-package directory \
     --extra-package lsm-tree:prototypes \
-    --extra-package blockio \
-    --extra-package blockio:sim
+    --extra-package process
