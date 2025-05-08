@@ -126,7 +126,7 @@ instance Arbitrary2 Entry where
   liftArbitrary2 genVal genBlob = frequency
     [ (5, Insert <$> genVal)
     , (1, InsertWithBlob <$> genVal <*> genBlob)
-    , (1, Mupdate <$> genVal)
+    , (1, Upsert <$> genVal)
     , (1, pure Delete)
     ]
 
@@ -135,7 +135,7 @@ instance Arbitrary2 Entry where
     InsertWithBlob v b -> [Delete, Insert v]
                        ++ fmap (uncurry InsertWithBlob)
                             (liftShrink2 shrinkVal shrinkBlob (v, b))
-    Mupdate v          -> Delete : Insert v : (Mupdate <$> shrinkVal v)
+    Upsert v          -> Delete : Insert v : (Upsert <$> shrinkVal v)
     Delete             -> []
 
 {-------------------------------------------------------------------------------

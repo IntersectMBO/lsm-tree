@@ -148,7 +148,7 @@ prop_lookupTree hfs hbio keys mtd = do
     toLookupResult (Just e) = case e of
       Entry.Insert v           -> Just (v, Nothing)
       Entry.InsertWithBlob v b -> Just (v, Just b)
-      Entry.Mupdate v          -> Just (v, Nothing)
+      Entry.Upsert v           -> Just (v, Nothing)
       Entry.Delete             -> Nothing
 
     lookupsIO reg mgr tree =

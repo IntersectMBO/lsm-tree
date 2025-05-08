@@ -221,7 +221,7 @@ toEntry op =
         Entry.InsertWithBlob (toSerialisedValue v) (toBlobSpan b)
 
       Mupsert v ->
-        Entry.Mupdate (toSerialisedValue v)
+        Entry.Upsert (toSerialisedValue v)
 
       Delete ->
         Entry.Delete
@@ -237,7 +237,7 @@ toEntryPrefix op prefixlen =
                              (toBlobSpan b)
 
       Mupsert v ->
-        Entry.Mupdate (toSerialisedValue (takeValue prefixlen v))
+        Entry.Upsert (toSerialisedValue (takeValue prefixlen v))
 
       Delete ->
         Entry.Delete
@@ -253,7 +253,7 @@ fromEntry e =
       Entry.InsertWithBlob v b ->
         Insert (fromSerialisedValue v) (Just (fromBlobSpan b))
 
-      Entry.Mupdate v ->
+      Entry.Upsert v ->
         Mupsert (fromSerialisedValue v)
 
       Entry.Delete ->
@@ -272,7 +272,7 @@ fromEntryPrefix e suffix overflow =
         Insert (fromSerialisedValuePrefix v suffix overflow)
                (Just (fromBlobSpan b))
 
-      Entry.Mupdate v ->
+      Entry.Upsert v ->
         Mupsert (fromSerialisedValuePrefix v suffix overflow)
 
       Entry.Delete ->

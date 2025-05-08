@@ -64,10 +64,10 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
             handleResolved key entry Readers.Drained
           Readers.HasMore -> do
             case entry of
-              Entry.Mupdate v ->
+              Entry.Upsert v ->
                 handleMupdate key v
               _ -> do
-                -- Anything but Mupdate supersedes all previous entries of
+                -- Anything but Upsert supersedes all previous entries of
                 -- the same key, so we can simply drop them and are done.
                 hasMore' <- dropRemaining key
                 handleResolved key entry hasMore'
@@ -86,14 +86,14 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
         if nextKey /= key
           then
             -- No more entries for same key, done.
-            handleResolved key (Entry.Mupdate v) Readers.HasMore
+            handleResolved key (Entry.Upsert v) Readers.HasMore
           else do
             (_, nextEntry, hasMore) <- Readers.pop resolve readers
-            let resolved = Entry.combine resolve (Entry.Mupdate v)
+            let resolved = Entry.combine resolve (Entry.Upsert v)
                              (Reader.toFullEntry nextEntry)
             case hasMore of
               Readers.HasMore -> case resolved of
-                Entry.Mupdate v' ->
+                Entry.Upsert v' ->
                   -- Still a mupsert, keep resolving!
                   handleMupdate key v'
                 _ -> do
@@ -127,5 +127,5 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
     toResult key = \case
         Entry.Insert v -> Just $ fromEntry key v Nothing
         Entry.InsertWithBlob v b -> Just $ fromEntry key v (Just (BlobRef.rawToWeakBlobRef b))
-        Entry.Mupdate v -> Just $ fromEntry key v Nothing
+        Entry.Upsert v -> Just $ fromEntry key v Nothing
         Entry.Delete -> Nothing

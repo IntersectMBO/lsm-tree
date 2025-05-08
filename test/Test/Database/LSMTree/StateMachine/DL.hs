@@ -65,7 +65,7 @@ prop_example =
 dl_example :: DL (Lockstep (ModelState R.Table)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
-    var3 <- action $ Action Nothing $ New (PrettyProxy @((Key, Value, Blob))) (TableConfig {
+    var3 <- action $ Action Nothing $ NewTableWith (PrettyProxy @((Key, Value, Blob))) (TableConfig {
           confMergePolicy = LazyLevelling
         , confSizeRatio = Four
         , confWriteBufferAlloc = AllocNumEntries 4

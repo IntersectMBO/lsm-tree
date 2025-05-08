@@ -66,14 +66,14 @@ instance Class.IsTable Table where
     type BlobRef Table = BlobRef
     type Cursor Table = Cursor
 
-    new s x = Table s <$> runInOpenSession s (Model.new x)
-    close (Table s t) = runInOpenSession s (Model.close t)
+    newTableWith x s = Table s <$> runInOpenSession s (Model.new x)
+    closeTable (Table s t) = runInOpenSession s (Model.close t)
     lookups (Table s t) x1 = fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.lookups x1 t)
     updates (Table s t) x1 = runInOpenSession s (Model.updates Model.getResolve x1 t)
     inserts (Table s t) x1 = runInOpenSession s (Model.inserts Model.getResolve x1 t)
     deletes (Table s t) x1 = runInOpenSession s (Model.deletes Model.getResolve x1 t)
-    mupserts (Table s t) x1 = runInOpenSession s (Model.mupserts Model.getResolve x1 t)
+    upserts (Table s t) x1 = runInOpenSession s (Model.upserts Model.getResolve x1 t)
 
     rangeLookup (Table s t) x1 = fmap (fmap (BlobRef s)) <$>
       runInOpenSession s (Model.rangeLookup x1 t)

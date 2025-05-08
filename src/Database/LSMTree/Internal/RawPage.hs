@@ -287,7 +287,7 @@ rawPageEntryAt page i =
            else InsertWithBlob (rawPageValueAt page i)
                                (rawPageBlobSpanIndex page
                                   (rawPageCalculateBlobIndex page i))
-      1 -> Mupdate (rawPageValueAt page i)
+      1 -> Upsert (rawPageValueAt page i)
       _ -> Delete
 
 -- | Single key page case
@@ -299,7 +299,7 @@ rawPageEntry1 page =
            else InsertWithBlob (rawPageSingleValuePrefix page)
                                (rawPageBlobSpanIndex page
                                   (rawPageCalculateBlobIndex page 0))
-      1 -> Mupdate (rawPageSingleValuePrefix page)
+      1 -> Upsert (rawPageSingleValuePrefix page)
       _ -> Delete
 
 -- | Calculate the number of overflow pages that are expected to follow this

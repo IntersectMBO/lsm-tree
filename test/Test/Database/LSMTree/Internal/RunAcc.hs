@@ -128,7 +128,7 @@ fromProtoKOp (k, op) =
   where e = case op of
               Proto.Insert  v Nothing   -> Insert v
               Proto.Insert  v (Just br) -> InsertWithBlob v br
-              Proto.Mupsert v           -> Mupdate v
+              Proto.Mupsert v           -> Upsert v
               Proto.Delete              -> Delete
 
 fromProtoKey :: Proto.Key -> SerialisedKey

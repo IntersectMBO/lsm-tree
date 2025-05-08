@@ -175,7 +175,7 @@ tests = testGroup "Database.LSMTree.Internal.RawPage"
                                            SerialisedValue "\x54\x55"]
 
         rawPageLookup page (SerialisedKey "\x52\x53")
-          @=? LookupEntry (Entry.Mupdate (SerialisedValue "\x54\x55"))
+          @=? LookupEntry (Entry.Upsert (SerialisedValue "\x54\x55"))
         rawPageLookup page (SerialisedKey "\x99\x99")
           @=? LookupEntryNotPresent
 
