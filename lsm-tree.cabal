@@ -869,14 +869,12 @@ library prototypes
     ScheduledMerges
 
   build-depends:
-    , base              <5
+    , base           <5
     , binary
     , bytestring
     , containers
     , contra-tracer
     , QuickCheck
-    , tasty
-    , tasty-quickcheck
     , transformers
 
 test-suite prototypes-test
@@ -885,11 +883,13 @@ test-suite prototypes-test
   hs-source-dirs: test-prototypes
   main-is:        Main.hs
   other-modules:
+    Test.FormatPage
     Test.ScheduledMerges
     Test.ScheduledMergesQLS
 
   build-depends:
-    , base
+    , base                 <5
+    , bytestring
     , constraints
     , containers
     , contra-tracer
