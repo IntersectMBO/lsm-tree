@@ -10,6 +10,7 @@ module Test.Database.LSMTree.Internal.Snapshot.Codec.Golden (
 import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Monad (when)
 import qualified Data.ByteString.Lazy as BSL (writeFile)
+import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config (BloomFilterAlloc (..),
@@ -29,15 +30,19 @@ import qualified System.FS.API as FS
 import           System.FS.API.Types (FsPath, MountPoint (..), fsToFilePath,
                      mkFsPath, (<.>))
 import           System.FS.IO (HandleIO, ioHasFS)
+import           Test.QuickCheck (Property, counterexample, ioProperty, once,
+                     (.&&.))
 import qualified Test.Tasty as Tasty
 import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Tasty.Golden as Au
+import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
     handleOutputFiles $
     testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" $
          concat (forallSnapshotTypes snapshotCodecGoldenTest)
+      ++ [testProperty "prop_noUnexpectedOrMissingGoldenFiles" prop_noUnexpectedOrMissingGoldenFiles]
 
 {-------------------------------------------------------------------------------
   Configuration
@@ -100,6 +105,29 @@ snapshotCodecGoldenTest proxy = [
             BSL.writeFile snapshotHsPath . toLazyByteString $ encode datum
 
       in  Au.goldenVsFile name snapshotAuPath snapshotHsPath outputAction
+
+-- | Check that are no missing or unexpected files in the output directory
+prop_noUnexpectedOrMissingGoldenFiles :: Property
+prop_noUnexpectedOrMissingGoldenFiles = once $ ioProperty $ do
+    let expectedFiles = Set.fromList $ concat $ forallSnapshotTypes filePathsGolden
+
+
+    let hfs = ioHasFS goldenDataMountPoint
+    actualDirectoryEntries <- FS.listDirectory hfs (FS.mkFsPath [])
+
+    let missingFiles = expectedFiles Set.\\ actualDirectoryEntries
+        propMissing =
+            counterexample ("Missing expected files: " ++ show missingFiles)
+          $ counterexample ("Run the golden tests to regenerate the missing files")
+          $ (Set.null missingFiles)
+
+    let unexpectedFiles = actualDirectoryEntries Set.\\ expectedFiles
+        propUnexpected =
+            counterexample ("Found unexpected files: " ++ show unexpectedFiles)
+          $ counterexample ("Delete the unexpected files manually from " ++ goldenDataFilePath)
+            (Set.null unexpectedFiles)
+
+    pure $ propMissing .&&. propUnexpected
 
 {-------------------------------------------------------------------------------
   Mapping
@@ -218,6 +246,15 @@ nameGolden p ann = map spaceToUnderscore (show $ typeRep p) ++ "." ++ ann
 spaceToUnderscore :: Char -> Char
 spaceToUnderscore ' ' = '_'
 spaceToUnderscore c   = c
+
+filePathsGolden :: (EnumGolden a, Typeable a) => Proxy a -> [String]
+filePathsGolden p = [
+      filePathGolden p annotation
+    | (annotation, _) <- enumGoldenAnnotated' p
+    ]
+
+filePathGolden :: Typeable a => Proxy a -> String -> String
+filePathGolden p ann = nameGolden p ann ++ ".snapshot.golden"
 
 {-------------------------------------------------------------------------------
   Enumeration class: instances
