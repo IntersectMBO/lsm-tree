@@ -16,7 +16,6 @@ module Database.LSMTree.Internal.Config (
   , WriteBufferAlloc (..)
     -- * Bloom filter allocation
   , BloomFilterAlloc (..)
-  , defaultBloomFilterAlloc
   , bloomFilterAllocForLevel
     -- * Fence pointer index
   , FencePointerIndexType (..)
@@ -27,7 +26,6 @@ module Database.LSMTree.Internal.Config (
   , diskCachePolicyForLevel
     -- * Merge schedule
   , MergeSchedule (..)
-  , defaultMergeSchedule
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -49,26 +47,36 @@ newtype LevelNo = LevelNo Int
   Table configuration
 -------------------------------------------------------------------------------}
 
--- | Table configuration parameters, including LSM tree tuning parameters.
---
--- Some config options are fixed (for now):
---
--- * Merge policy: Tiering
---
--- * Size ratio: 4
+{- |
+A collection of configuration parameters for tables, which can be used to tune the performance of the table.
+
+Each parameter is associated with its own type.
+Detailed discussion of the use of each parameter can be found in the documentation for its associated type.
+For an overview, see the [Performance](../#performance) section in the package description.
+
+The 'defaultTableConfig' defines reasonable defaults for all parameters.
+-}
 data TableConfig = TableConfig {
+    -- | The merge policy determines how the table manages its data,
+    --   which affects the disk I\/O cost of some operations.
     confMergePolicy       :: !MergePolicy
-    -- Size ratio between the capacities of adjacent levels.
+    -- | The size ratio determines how the table manages its data,
+    --   and is the parameter \(T\) in the disk I\/O cost of operations.
   , confSizeRatio         :: !SizeRatio
-    -- | Total number of bytes that the write buffer can use.
-    --
-    -- The maximum is 4GiB, which should be more than enough for realistic
-    -- applications.
+    -- | The write buffer allocation strategy determines the maximum size of the in-memory write buffer,
+    --   and is the parameter \(B\) in the disk I\/O cost of operations.
+    --   Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
+    -- | The Bloom filter allocation strategy determines the number of bits per physical entry allocated for the Bloom filters.
   , confBloomFilterAlloc  :: !BloomFilterAlloc
+    -- | The fence pointer index type determines the type of indexes,
+    --   which affects the in-memory size of the table and may constrain the table keys.
   , confFencePointerIndex :: !FencePointerIndexType
-    -- | The policy for caching key\/value data from disk in memory.
+    -- | The disk cache policy determines the policy for caching data from disk in memory,
+    --   which may affect the performance of lookup operations.
   , confDiskCachePolicy   :: !DiskCachePolicy
+    -- | The merge schedule determines how the table manages its data,
+    --   which affects the disk I\/O cost of some operations.
   , confMergeSchedule     :: !MergeSchedule
   }
   deriving stock (Show, Eq)
@@ -77,10 +85,21 @@ instance NFData TableConfig where
   rnf (TableConfig a b c d e f g) =
       rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f `seq` rnf g
 
--- | A reasonable default 'TableConfig'.
+-- | The 'defaultTableConfig' defines reasonable defaults for all 'TableConfig' parameters.
 --
--- This uses a write buffer with up to 20,000 elements and a generous amount of
--- memory for Bloom filters (FPR of 1%).
+-- >>> :{
+-- defaultTableConfig ==
+--     TableConfig
+--       { confMergePolicy       = LazyLevelling
+--       , confSizeRatio         = Four
+--       , confWriteBufferAlloc  = AllocNumEntries 20_000
+--       , confBloomFilterAlloc  = AllocFixed 10
+--       , confFencePointerIndex = OrdinaryIndex
+--       , confDiskCachePolicy   = DiskCacheAll
+--       , confMergeSchedule     = Incremental
+--       }
+-- :}
+-- True
 --
 defaultTableConfig :: TableConfig
 defaultTableConfig =
@@ -88,10 +107,10 @@ defaultTableConfig =
       { confMergePolicy       = LazyLevelling
       , confSizeRatio         = Four
       , confWriteBufferAlloc  = AllocNumEntries 20_000
-      , confBloomFilterAlloc  = defaultBloomFilterAlloc
+      , confBloomFilterAlloc  = AllocFixed 10
       , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
-      , confMergeSchedule     = defaultMergeSchedule
+      , confMergeSchedule     = Incremental
       }
 
 data RunLevelNo = RegularLevel LevelNo | UnionLevel
@@ -172,9 +191,6 @@ data BloomFilterAlloc =
 instance NFData BloomFilterAlloc where
   rnf (AllocFixed n)        = rnf n
   rnf (AllocRequestFPR fpr) = rnf fpr
-
-defaultBloomFilterAlloc :: BloomFilterAlloc
-defaultBloomFilterAlloc = AllocFixed 10
 
 bloomFilterAllocForLevel :: TableConfig -> RunLevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel conf _levelNo =
@@ -317,10 +333,3 @@ data MergeSchedule =
 instance NFData MergeSchedule where
   rnf OneShot     = ()
   rnf Incremental = ()
-
--- | The default 'MergeSchedule'.
---
--- >>> defaultMergeSchedule
--- Incremental
-defaultMergeSchedule :: MergeSchedule
-defaultMergeSchedule = Incremental

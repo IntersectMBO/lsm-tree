@@ -119,11 +119,11 @@ constants:
 - The variable *b* usually refers to the size of a batch of
   inputs/outputs. Its precise meaning is explained for each occurrence.
 
-- The constant *B* refers to the size of the write buffer, which is a
-  configuration parameter.
+- The constant *B* refers to the size of the write buffer, which is
+  determined by the `TableConfig` parameter `confWriteBufferAlloc`.
 
-- The constant *T* refers to the size ratio of the table, which is a
-  configuration parameter.
+- The constant *T* refers to the size ratio of the table, which is
+  determined by the `TableConfig` parameter `confSizeRatio`.
 
 - The constant *P* refers to the the average number of key–value pairs
   that fit in a page of memory.
@@ -134,7 +134,9 @@ The following table summarises the cost of the operations on LSM-trees
 measured in the number of disk I/O operations. If the cost depends on
 the merge policy or merge schedule, then the table contains one entry
 for each relevant combination. Otherwise, the merge policy and/or merge
-schedule is listed as N/A.
+schedule is listed as N/A. The merge policy and merge schedule are
+determined by the `TableConfig` parameters `confMergePolicy` and
+`confMergeSchedule`.
 
 <table>
 <thead>
@@ -291,9 +293,9 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
 - The worst-case in-memory size of the write buffer is *O*(*B*).
 
   The maximum size of the write buffer on the write buffer allocation
-  strategy, which is determined by the `confWriteBufferAlloc` field of
-  `TableConfig`. Regardless of write buffer allocation strategy, the
-  size of the write buffer may never exceed 4GiB.
+  strategy, which is determined by the `TableConfig` parameter
+  `confWriteBufferAlloc`. Regardless of write buffer allocation
+  strategy, the size of the write buffer may never exceed 4GiB.
 
   `AllocNumEntries maxEntries`  
   The maximum size of the write buffer is the maximum number of entries
@@ -304,8 +306,8 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   The total in-memory size of all Bloom filters is the number of bits
   per physical entry multiplied by the number of physical entries. The
   required number of bits per physical entry is determined by the Bloom
-  filter allocation strategy, which is determined by the
-  `confBloomFilterAlloc` field of `TableConfig`.
+  filter allocation strategy, which is determined by the `TableConfig`
+  parameter `confBloomFilterAlloc`.
 
   `AllocFixed bitsPerPhysicalEntry`  
   The number of bits per physical entry is specified as
@@ -329,9 +331,9 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
 - The worst-case in-memory size of the indexes is *O*(*n*).
 
   The total in-memory size of all indexes depends on the index type,
-  which is determined by the `confFencePointerIndex` field of
-  `TableConfig`. The in-memory size of the various indexes is described
-  in reference to the size of the database in [*memory
+  which is determined by the `TableConfig` parameter
+  `confFencePointerIndex`. The in-memory size of the various indexes is
+  described in reference to the size of the database in [*memory
   pages*](https://en.wikipedia.org/wiki/Page_%28computer_memory%29 "https://en.wikipedia.org/wiki/Page_%28computer_memory%29").
 
   `OrdinaryIndex`  

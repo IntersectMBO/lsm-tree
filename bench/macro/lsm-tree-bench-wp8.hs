@@ -227,7 +227,7 @@ cmdP = O.subparser $ mconcat
 
 setupOptsP :: O.Parser SetupOpts
 setupOptsP = pure SetupOpts
-    <*> O.option O.auto (O.long "bloom-filter-alloc" <> O.value LSM.defaultBloomFilterAlloc <> O.showDefault <> O.help "Bloom filter allocation method [AllocFixed n | AllocRequestFPR d]")
+    <*> O.option O.auto (O.long "bloom-filter-alloc" <> O.value (LSM.confBloomFilterAlloc LSM.defaultTableConfig) <> O.showDefault <> O.help "Bloom filter allocation method [AllocFixed n | AllocRequestFPR d]")
 
 runOptsP :: O.Parser RunOpts
 runOptsP = pure RunOpts
