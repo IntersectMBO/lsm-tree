@@ -340,7 +340,7 @@ The examples in this module are wrapped in a call to @runExample@,
 which creates a temporary session directory and
 runs the example with access to an open 'Session' and a fresh 'Table'.
 
->>> import           Control.Exception (bracket, bracket_, finally)
+>>> import           Control.Exception (bracket, bracket_)
 >>> import           Data.Foldable (traverse_)
 >>> import qualified System.Directory as Dir
 >>> import           System.FilePath ((</>))
