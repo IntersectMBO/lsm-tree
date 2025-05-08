@@ -1,24 +1,25 @@
-{-# LANGUAGE OverloadedStrings #-}
-module Test.Database.LSMTree.Internal.Snapshot.Codec.Golden
-  (tests) where
+{-# LANGUAGE OverloadedStrings    #-}
+{-# LANGUAGE UndecidableInstances #-}
+
+module Test.Database.LSMTree.Internal.Snapshot.Codec.Golden (
+    tests
+  , EnumGolden (..)
+  , Annotation
+  ) where
 
 import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Monad (when)
-import           Data.Bifunctor (second)
 import qualified Data.ByteString.Lazy as BSL (writeFile)
-import           Data.Foldable (fold)
-import qualified Data.List as List
-import           Data.Vector (Vector)
+import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config (BloomFilterAlloc (..),
                      DiskCachePolicy (..), FencePointerIndexType (..),
                      MergePolicy (..), MergeSchedule (..), SizeRatio (..),
-                     TableConfig (..), WriteBufferAlloc (..),
-                     defaultTableConfig)
+                     TableConfig (..), WriteBufferAlloc (..))
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),
                      NominalDebt (..))
-import qualified Database.LSMTree.Internal.MergingRun as MR
+import           Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
                      RunBloomFilterAlloc (..), RunDataCaching (..))
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
@@ -29,321 +30,453 @@ import           System.FS.API.Types (FsPath, MountPoint (..), fsToFilePath,
                      mkFsPath, (<.>))
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified Test.Tasty as Tasty
-import           Test.Tasty (TestName, TestTree, testGroup)
+import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Tasty.Golden as Au
 
--- | Compare the serialization of snapshot metadata with a known reference file.
 tests :: TestTree
-tests =  handleOutputFiles . testGroup
-    "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" $
-    [ testCodecSnapshotLabel
-    , testCodecTableConfig
-    , testCodecSnapLevels
-    , testCodecMergingTree
-    ]
+tests =
+    handleOutputFiles $
+    testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" $
+         concat (forallSnapshotTypes snapshotCodecGoldenTest)
 
--- | The mount point is defined as the location of the golden file data directory
--- relative to the project root.
+{-------------------------------------------------------------------------------
+  Configuration
+-------------------------------------------------------------------------------}
+
+-- | The location of the golden file data directory relative to the project root.
+goldenDataFilePath :: FilePath
+goldenDataFilePath = "test/golden-file-data/snapshot-codec"
+
 goldenDataMountPoint :: MountPoint
-goldenDataMountPoint = MountPoint "test/golden-file-data/snapshot-codec"
+goldenDataMountPoint = MountPoint goldenDataFilePath
 
 -- | Delete output files on test-case success.
 -- Change the option here if this is undesirable.
 handleOutputFiles :: TestTree -> TestTree
 handleOutputFiles = Tasty.localOption Au.OnPass
 
--- | Internally, the function will infer the correct filepath names.
-snapshotCodecTest ::
-     String -- ^ Name of the test
-  -> SnapshotMetaData -- ^ Data to be serialized
-  -> TestTree
-snapshotCodecTest name datum =
-  let -- Various paths
-      --
-      -- There are three paths for both the checksum and the snapshot files:
-      --   1. The filepath of type @FsPath@ to which data is written.
-      --   2. The filepath of type @FilePath@ from which data is read.
-      --   3. The filepath of type @FilePath@ against which the data is compared.
-      --
-      -- These file types' bindings have the following infix annotations, respectively:
-      --   1. (Fs) for FsPath
-      --   2. (Hs) for "Haskell" path
-      --   3. (Au) for "Golden file" path
-      snapshotFsPath = mkFsPath [name] <.> "snapshot"
-      snapshotHsPath = fsToFilePath goldenDataMountPoint snapshotFsPath
-      snapshotAuPath = snapshotHsPath <> ".golden"
+{-------------------------------------------------------------------------------
+  Golden tests
+-------------------------------------------------------------------------------}
 
-      -- IO actions
-      runnerIO :: FS.HasFS IO HandleIO
-      runnerIO = ioHasFS goldenDataMountPoint
-      removeIfExists :: FsPath -> IO ()
-      removeIfExists fp =
-        FS.doesFileExist runnerIO fp >>= (`when` (FS.removeFile runnerIO fp))
-      outputAction :: IO ()
-      outputAction = do
-        -- Ensure that if the output file already exists, we remove it and
-        -- re-write out the serialized data. This ensures that there are no
-        -- false-positives, false-negatives, or irrelevant I/O exceptions.
-        removeIfExists snapshotFsPath
-        BSL.writeFile snapshotHsPath . toLazyByteString $ encode datum
+-- | Compare the serialization of snapshot metadata with a known reference file.
+snapshotCodecGoldenTest ::
+     forall a. (Typeable a, EnumGolden a, Encode a)
+  => Proxy a
+  -> [TestTree]
+snapshotCodecGoldenTest proxy = [
+      go (nameGolden proxy annotation) datum
+    | (annotation, datum) <- enumGoldenAnnotated' proxy
+    ]
+  where
+    go name datum =
+      let -- Various paths
+          --
+          -- There are three paths for both the checksum and the snapshot files:
+          --   1. The filepath of type @FsPath@ to which data is written.
+          --   2. The filepath of type @FilePath@ from which data is read.
+          --   3. The filepath of type @FilePath@ against which the data is compared.
+          --
+          -- These file types' bindings have the following infix annotations, respectively:
+          --   1. (Fs) for FsPath
+          --   2. (Hs) for "Haskell" path
+          --   3. (Au) for "Golden file" path
+          snapshotFsPath = mkFsPath [name] <.> "snapshot"
+          snapshotHsPath = fsToFilePath goldenDataMountPoint snapshotFsPath
+          snapshotAuPath = snapshotHsPath <> ".golden"
 
-  in  Au.goldenVsFile name snapshotAuPath snapshotHsPath outputAction
+          -- IO actions
+          runnerIO :: FS.HasFS IO HandleIO
+          runnerIO = ioHasFS goldenDataMountPoint
+          removeIfExists :: FsPath -> IO ()
+          removeIfExists fp =
+            FS.doesFileExist runnerIO fp >>= (`when` (FS.removeFile runnerIO fp))
+          outputAction :: IO ()
+          outputAction = do
+            -- Ensure that if the output file already exists, we remove it and
+            -- re-write out the serialized data. This ensures that there are no
+            -- false-positives, false-negatives, or irrelevant I/O exceptions.
+            removeIfExists snapshotFsPath
+            BSL.writeFile snapshotHsPath . toLazyByteString $ encode datum
 
-testCodecSnapshotLabel :: TestTree
-testCodecSnapshotLabel =
-  let assembler (tagA, valA) =
-        let (tagC, valC) = basicTableConfig
-            valD = basicRunNumber
-            (tagE, valE) = basicSnapLevels
-            (tagF, valF) = basicSnapMergingTree
-        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
-  in  testCodecBuilder "SnapshotLabels" $ assembler <$> enumerateSnapshotLabel
+      in  Au.goldenVsFile name snapshotAuPath snapshotHsPath outputAction
 
-testCodecTableConfig :: TestTree
-testCodecTableConfig =
-  let assembler (tagC, valC) =
-        let (tagA, valA) = basicSnapshotLabel
-            valD = basicRunNumber
-            (tagE, valE) = basicSnapLevels
-            (tagF, valF) = basicSnapMergingTree
-        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
-  in  testCodecBuilder "SnapshotConfig" $ assembler <$> enumerateTableConfig
+{-------------------------------------------------------------------------------
+  Mapping
+-------------------------------------------------------------------------------}
 
-testCodecSnapLevels :: TestTree
-testCodecSnapLevels =
-  let assembler (tagE, valE) =
-        let (tagA, valA) = basicSnapshotLabel
-            (tagC, valC) = basicTableConfig
-            valD = basicRunNumber
-            (tagF, valF) = basicSnapMergingTree
-        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
-  in  testCodecBuilder "SnapshotLevels" $ assembler <$> enumerateSnapLevels
+type Constraints a = (Typeable a, Encode a, EnumGolden a)
 
-testCodecMergingTree :: TestTree
-testCodecMergingTree =
-  let assembler (tagF, valF) =
-        let (tagA, valA) = basicSnapshotLabel
-            (tagC, valC) = basicTableConfig
-            valD = basicRunNumber
-            (tagE, valE) = basicSnapLevels
-        in  (fuseAnnotations [tagA, tagC, tagE, tagF ], SnapshotMetaData valA valC valD valE valF)
-  in  testCodecBuilder "SnapshotMergingTree" $ assembler <$> enumerateSnapMergingTree
-
-testCodecBuilder :: TestName -> [(ComponentAnnotation, SnapshotMetaData)] -> TestTree
-testCodecBuilder tName metadata =
-  testGroup tName $ uncurry snapshotCodecTest <$> metadata
-
-type ComponentAnnotation = String
-
-fuseAnnotations :: [ComponentAnnotation] -> ComponentAnnotation
-fuseAnnotations = List.intercalate "-"
-
-blank :: ComponentAnnotation
-blank = "__"
-
-{----------------
-Defaults used when the SnapshotMetaData sub-component is not under test
-----------------}
-
-basicSnapshotLabel :: (ComponentAnnotation, SnapshotLabel)
-basicSnapshotLabel = head enumerateSnapshotLabel
-
-basicTableConfig :: (ComponentAnnotation, TableConfig)
-basicTableConfig = ( fuseAnnotations $ "T0" : replicate 4 blank
-                   , defaultTableConfig {confFencePointerIndex = CompactIndex}
-                   )
-
-basicRunNumber :: RunNumber
-basicRunNumber = enumerateRunNumbers
-
-basicSnapLevels :: (ComponentAnnotation, SnapLevels SnapshotRun)
-basicSnapLevels = head enumerateSnapLevels
-
-basicSnapMergingTree :: (ComponentAnnotation, Maybe (SnapMergingTree SnapshotRun))
-basicSnapMergingTree = head enumerateSnapMergingTree
-
-{----------------
-Enumeration of SnapshotMetaData sub-components
-----------------}
-
-enumerateSnapshotLabel :: [(ComponentAnnotation, SnapshotLabel)]
-enumerateSnapshotLabel =
-  [ ("B0", SnapshotLabel "UserProvidedLabel")
-  , ("B1", SnapshotLabel "")
-  ]
-
-enumerateTableConfig :: [(ComponentAnnotation, TableConfig)]
-enumerateTableConfig =
-    [  ( fuseAnnotations [ "T1", d, e, f, g ]
-      , TableConfig {..}
-      )
-    | (_, confMergePolicy) <- [(blank, LazyLevelling)]
-    , (g, confMergeSchedule) <- [("G0", OneShot), ("G1", Incremental)]
-    , (_, confSizeRatio) <- [(blank, Four)]
-    , (_, confWriteBufferAlloc) <- fmap AllocNumEntries <$> [(blank, magicNumber1)]
-    , (d, confBloomFilterAlloc) <- enumerateBloomFilterAlloc
-    , (e, confFencePointerIndex) <- [("I0", CompactIndex), ("I1", OrdinaryIndex)]
-    , (f, confDiskCachePolicy) <- enumerateDiskCachePolicy
+-- | Do something for all snapshot types and collect the results
+forallSnapshotTypes ::
+     (forall a. Constraints a => Proxy a -> b)
+  -> [b]
+forallSnapshotTypes f = [
+      -- SnapshotMetaData
+      f (Proxy @SnapshotMetaData)
+    , f (Proxy @SnapshotLabel)
+    , f (Proxy @SnapshotRun)
+      -- TableConfig
+    , f (Proxy @TableConfig)
+    , f (Proxy @MergePolicy)
+    , f (Proxy @SizeRatio)
+    , f (Proxy @WriteBufferAlloc)
+    , f (Proxy @BloomFilterAlloc)
+    , f (Proxy @FencePointerIndexType)
+    , f (Proxy @DiskCachePolicy)
+    , f (Proxy @MergeSchedule)
+      -- SnapLevels
+    , f (Proxy @(SnapLevels SnapshotRun))
+    , f (Proxy @(SnapLevel SnapshotRun))
+    , f (Proxy @(V.Vector SnapshotRun))
+    , f (Proxy @RunNumber)
+    , f (Proxy @(SnapIncomingRun SnapshotRun))
+    , f (Proxy @MergePolicyForLevel)
+    , f (Proxy @RunDataCaching)
+    , f (Proxy @RunBloomFilterAlloc)
+    , f (Proxy @IndexType)
+    , f (Proxy @RunParams)
+    , f (Proxy @(SnapMergingRun LevelMergeType SnapshotRun))
+    , f (Proxy @MergeDebt)
+    , f (Proxy @MergeCredits)
+    , f (Proxy @NominalDebt)
+    , f (Proxy @NominalCredits)
+    , f (Proxy @LevelMergeType)
+    , f (Proxy @TreeMergeType)
+    , f (Proxy @(SnapMergingTree SnapshotRun))
+    , f (Proxy @(SnapMergingTreeState SnapshotRun))
+    , f (Proxy @(SnapMergingRun TreeMergeType SnapshotRun))
+    , f (Proxy @(SnapPendingMerge SnapshotRun))
+    , f (Proxy @(SnapPreExistingRun SnapshotRun))
     ]
 
-enumerateSnapLevels :: [(ComponentAnnotation, SnapLevels SnapshotRun)]
-enumerateSnapLevels = fmap (SnapLevels . V.singleton) <$> enumerateSnapLevel
+{-------------------------------------------------------------------------------
+  Enumeration class
+-------------------------------------------------------------------------------}
 
-{----------------
-Enumeration of SnapLevel sub-components
-----------------}
+-- | Enumerate values of type @a@ for golden tests
+--
+-- To prevent combinatorial explosion, the enumeration should generally be
+-- /shallow/: the different constructors for type @a@ should be enumerated
+-- without recursively enumerating the constructors' fields. For example,
+-- enumerating @Maybe Int@ should give us something like:
+--
+-- > enumGolden @(Maybe Int) = [ Just 17, Nothing ]
+--
+-- This is generally a suitable approach, since the snapshot encodings do not
+-- encode types differently depending on values in the constructor fields.
+--
+-- Example (recursive) instances that prevent combinatorial explosion:
+--
+-- @
+--  instance EnumGolden a => EnumGolden (Maybe a) where
+--    enumGolden = [ Just (singGolden @a), Nothing ]
+--  instance EnumGolden Int where
+--    enumGolden = [17, -72] -- singGolden = 17
+-- @
+--
+-- If there are encoders that do require more elaborate (recursive)
+-- enumerations, then it is okay to deviate from shallow enumerations, but take
+-- care not to explode the combinatorics ;)
+class EnumGolden a where
+  {-# MINIMAL enumGolden | enumGoldenAnnotated | singGolden #-}
 
-enumerateSnapLevel :: [(ComponentAnnotation, SnapLevel SnapshotRun)]
-enumerateSnapLevel = do
-  (a, run) <- enumerateSnapIncomingRun
-  (b, vec) <- enumerateVectorRunInfo
-  [( fuseAnnotations [ a, b ], SnapLevel run vec)]
+  -- | Enumerated values. The enumeration should be /shallow/.
+  --
+  -- The default implementation is to return a singleton list containing
+  -- 'singGolden'.
+  enumGolden :: [a]
+  enumGolden = [ singGolden ]
 
-enumerateSnapIncomingRun :: [(ComponentAnnotation, SnapIncomingRun SnapshotRun)]
-enumerateSnapIncomingRun =
-  let
-      inSnaps =
-        [ (fuseAnnotations ["R1", a, b],
-           SnapIncomingMergingRun policy nominalDebt nominalCredits sState)
-        | (a, policy ) <- [("P0", LevelTiering), ("P1", LevelLevelling)]
-        , nominalDebt    <- NominalDebt    <$> [ magicNumber2 ]
-        , nominalCredits <- NominalCredits <$> [ magicNumber1 ]
-        , (b, sState ) <- enumerateSnapMergingRun enumerateLevelMergeType
-        ]
-  in  fold
-      [ [(fuseAnnotations $ "R0" : replicate 4 blank,
-          SnapIncomingSingleRun enumerateOpenRunInfo)]
-      , inSnaps
+  -- | Enumerated values with an annotation for naming purposes. The enumeration
+  -- should be /shallow/, and the annotations should be unique.
+  --
+  -- The default implementation is to annotate 'enumGolden' with capital letters
+  -- starting with @\'A\'@.
+  enumGoldenAnnotated :: [(Annotation, a)]
+  enumGoldenAnnotated = zip [[c] | c <- ['A' .. 'Z']] enumGolden
+
+  -- | A singleton enumerated value. This is mainly useful for superclass
+  -- instances.
+  --
+  -- The default implementation is to take the 'head' of 'enumGoldenAnnotated'.
+  singGolden :: a
+  singGolden = snd $ head enumGoldenAnnotated
+
+type Annotation = String
+
+enumGoldenAnnotated' :: EnumGolden a => Proxy a -> [(Annotation, a)]
+enumGoldenAnnotated' _ = enumGoldenAnnotated
+
+{-------------------------------------------------------------------------------
+  Enumeration class: names and file paths
+-------------------------------------------------------------------------------}
+
+nameGolden :: Typeable a => Proxy a -> Annotation -> String
+nameGolden p ann = map spaceToUnderscore (show $ typeRep p) ++ "." ++ ann
+
+spaceToUnderscore :: Char -> Char
+spaceToUnderscore ' ' = '_'
+spaceToUnderscore c   = c
+
+{-------------------------------------------------------------------------------
+  Enumeration class: instances
+-------------------------------------------------------------------------------}
+
+instance EnumGolden SnapshotMetaData where
+  singGolden = SnapshotMetaData singGolden singGolden singGolden singGolden singGolden
+    where
+      _coveredAllCases = \case
+        SnapshotMetaData{} -> ()
+
+instance EnumGolden SnapshotLabel where
+  enumGolden = [
+        SnapshotLabel "UserProvidedLabel"
+      , SnapshotLabel ""
       ]
+    where
+      _coveredAllCases = \case
+        SnapshotLabel{} -> ()
 
-enumerateSnapMergingRun ::
-     [(ComponentAnnotation, t)]
-  -> [(ComponentAnnotation, SnapMergingRun t SnapshotRun)]
-enumerateSnapMergingRun mTypes =
-    [ (fuseAnnotations ["C0", blank, blank],
-       SnapCompletedMerge mergeDebt enumerateOpenRunInfo)
-    | mergeDebt <- (MR.MergeDebt. MR.MergeCredits) <$> [ magicNumber2 ]
+instance EnumGolden TableConfig where
+  singGolden = TableConfig singGolden singGolden singGolden singGolden singGolden singGolden singGolden
+    where
+      _coveredAllCases = \case
+        TableConfig{} -> ()
+
+instance EnumGolden MergePolicy where
+  singGolden = LazyLevelling
+    where
+      _coveredAllCases = \case
+        LazyLevelling{} -> ()
+
+
+instance EnumGolden SizeRatio where
+  singGolden = Four
+    where
+      _coveredAllCases = \case
+        Four{} -> ()
+
+instance EnumGolden WriteBufferAlloc where
+  singGolden = AllocNumEntries magicNumber2
+    where
+      _coveredAllCases = \case
+        AllocNumEntries{} -> ()
+
+instance EnumGolden BloomFilterAlloc where
+  enumGolden = [ AllocFixed magicNumber3, AllocRequestFPR pi ]
+    where
+      _coveredAllCases = \case
+        AllocFixed{} -> ()
+        AllocRequestFPR{} -> ()
+
+instance EnumGolden FencePointerIndexType where
+  enumGolden = [ CompactIndex, OrdinaryIndex ]
+    where
+      _coveredAllCases = \case
+        CompactIndex{} -> ()
+        OrdinaryIndex{} -> ()
+
+instance EnumGolden DiskCachePolicy where
+  enumGolden = [ DiskCacheAll, DiskCacheLevelOneTo magicNumber3, DiskCacheNone ]
+    where
+      _coveredAllCases = \case
+        DiskCacheAll{} -> ()
+        DiskCacheLevelOneTo{} -> ()
+        DiskCacheNone{} -> ()
+
+instance EnumGolden MergeSchedule where
+  enumGolden = [ OneShot, Incremental ]
+    where
+      _coveredAllCases = \case
+        OneShot{} -> ()
+        Incremental{} -> ()
+
+instance EnumGolden (SnapLevels SnapshotRun) where
+  singGolden = SnapLevels singGolden
+    where
+      _coveredAllCases = \case
+        SnapLevels{} -> ()
+
+instance EnumGolden (SnapLevel SnapshotRun) where
+  singGolden = SnapLevel singGolden singGolden
+    where
+      _coveredAllCases = \case
+        SnapLevel{} -> ()
+
+instance EnumGolden (SnapIncomingRun SnapshotRun) where
+  enumGolden = [
+        SnapIncomingMergingRun singGolden singGolden singGolden singGolden
+      , SnapIncomingSingleRun singGolden
+      ]
+    where
+      _coveredAllCases = \case
+        SnapIncomingMergingRun{} -> ()
+        SnapIncomingSingleRun{} -> ()
+
+instance EnumGolden MergePolicyForLevel where
+  enumGolden = [ LevelTiering, LevelLevelling ]
+    where
+      _coveredAllCases = \case
+        LevelTiering -> ()
+        LevelLevelling -> ()
+
+instance EnumGolden LevelMergeType where
+  enumGolden = [ MergeMidLevel, MergeLastLevel ]
+    where
+      _coveredAllCases = \case
+        MergeMidLevel{} -> ()
+        MergeLastLevel{} -> ()
+
+instance EnumGolden (SnapMergingTree SnapshotRun) where
+  singGolden = SnapMergingTree singGolden
+    where
+      _coveredAllCases = \case
+        SnapMergingTree{} -> ()
+
+instance EnumGolden (SnapMergingTreeState SnapshotRun) where
+  enumGolden = [
+        SnapCompletedTreeMerge singGolden
+      , SnapPendingTreeMerge singGolden
+      , SnapOngoingTreeMerge singGolden
+      ]
+    where
+      _coveredAllCases = \case
+        SnapCompletedTreeMerge{} -> ()
+        SnapPendingTreeMerge{} -> ()
+        SnapOngoingTreeMerge{} -> ()
+
+instance EnumGolden (SnapPendingMerge SnapshotRun) where
+  enumGolden = [
+        SnapPendingLevelMerge singGolden singGolden
+      , SnapPendingUnionMerge singGolden
+      ]
+    where
+      _coveredAllCases = \case
+        SnapPendingLevelMerge{} -> ()
+        SnapPendingUnionMerge{} -> ()
+
+instance EnumGolden (SnapPreExistingRun SnapshotRun) where
+  enumGolden = [
+        SnapPreExistingRun singGolden
+      , SnapPreExistingMergingRun singGolden
+      ]
+    where
+      _coveredAllCases = \case
+        SnapPreExistingRun{} -> ()
+        SnapPreExistingMergingRun{} -> ()
+
+instance EnumGolden TreeMergeType where
+  enumGolden = [ MergeLevel, MergeUnion ]
+    where
+      _coveredAllCases = \case
+        MergeLevel{} -> ()
+        MergeUnion{} -> ()
+
+instance EnumGolden a => EnumGolden (Maybe a) where
+  enumGolden = [ Just singGolden, Nothing ]
+    where
+      _coveredAllCases = \case
+        Just{} -> ()
+        Nothing{} -> ()
+
+instance EnumGolden a => EnumGolden (V.Vector a) where
+  enumGolden = [
+      V.fromList [ singGolden, singGolden ]
+    , mempty
+    , V.fromList [ singGolden ]
     ]
- ++ [ (fuseAnnotations ["C1", a, b],
-       SnapOngoingMerge runParams mergeCredits runVec mType)
-    | let runParams = enumerateRunParams
-    , mergeCredits <- MR.MergeCredits <$> [ magicNumber2 ]
-    , (a, runVec ) <- enumerateVectorRunInfo
-    , (b, mType  ) <- mTypes
+
+instance EnumGolden a => EnumGolden [a] where
+  enumGolden = [
+      [singGolden, singGolden]
+    , []
+    , [singGolden]
     ]
 
-enumerateLevelMergeType :: [(ComponentAnnotation, MR.LevelMergeType)]
-enumerateLevelMergeType =
-  [("L0", MR.MergeMidLevel), ("L1", MR.MergeLastLevel)]
+instance EnumGolden RunParams where
+  singGolden = RunParams singGolden singGolden singGolden
+    where
+      _coveredAllCases = \case
+        RunParams{} -> ()
 
-enumerateVectorRunInfo :: [(ComponentAnnotation, Vector SnapshotRun)]
-enumerateVectorRunInfo =
-  [ ("V0", mempty)
-  , ("V1", V.fromList [enumerateOpenRunInfo])
-  , ("V2", V.fromList [enumerateOpenRunInfo,
-                       enumerateOpenRunInfo {
-                         snapRunNumber = RunNumber magicNumber2
-                       } ])
-  ]
+instance EnumGolden t => EnumGolden (SnapMergingRun t SnapshotRun) where
+  enumGolden = [
+        SnapCompletedMerge singGolden singGolden
+      , SnapOngoingMerge singGolden singGolden singGolden singGolden
+      ]
+    where
+      _coveredAllCases = \case
+        SnapCompletedMerge{} -> ()
+        SnapOngoingMerge{} -> ()
 
-{----------------
-Enumeration of SnapMergingTree sub-components
-----------------}
+instance EnumGolden RunBloomFilterAlloc where
+  enumGolden = [
+        RunAllocFixed magicNumber3
+      , RunAllocRequestFPR pi
+      ]
+    where
+      _coveredAllCases = \case
+        RunAllocFixed{} -> ()
+        RunAllocRequestFPR{} -> ()
 
-enumerateSnapMergingTree :: [(ComponentAnnotation, Maybe (SnapMergingTree SnapshotRun))]
-enumerateSnapMergingTree =
-  let noneTrees = (fuseAnnotations $ "M0" : replicate 11 blank, Nothing)
-      someTrees = reannotate <$> enumerateSnapMergingTreeState True
-      reannotate (tag, val) = (fuseAnnotations ["M1", tag], Just val)
-  in  noneTrees : someTrees
+instance EnumGolden RunNumber where
+  singGolden = RunNumber magicNumber3
+    where
+      _coveredAllCases = \case
+        RunNumber{} -> ()
 
-enumerateSnapMergingTreeState :: Bool -> [(ComponentAnnotation, SnapMergingTree SnapshotRun)]
-enumerateSnapMergingTreeState expandable =
-  let s0 = [ (fuseAnnotations $ "S0" : replicate 10 blank, SnapCompletedTreeMerge enumerateOpenRunInfo) ]
-      s1 = do
-          (tagX, valX) <- enumerateSnapPendingMerge expandable
-          [ (fuseAnnotations ["S1", tagX], SnapPendingTreeMerge valX) ]
-      s2 = do
-          (tagX, valX) <- enumerateSnapOngoingTreeMerge
-          [ (fuseAnnotations ["S2", tagX], valX) ]
-  in second SnapMergingTree <$> fold [ s0, s1, s2 ]
+instance EnumGolden IndexType where
+  enumGolden = [
+        Compact
+      , Ordinary
+      ]
+    where
+      _coveredAllCases = \case
+        Compact{} -> ()
+        Ordinary{} -> ()
 
-enumerateSnapOngoingTreeMerge :: [(ComponentAnnotation, SnapMergingTreeState SnapshotRun)]
-enumerateSnapOngoingTreeMerge = do
-  (tagX, valX) <- enumerateSnapMergingRun enumerateTreeMergeType
-  let value = SnapOngoingTreeMerge valX
-  pure ( fuseAnnotations $ ["G0", blank, tagX] <> replicate 5 blank, value )
+instance EnumGolden RunDataCaching where
+  enumGolden = [
+        CacheRunData
+      , NoCacheRunData
+      ]
+    where
+      _coveredAllCases = \case
+        CacheRunData{} -> ()
+        NoCacheRunData{} -> ()
 
-enumerateSnapPendingMerge :: Bool -> [(ComponentAnnotation, SnapPendingMerge SnapshotRun)]
-enumerateSnapPendingMerge expandable =
-  let (tagTrees, subTrees)
-        | not expandable = ("M0", [])
-        | otherwise = ("M1", snd <$> enumerateSnapMergingTreeState False)
-      headMay []    = Nothing
-      headMay (x:_) = Just x
-      prefix = do
-        extra <- [False, True ]
-        (tagPre, valPre) <- enumerateSnapPreExistingRun
-        (tagExt, valExt) <-
-          if extra
-          then second pure <$> enumerateSnapPreExistingRun
-          else [(fuseAnnotations $ replicate 4 blank, [])]
-        let preValues = [ valPre ] <> valExt
-        pure (fuseAnnotations [ "P0", tagPre, tagExt, tagTrees], SnapPendingLevelMerge preValues $ headMay subTrees)
-  in  prefix <> [(fuseAnnotations $ fold [["P1"], replicate 8 blank, [tagTrees]], SnapPendingUnionMerge subTrees)]
+instance EnumGolden SnapshotRun where
+  singGolden = SnapshotRun singGolden singGolden singGolden
+    where
+      _coveredAllCases = \case
+        SnapshotRun{} -> ()
 
-enumerateSnapPreExistingRun :: [(ComponentAnnotation, SnapPreExistingRun SnapshotRun)]
-enumerateSnapPreExistingRun =
-    ( fuseAnnotations ("E0" : replicate 3 blank), SnapPreExistingRun enumerateOpenRunInfo)
-  : [ (fuseAnnotations ["E1", tagX], SnapPreExistingMergingRun valX)
-    | (tagX, valX) <- enumerateSnapMergingRun enumerateLevelMergeType
-    ]
+instance EnumGolden MergeDebt where
+  singGolden = MergeDebt magicNumber2
+    where
+      _coveredAllCases = \case
+        MergeDebt{} -> ()
 
-enumerateTreeMergeType :: [(ComponentAnnotation, MR.TreeMergeType)]
-enumerateTreeMergeType =
-  [("T0", MR.MergeLevel), ("T1", MR.MergeUnion)]
+instance EnumGolden MergeCredits where
+  singGolden = MergeCredits magicNumber2
+    where
+      _coveredAllCases = \case
+        MergeCredits{} -> ()
 
-{----------------
-Enumeration of SnapshotMetaData sub-sub-components and so on...
-----------------}
+instance EnumGolden NominalDebt where
+  singGolden = NominalDebt magicNumber2
+    where
+      _coveredAllCases = \case
+        NominalDebt{} -> ()
 
-enumerateBloomFilterAlloc :: [(ComponentAnnotation, BloomFilterAlloc)]
-enumerateBloomFilterAlloc =
-  [ ("A0",AllocFixed magicNumber3)
-  , ("A1",AllocRequestFPR pi)
-  ]
+instance EnumGolden NominalCredits where
+  singGolden = NominalCredits magicNumber1
+    where
+      _coveredAllCases = \case
+        NominalCredits{} -> ()
 
-enumerateDiskCachePolicy :: [(ComponentAnnotation, DiskCachePolicy)]
-enumerateDiskCachePolicy =
-  [ ("D0", DiskCacheAll)
-  , ("D1", DiskCacheNone)
-  , ("D2", DiskCacheLevelOneTo 1)
-  ]
-
-enumerateRunNumbers :: RunNumber
-enumerateRunNumbers = RunNumber magicNumber2
-
---TODO: use a proper enumeration, but don't cause a combinatorial explosion.
-enumerateRunParams :: MR.RunParams
-enumerateRunParams =
-    MR.RunParams {
-      MR.runParamCaching = NoCacheRunData,
-      MR.runParamAlloc   = RunAllocFixed 10,
-      MR.runParamIndex   = Compact
-    }
-
---TODO: use a proper enumeration, but don't cause a combinatorial explosion of
--- golden tests. Perhaps do all combos as a direct golden test, but then where
--- it is embedded, just use one combo.
-enumerateOpenRunInfo :: SnapshotRun
-enumerateOpenRunInfo =
-    SnapshotRun {
-      snapRunNumber  = enumerateRunNumbers,
-      snapRunCaching = CacheRunData,
-      snapRunIndex   = Compact
-    }
-
--- Randomly chosen numbers
+  -- Randomly chosen numbers
 magicNumber1, magicNumber2, magicNumber3 :: Enum e => e
 magicNumber1 = toEnum 42
 magicNumber2 = toEnum 88
