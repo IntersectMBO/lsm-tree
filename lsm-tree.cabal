@@ -724,6 +724,34 @@ common measure-batch-latency
   if flag(measure-batch-latency)
     cpp-options: -DMEASURE_BATCH_LATENCY
 
+benchmark lsm-tree-bench-unions
+  import:         language, warnings, wno-x-partial, measure-batch-latency
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/macro
+  main-is:        lsm-tree-bench-unions.hs
+  build-depends:
+    , async
+    , base
+    , bytestring
+    , Chart
+    , Chart-diagrams
+    , clock
+    , colour
+    , containers
+    , directory
+    , exact-combinatorics
+    , lsm-tree
+    , lsm-tree:extras
+    , lsm-tree:mcg
+    , monad-loops
+    , optparse-applicative
+    , primitive
+    , random
+    , transformers
+    , vector
+
+  ghc-options:    -rtsopts -with-rtsopts=-T -threaded
+
 benchmark lsm-tree-bench-wp8
   import:         language, warnings, wno-x-partial, measure-batch-latency
   type:           exitcode-stdio-1.0
