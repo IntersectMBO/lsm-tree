@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- Definitions for override table config options.
@@ -87,12 +88,16 @@ instance Override DiskCachePolicy SnapshotMetaData where
         in  fmap (override rdc) smt
 
 instance Override DiskCachePolicy TableConfig where
-  override dcp
-    (TableConfig (cmp :: MergePolicy) (csz :: SizeRatio)
-      (cwba :: WriteBufferAlloc) (cbfa :: BloomFilterAlloc)
-      (cfit :: FencePointerIndexType) (_dcp :: DiskCachePolicy)
-      (cfs :: MergeSchedule))
-    = TableConfig cmp csz cwba cbfa cfit dcp cfs
+  override confDiskCachePolicy' TableConfig {..}
+    = TableConfig
+        { confMergePolicy,
+          confMergeSchedule,
+          confSizeRatio,
+          confWriteBufferAlloc,
+          confBloomFilterAlloc,
+          confFencePointerIndex,
+          confDiskCachePolicy = confDiskCachePolicy'
+        }
 
 instance Override DiskCachePolicy (SnapLevels SnapshotRun) where
   override dcp (SnapLevels (vec :: V.Vector (SnapLevel SnapshotRun))) =

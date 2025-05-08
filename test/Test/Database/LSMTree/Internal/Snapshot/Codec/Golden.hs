@@ -175,22 +175,15 @@ enumerateSnapshotLabel =
 enumerateTableConfig :: [(ComponentAnnotation, TableConfig)]
 enumerateTableConfig =
     [  ( fuseAnnotations [ "T1", d, e, f, g ]
-      , TableConfig
-        policy
-        ratio
-        allocs
-        bloom
-        fence
-        cache
-        merge
+      , TableConfig {..}
       )
-    | (_, policy) <- [(blank, LazyLevelling)]
-    , (_, ratio ) <- [(blank, Four)]
-    , (_, allocs) <- fmap AllocNumEntries <$> [(blank, magicNumber1)]
-    , (d, bloom ) <- enumerateBloomFilterAlloc
-    , (e, fence ) <- [("I0", CompactIndex), ("I1", OrdinaryIndex)]
-    , (f, cache ) <- enumerateDiskCachePolicy
-    , (g, merge ) <- [("G0", OneShot), ("G1", Incremental)]
+    | (_, confMergePolicy) <- [(blank, LazyLevelling)]
+    , (g, confMergeSchedule) <- [("G0", OneShot), ("G1", Incremental)]
+    , (_, confSizeRatio) <- [(blank, Four)]
+    , (_, confWriteBufferAlloc) <- fmap AllocNumEntries <$> [(blank, magicNumber1)]
+    , (d, confBloomFilterAlloc) <- enumerateBloomFilterAlloc
+    , (e, confFencePointerIndex) <- [("I0", CompactIndex), ("I1", OrdinaryIndex)]
+    , (f, confDiskCachePolicy) <- enumerateDiskCachePolicy
     ]
 
 enumerateSnapLevels :: [(ComponentAnnotation, SnapLevels SnapshotRun)]
