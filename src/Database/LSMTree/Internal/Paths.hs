@@ -103,7 +103,7 @@ instance IsString SnapshotName where
   fromString = toSnapshotName
 
 data InvalidSnapshotNameError
-  = ErrSnapshotNameInvalid !String
+  = ErrInvalidSnapshotName !String
   deriving stock (Show)
   deriving anyclass (Exception)
 
@@ -173,7 +173,7 @@ isValidSnapshotName str =
 toSnapshotName :: String -> SnapshotName
 toSnapshotName str
   | isValidSnapshotName str = SnapshotName str
-  | otherwise = throw (ErrSnapshotNameInvalid str)
+  | otherwise = throw (ErrInvalidSnapshotName str)
 
 snapshotsDir :: SessionRoot -> FsPath
 snapshotsDir (SessionRoot dir) = dir </> mkFsPath ["snapshots"]
