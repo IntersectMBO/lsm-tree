@@ -37,6 +37,8 @@ import           Test.QuickCheck.Classes (primLaws)
 import           Test.Util.QC
 #endif
 
+--TODO: add a golden test for the BloomFilter format vs the 'formatVersion'
+-- to ensure we don't change the format without conciously bumping the version.
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.BloomFilter"
     [ testProperty "roundtrip" roundtrip_prop
