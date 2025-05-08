@@ -64,6 +64,30 @@ policyForFPR fpr =
     k'      = fromIntegral k
     c       = negate k' / log1mexp (log_fpr / k')
     log_fpr = log fpr
+    -- For the source of this formula, see
+    -- https://en.wikipedia.org/wiki/Bloom_filter#Probability_of_false_positives
+    --
+    -- We start with the FPR ε approximation that assumes independence for the
+    -- probabilities of each bit being set.
+    --
+    --                         ε   = (1 - e^(-kn/m))^k
+    --
+    -- And noting that bits per entry @c = m/n@, hence @-kn/m = -k/c@, hence
+    --
+    --                         ε   = (1-e^(-k/c))^k
+    --
+    -- And then we rearrange to get c, the number of bits per entry:
+    --
+    --                            ε   =  (1-e^(-k/c))^k
+    --                            ε   =  (1-exp (-k/c))^k
+    --                            ε   =  exp (log (1 - exp (-k/c)) * k)
+    --                        log ε   =  log (1 - exp (-k/c)) * k
+    --                    log ε / k   =  log (1 - exp (-k/c))
+    --               exp (log ε / k)  =  1 - exp (-k/c)
+    --           1 - exp (log ε / k)  =  exp (-k/c)
+    --      log (1 - exp (log ε / k)) =  -k/c
+    -- -k / log (1 - exp (log ε / k)) =  c
+    --     -k / log1mexp (log ε / k)  =  c
 
 policyForBits :: BitsPerEntry -> BloomPolicy
 policyForBits c | c <= 0 =
@@ -76,6 +100,8 @@ policyForBits c =
     }
   where
     k = max 1 (round (c * log2))
+    -- For the source of this formula, see
+    -- https://en.wikipedia.org/wiki/Bloom_filter#Optimal_number_of_hash_functions
 
 policyFPR :: BloomPolicy -> FPR
 policyFPR BloomPolicy {
@@ -85,6 +111,18 @@ policyFPR BloomPolicy {
     negate (expm1 (negate (k' / c))) ** k'
   where
     k' = fromIntegral k
+    -- For the source of this formula, see
+    -- https://en.wikipedia.org/wiki/Bloom_filter#Probability_of_false_positives
+    --
+    -- We use the FPR ε approximation that assumes independence for the
+    -- probabilities of each bit being set.
+    --
+    --                         ε   = (1 - e^(-kn/m))^k
+    --
+    -- And noting that bits per entry @c = m/n@, hence @-kn/m = -k/c@, hence
+    --
+    --                         ε   = (1-e^(-k/c))^k
+    --
 
 -- | Parameters for constructing a Bloom filter.
 --

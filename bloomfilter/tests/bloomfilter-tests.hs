@@ -174,9 +174,8 @@ prop_calc_size_fpr_bits proxy (BitsPerEntry c) (NumEntries numEntries) =
 -- | Computes the optimal number of hash functions that minimises the false
 -- positive rate for a bloom filter.
 --
--- See Niv Dayan, Manos Athanassoulis, Stratos Idreos,
--- /Optimal Bloom Filters and Adaptive Merging for LSM-Trees/,
--- Footnote 2, page 6.
+-- See <https://en.wikipedia.org/wiki/Bloom_filter#Optimal_number_of_hash_functions>
+--
 numHashFunctions ::
      Double -- ^ Number of bits assigned to the bloom filter.
   -> Double -- ^ Number of entries inserted into the bloom filter.
