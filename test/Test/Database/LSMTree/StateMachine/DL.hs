@@ -13,6 +13,8 @@ import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree as R
+import qualified Database.LSMTree.Internal.Config as R
+                     (TableConfig (TableConfig))
 import qualified Database.LSMTree.Model.Session as Model (fromSomeTable, tables)
 import qualified Database.LSMTree.Model.Table as Model (values)
 import           Prelude
@@ -65,7 +67,7 @@ prop_example =
 dl_example :: DL (Lockstep (ModelState R.Table)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
-    var3 <- action $ Action Nothing $ NewTableWith (PrettyProxy @((Key, Value, Blob))) (TableConfig {
+    var3 <- action $ Action Nothing $ NewTableWith (PrettyProxy @((Key, Value, Blob))) (R.TableConfig {
           confMergePolicy = LazyLevelling
         , confSizeRatio = Four
         , confWriteBufferAlloc = AllocNumEntries 4
