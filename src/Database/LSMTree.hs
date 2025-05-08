@@ -278,12 +278,11 @@ The examples in this module use the preamble described in this section, which do
 
 This module is intended to be imported qualified, to avoid name clashes with Prelude functions.
 
+>>> import qualified Database.LSMTree as LSMT
 >>> :{
 import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..),
                      SerialiseKey (..), SerialiseValue (..), Session, Table)
 :}
-
->>> import qualified Database.LSMTree as LSMT
 
 === Defining key, value, and BLOB types
 
