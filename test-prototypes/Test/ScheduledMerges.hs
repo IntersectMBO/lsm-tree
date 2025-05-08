@@ -1,4 +1,4 @@
-module ScheduledMergesTest (tests) where
+module Test.ScheduledMerges (tests) where
 
 import           Control.Exception
 import           Control.Monad (replicateM_, when)
@@ -21,7 +21,7 @@ import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..),
                      QuickCheckTests (..), testProperty, (=/=), (===))
 
 tests :: TestTree
-tests = testGroup "Unit and property tests"
+tests = testGroup "Test.ScheduledMerges"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
     , testProperty "prop_union" prop_union
