@@ -21,6 +21,8 @@ import           Prelude hiding (elem, notElem)
 main :: IO ()
 main = defaultMain tests
 
+--TODO: add a golden test for the BloomFilter format vs the 'formatVersion'
+-- to ensure we don't change the format without conciously bumping the version.
 tests :: TestTree
 tests =
   testGroup "Data.BloomFilter" $
