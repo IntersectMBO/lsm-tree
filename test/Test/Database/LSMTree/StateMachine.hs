@@ -99,6 +99,8 @@ import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
+import qualified Database.LSMTree.Internal.Config as R
+                     (TableConfig (TableConfig))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
 import qualified Database.LSMTree.Internal.Types as R.Types

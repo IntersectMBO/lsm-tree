@@ -102,7 +102,15 @@ module Database.LSMTree (
   SnapshotLabel (..),
 
   -- * Table Configuration #table_configuration#
-  TableConfig (..),
+  TableConfig (
+    confMergePolicy,
+    confSizeRatio,
+    confWriteBufferAlloc,
+    confBloomFilterAlloc,
+    confFencePointerIndex,
+    confDiskCachePolicy,
+    confMergeSchedule
+  ),
   defaultTableConfig,
   MergePolicy (LazyLevelling),
   SizeRatio (Four),
