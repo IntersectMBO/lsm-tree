@@ -76,7 +76,8 @@ import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.Serialise
-import           FormatPage
+import           FormatPage hiding (PageContentFits, PageContentMaybeOverfull,
+                     PageContentSingle)
 
 import           Test.QuickCheck
 
