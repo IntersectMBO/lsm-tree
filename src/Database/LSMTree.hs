@@ -278,11 +278,7 @@ The examples in this module use the preamble described in this section, which do
 
 This module is intended to be imported qualified, to avoid name clashes with Prelude functions.
 
->>> :{
-import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..),
-                     SerialiseKey (..), SerialiseValue (..), Session, Table)
-:}
-
+>>> import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..), SerialiseKey (..), SerialiseValue (..), Session, Table)
 >>> import qualified Database.LSMTree as LSMT
 
 === Defining key, value, and BLOB types
@@ -344,7 +340,7 @@ The examples in this module are wrapped in a call to @runExample@,
 which creates a temporary session directory and
 runs the example with access to an open 'Session' and a fresh 'Table'.
 
->>> import           Control.Exception (bracket, bracket_, finally)
+>>> import           Control.Exception (bracket, bracket_)
 >>> import           Data.Foldable (traverse_)
 >>> import qualified System.Directory as Dir
 >>> import           System.FilePath ((</>))
