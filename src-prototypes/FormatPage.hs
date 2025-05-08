@@ -1,4 +1,7 @@
 {-# LANGUAGE ParallelListComp #-}
+
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+
 -- | This accompanies the format-page.md documentation as a sanity check
 -- and a precise reference. It is intended to demonstrate that the page
 -- format works. It is also used as a reference implementation for tests of
