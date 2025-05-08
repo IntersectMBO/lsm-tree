@@ -126,7 +126,7 @@ modelDump mlsm model@Model {mlsms} =
 
 instance StateModel (Lockstep Model) where
   data Action (Lockstep Model) a where
-    ANew    :: Int -> Action (Lockstep Model) (LSM RealWorld)
+    ANew    :: LSMConfig -> Action (Lockstep Model) (LSM RealWorld)
 
     AInsert :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key -- to refer to a prior key
@@ -212,7 +212,7 @@ instance InLockstep Model where
 
   arbitraryWithVars ctx model =
     case findVars ctx (Proxy :: Proxy (LSM RealWorld)) of
-      []   -> fmap Some $ ANew <$> choose (3,5)
+      []   -> fmap Some $ ANew <$> (LSMConfig <$> choose (3,5) <*> choose (3,5))
       vars ->
         let kvars = findVars ctx (Proxy :: Proxy Key)
             existingKey = Left <$> elements kvars
@@ -362,7 +362,7 @@ runActionIO :: Action (Lockstep Model) a
 runActionIO action lookUp =
   stToIO $
   case action of
-    ANew x              -> newWith (LSMConfig x)
+    ANew conf           -> newWith conf
     AInsert var evk v b -> insert tr (lookUpVar var) k v b >> return k
       where k = either lookUpVar id evk
     ADelete var evk     -> delete tr (lookUpVar var) k >> return ()
