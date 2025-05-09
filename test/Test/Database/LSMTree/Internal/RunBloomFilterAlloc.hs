@@ -24,10 +24,9 @@ module Test.Database.LSMTree.Internal.RunBloomFilterAlloc (
 
 import           Control.Exception (assert)
 import           Control.Monad.ST
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
+import           Data.BloomFilter.Blocked (Bloom)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.BloomFilter.Hash (Hashable)
-import qualified Data.BloomFilter.Mutable as MBloom
 import           Data.Foldable (Foldable (..))
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
@@ -36,7 +35,7 @@ import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Random
 import qualified Database.LSMTree.Internal.Entry as LSMT
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
-                     falsePositiveRate, newMBloom)
+                     newMBloom)
 import           System.Random hiding (Seed)
 import           Test.QuickCheck
 import           Test.QuickCheck.Gen
@@ -80,16 +79,14 @@ prop_verifyFPR p alloc (NumEntries numEntries) (Seed seed) =
   let stdgen      = mkStdGen seed
       measuredFPR = measureApproximateFPR p (mkBloomFromAlloc alloc) numEntries stdgen
       expectedFPR = case alloc of
-        RunAllocFixed bits ->
-          falsePositiveRate (fromIntegral numEntries)
-                            (fromIntegral bits * fromIntegral numEntries)
+        RunAllocFixed bits -> Bloom.policyFPR (Bloom.policyForBits (fromIntegral bits))
         RunAllocRequestFPR requestedFPR -> requestedFPR
       -- error margins
       lb = expectedFPR - 0.1
       ub = expectedFPR + 0.03
   in  assert (fprInvariant True measuredFPR) $ -- measured FPR is in the range [0,1]
       assert (fprInvariant True expectedFPR) $ -- expected FPR is in the range [0,1]
-      counterexample (printf "expected $f <= %f <= %f" lb measuredFPR ub) $
+      counterexample (printf "expected %f <= %f <= %f" lb measuredFPR ub) $
       lb <= measuredFPR .&&. measuredFPR <= ub
 
 {-------------------------------------------------------------------------------
@@ -292,7 +289,7 @@ type BloomMaker a = [a] -> Bloom a
 mkBloomFromAlloc :: Hashable a => RunBloomFilterAlloc -> BloomMaker a
 mkBloomFromAlloc alloc xs = runST $ do
     mb <- newMBloom n alloc
-    mapM_ (MBloom.insert mb) xs
+    mapM_ (Bloom.insert mb) xs
     Bloom.unsafeFreeze mb
   where
     n = LSMT.NumEntries $ length xs

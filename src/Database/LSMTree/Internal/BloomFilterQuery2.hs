@@ -218,7 +218,7 @@ prepKeyHashes :: V.Vector SerialisedKey
               -> P.PrimArray (Bloom.CheapHashes SerialisedKey)
 prepKeyHashes keys =
     P.generatePrimArray (V.length keys) $ \i ->
-      Bloom.makeCheapHashes (V.unsafeIndex keys i)
+      Bloom.makeHashes (V.unsafeIndex keys i)
 
 prepInitialCandidateProbes ::
      P.StrictArray (Bloom SerialisedKey)
@@ -246,7 +246,7 @@ prepInitialCandidateProbes
         !keyhash = P.indexPrimArray keyhashes kix
         !hn      = BF.hashesN filter - 1
         !bix     = (fromIntegral :: Word64 -> Int) $
-                   Bloom.evalCheapHashes keyhash hn
+                   Bloom.evalHashes keyhash hn
                      `BV64.unsafeRemWord64` -- size must be > 0
                    BF.size filter           -- bloomInvariant ensures this
     BV64.prefetchIndex (BF.bitArray filter) bix
@@ -390,7 +390,7 @@ bloomQueriesBody !filters !keyhashes !candidateProbes =
       assert (hn >= 0 && hn < BF.hashesN filter) $ do
         let !keyhash = P.indexPrimArray keyhashes kix
             !bix     = (fromIntegral :: Word64 -> Int) $
-                       Bloom.evalCheapHashes keyhash hn
+                       Bloom.evalHashes keyhash hn
                          `BV64.unsafeRemWord64` -- size must be > 0
                        BF.size filter           -- bloomInvariant ensures this
         BV64.prefetchIndex (BF.bitArray filter) bix

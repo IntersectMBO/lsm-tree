@@ -9,10 +9,8 @@ import           Control.Monad
 import           Control.Monad.ST
 import           Control.Monad.ST.Unsafe
 import           Data.Bits ((.&.))
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Hash as Bloom
-import qualified Data.BloomFilter.Mutable as MBloom
+import           Data.BloomFilter.Blocked (Bloom, BloomSize)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Time
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -28,7 +26,6 @@ import           Text.Printf (printf)
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
 import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
-import           Database.LSMTree.Internal.RunAcc (numHashFunctions)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
@@ -60,7 +57,7 @@ benchmarkNumLookups = 25_000_000
 benchmarkBatchSize :: Int
 benchmarkBatchSize = 256
 
-benchmarkNumBitsPerEntry :: Integer
+benchmarkNumBitsPerEntry :: RequestedBitsPerEntry
 benchmarkNumBitsPerEntry = 10
 
 benchmarks :: IO ()
@@ -76,7 +73,7 @@ benchmarks = do
     let filterSizes = lsmStyleBloomFilters benchmarkSizeBase
                                            benchmarkNumBitsPerEntry
     putStrLn "Bloom filter stats:"
-    putStrLn "(numEntries, sizeFactor, numBits, numHashFuncs)"
+    putStrLn "(numEntries, sizeFactor, BloomSize { sizeBits, sizeHashes })"
     mapM_ print filterSizes
     putStrLn $ "total number of entries:\t " ++ show (totalNumEntries filterSizes)
     putStrLn $ "total filter size in bytes:\t " ++ show (totalNumBytes filterSizes)
@@ -94,19 +91,19 @@ benchmarks = do
     putStrLn ""
 
     hashcost <-
-      benchmark "makeCheapHashes"
+      benchmark "makeHashes"
                 "(This baseline is the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                   (benchMakeCheapHashes vbs))
+                   (benchMakeHashes vbs))
                 (fromIntegralChecked benchmarkNumLookups)
                 (0, 0)
                 289
 
     _ <-
-      benchmark "elemCheapHashes"
+      benchmark "elemHashes"
                 "(this is the simple one-by-one lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (benchElemCheapHashes vbs))
+                  (benchElemHashes vbs))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
@@ -180,10 +177,10 @@ benchmark name description action n (subtractTime, subtractAlloc) expectedAlloc 
     putStrLn ""
     return (timeNet, allocNet)
 
--- | (numEntries, sizeFactor, numBits, numHashFuncs)
-type BloomFilterSizeInfo = (Integer, Integer, Integer, Integer)
+-- | (numEntries, sizeFactor, (BloomSize numBits numHashFuncs))
+type BloomFilterSizeInfo = (Integer, Integer, BloomSize)
 type SizeBase     = Int
-type RequestedBitsPerEntry = Integer
+type RequestedBitsPerEntry = Double
 
 -- | Calculate the sizes of a realistic LSM style set of Bloom filters, one
 -- for each LSM run. This uses base 4, with 4 disk levels, using tiering
@@ -194,28 +191,29 @@ type RequestedBitsPerEntry = Integer
 --
 lsmStyleBloomFilters :: SizeBase -> RequestedBitsPerEntry -> [BloomFilterSizeInfo]
 lsmStyleBloomFilters l1 requestedBitsPerEntry =
-    [ (numEntries, sizeFactor, nbits, nhashes)
+    [ (numEntries, sizeFactor, bsize)
     | (numEntries, sizeFactor)
         <- replicate 8 (2^(l1+0), 1)   -- 8 runs at level 1 (tiering)
         ++ replicate 8 (2^(l1+2), 4)   -- 8 runs at level 2 (tiering)
         ++ replicate 8 (2^(l1+4),16)   -- 8 runs at level 3 (tiering)
         ++            [(2^(l1+8),256)] -- 1 run  at level 4 (leveling)
-    , let nbits   = numEntries * requestedBitsPerEntry
-          nhashes = numHashFunctions nbits numEntries
+    , let bsize = Bloom.sizeForBits requestedBitsPerEntry (fromIntegral numEntries)
     ]
 
 totalNumEntries, totalNumBytes :: [BloomFilterSizeInfo] -> Integer
 totalNumEntries filterSizes =
-    sum [ numEntries | (numEntries, _, _, _) <- filterSizes ]
+    sum [ numEntries | (numEntries, _, _) <- filterSizes ]
 
 totalNumBytes filterSizes =
-    sum [ nbits | (_,_,nbits,_) <- filterSizes ] `div` 8
+    sum [ toInteger (Bloom.sizeBits bsize)
+        | (_,_,bsize) <- filterSizes ]
+      `div` 8
 
 totalNumEntriesSanityCheck :: SizeBase -> [BloomFilterSizeInfo] -> Bool
 totalNumEntriesSanityCheck l1 filterSizes =
     totalNumEntries filterSizes
     ==
-    sum [ 2^l1 * sizeFactor | (_, sizeFactor, _, _) <- filterSizes ]
+    sum [ 2^l1 * sizeFactor | (_, sizeFactor, _) <- filterSizes ]
 
 
 -- | Input environment for benchmarking 'Bloom.elemMany'.
@@ -240,9 +238,7 @@ elemManyEnv :: [BloomFilterSizeInfo]
 elemManyEnv filterSizes rng0 =
   stToIO $ do
     -- create the filters
-    mbs <- sequence
-             [ MBloom.new (fromIntegralChecked numHashFuncs) (fromIntegralChecked numBits)
-             | (_, _, numBits, numHashFuncs) <- filterSizes ]
+    mbs <- sequence [ Bloom.new bsize | (_, _, bsize) <- filterSizes ]
     -- add elements
     foldM_
       (\rng (i, mb) -> do
@@ -251,13 +247,13 @@ elemManyEnv filterSizes rng0 =
          -- insert n elements into filter b
          let k :: Word256
              (!k, !rng') = uniform rng
-         MBloom.insert mb (serialiseKey k)
+         Bloom.insert mb (serialiseKey k)
          return rng'
       )
       rng0
       (zip [0 .. totalNumEntries filterSizes - 1]
            (cycle [ mb'
-                  | (mb, (_, sizeFactor, _, _)) <- zip mbs filterSizes
+                  | (mb, (_, sizeFactor, _)) <- zip mbs filterSizes
                   , mb' <- replicate (fromIntegralChecked sizeFactor) mb ]))
     V.fromList <$> mapM Bloom.unsafeFreeze mbs
 
@@ -280,21 +276,21 @@ benchInBatches !b !rng0 !action =
 
 -- | This gives us a combined cost of calculating the series of keys and their
 -- hashes (when used with 'benchInBatches').
-benchMakeCheapHashes :: Vector (Bloom SerialisedKey) -> BatchBench
-benchMakeCheapHashes !_bs !ks =
-    let khs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
-        !khs = V.convert (V.map Bloom.makeHashes ks)
+benchMakeHashes :: Vector (Bloom SerialisedKey) -> BatchBench
+benchMakeHashes !_bs !ks =
+    let khs :: VP.Vector (Bloom.Hashes SerialisedKey)
+        !khs = V.convert (V.map Bloom.hashes ks)
      in khs `seq` ()
 
 -- | This gives us a combined cost of calculating the series of keys, their
--- hashes, and then using 'Bloom.elemCheapHashes' with each filter  (when used
+-- hashes, and then using 'Bloom.elemHashes' with each filter  (when used
 -- with 'benchInBatches').
-benchElemCheapHashes :: Vector (Bloom SerialisedKey) -> BatchBench
-benchElemCheapHashes !bs !ks =
-    let khs :: VP.Vector (Bloom.CheapHashes SerialisedKey)
-        !khs = V.convert (V.map Bloom.makeHashes ks)
+benchElemHashes :: Vector (Bloom SerialisedKey) -> BatchBench
+benchElemHashes !bs !ks =
+    let khs :: VP.Vector (Bloom.Hashes SerialisedKey)
+        !khs = V.convert (V.map Bloom.hashes ks)
      in V.foldl'
           (\_ b -> VP.foldl'
-                     (\_ kh -> Bloom.elemHashes kh b `seq` ())
+                     (\_ kh -> Bloom.elemHashes b kh `seq` ())
                      () khs)
           () bs

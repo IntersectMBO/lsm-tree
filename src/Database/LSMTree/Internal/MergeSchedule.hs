@@ -53,10 +53,10 @@ import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow (..))
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Control.Tracer
-import           Data.BloomFilter (Bloom)
 import           Data.Foldable (fold, traverse_)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
+import           Database.LSMTree.Internal.BloomFilter (Bloom)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry (Entry, NumEntries (..),
                      unNumEntries)

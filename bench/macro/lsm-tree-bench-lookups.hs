@@ -9,9 +9,8 @@ import           Control.Monad.Primitive
 import           Control.Monad.ST.Strict (ST, runST)
 import           Control.RefCount
 import           Data.Bits ((.&.))
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
-import qualified Data.BloomFilter.Internal as Bloom
+import           Data.BloomFilter.Blocked (Bloom)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Time
 import qualified Data.Vector as V
 import           Data.Vector.Algorithms.Merge as Merge
@@ -167,14 +166,16 @@ benchmarks !caching = withFS $ \hfs hbio -> do
     traceMarkerIO "Computing statistics for generated runs"
     let numEntries = V.map Run.size runs
         numPages   = V.map Run.sizeInPages runs
-        nhashes    = V.map Bloom.hashesN blooms
+        nhashes    = V.map (Bloom.sizeHashes . Bloom.size) blooms
         bitsPerEntry = V.zipWith
-                         (\b (NumEntries n) -> fromIntegral (Bloom.length b) / fromIntegral n :: Double)
+                         (\b (NumEntries n) ->
+                             fromIntegral (Bloom.sizeBits (Bloom.size b))
+                           / fromIntegral n :: Double)
                          blooms
                          numEntries
         stats = V.zip4 numEntries numPages nhashes bitsPerEntry
     putStrLn "Actual stats for generated runs:"
-    putStrLn "(numEntries, numPages, hashesN, bits per entry)"
+    putStrLn "(numEntries, numPages, numHashes, bits per entry)"
     mapM_ print stats
 
     _ <- putStr "Pausing. Drop caches now! When ready, press enter." >> getLine
