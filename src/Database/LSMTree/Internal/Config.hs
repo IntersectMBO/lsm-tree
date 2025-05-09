@@ -158,13 +158,26 @@ instance NFData WriteBufferAlloc where
 -- NOTE: a __physical__ database entry is a key\/operation pair that exists in a
 -- file, i.e., a run. Multiple physical entries that have the same key
 -- constitute a __logical__ database entry.
+--
+-- There is a trade-off between bloom filter memory size, and the false
+-- positive rate. A higher false positive rate (FPR) leads to more unnecessary
+-- I\/O. As a guide, here are some points on the trade-off:
+--
+-- * FPR of 1e-2 requires approximately 9.9 bits per element
+-- * FPR of 1e-3 requires approximately 15.8 bits per element
+-- * FPR of 1e-4 requires approximately 22.6 bits per element
+--
+-- The policy can be specified either by fixing a FPR or by fixing the number
+-- of bits per entry.
+--
 data BloomFilterAlloc =
     -- | Allocate a fixed number of bits per physical entry in each bloom
     -- filter.
     AllocFixed
       !Word64 -- ^ Bits per physical entry.
   | -- | Allocate as many bits as required per physical entry to get the requested
-    -- false-positive rate. Do this for each bloom filter.
+    -- false-positive rate. Do this for each bloom filter. The value must be
+    -- in the range 0 < x < 1.
     AllocRequestFPR
       !Double -- ^ Requested FPR.
   deriving stock (Show, Eq)
