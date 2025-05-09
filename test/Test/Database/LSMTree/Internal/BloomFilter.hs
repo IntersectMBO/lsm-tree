@@ -61,7 +61,7 @@ roundtrip_prop :: Positive (Small Int) -> Positive Int ->  [Word64] -> Property
 roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
     counterexample (show bs) $
     case bloomFilterFromBS bs of
-      Left  err -> label (displayException err) $ property True
+      Left  err -> counterexample (displayException err) $ property False
       Right rhs -> lhs === rhs
   where
     sz  = BF.BloomSize { sizeBits   = limitBits bits,
