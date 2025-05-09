@@ -120,7 +120,7 @@ actualFalsePositiveRate bloomimpl policy n g0 =
 countFalsePositives :: forall bloom. BloomImpl bloom
                     -> B.BloomPolicy -> Int -> StdGen -> Int
 countFalsePositives BloomImpl{..} policy n g0 =
-    let (!g0', !g0'') = split g0
+    let (!g0', !g0'') = splitGen g0
 
         -- create a bloom filter from n elements from g0
         size  = sizeForPolicy policy n
