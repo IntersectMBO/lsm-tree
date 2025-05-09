@@ -16,6 +16,40 @@ module Data.BloomFilter.Blocked.Calc (
 import           Data.BloomFilter.Classic.Calc (BitsPerEntry, BloomPolicy (..),
                      BloomSize (..), FPR, NumEntries)
 
+{-
+Calculating the relationship between bits and FPR for the blocked
+implementation:
+
+While in principle there's a principled approach to this, it's complex to
+calculate numerically. So instead we compute a regression from samples of bits
+& FPR. The fpr-calc.hs program in this package does this for a range of bits,
+and outputs out both graph data (to feed into gnuplot) and it also a regression
+fit. The exact fit one gets depedends on the PRNG seed used.
+
+We calculate the regression two ways, one for FPR -> bits, and bits -> FPR.
+We use a quadratic regression, with the FPR in log space.
+
+The following is the sample of the regression fit output that we end up using
+in the functions 'policyForFPR' and 'policyForBits'.
+
+Regression, FPR indepedent, bits depedent:
+Fit {
+  fitParams = V3 8.035531421107756e-2 1.653017726702572 0.5343568065075601,
+  fitErrors = V3 7.602655075308541e-4 8.422591688796256e-3 2.0396917012822195e-2,
+  fitNDF    = 996,
+  fitWSSR   = 18.362899348627252
+}
+
+Regression, bits indepedent, FPR depedent:
+Fit {
+  fitParams = V3 (-4.990533525011442e-3) 0.5236326626983274 (-9.08567744857578e-2),
+  fitErrors = V3 3.2672398863476205e-5 8.69874829861453e-4 4.98365450607998e-3,
+  fitNDF    = 996,
+  fitWSSR   = 1.4326826384055948
+}
+
+-}
+
 policyForFPR :: FPR -> BloomPolicy
 policyForFPR fpr | fpr <= 0 || fpr >= 1 =
     error "bloomPolicyForFPR: fpr out of range (0,1)"
@@ -40,11 +74,6 @@ policyForFPR fpr =
     f2 = 8.035531421107756e-2
     f1 = 1.653017726702572
     f0 = 0.5343568065075601
-{-
-Regression, FPR indepedent, bits depedent:
-Fit {fitParams = V3 8.035531421107756e-2 1.653017726702572 0.5343568065075601, fitErrors = V3 7.602655075308541e-4 8.422591688796256e-3 2.0396917012822195e-2, fitNDF = 996, fitWSSR = 18.362899348627252}
-Fit {fitParams = V3 8.079418894776325e-2 1.6462569292513933 0.5550062950289885, fitErrors = V3 7.713375250014809e-4 8.542261871094414e-3 2.0678969159415226e-2, fitNDF = 996, fitWSSR = 19.00125036371992}
--}
 
 policyForBits :: BitsPerEntry -> BloomPolicy
 policyForBits c | c < 0 =
@@ -71,11 +100,6 @@ policyFPR BloomPolicy {
     f2 = -4.990533525011442e-3
     f1 =  0.5236326626983274
     f0 = -9.08567744857578e-2
-{-
-Regression, bits indepedent, FPR depedent:
-Fit {fitParams = V3 (-4.990533525011442e-3) 0.5236326626983274 (-9.08567744857578e-2), fitErrors = V3 3.2672398863476205e-5 8.69874829861453e-4 4.98365450607998e-3, fitNDF = 996, fitWSSR = 1.4326826384055948}
-Fit {fitParams = V3 (-5.03623760876204e-3) 0.5251544487138062 (-0.10110451821280719), fitErrors = V3 3.344945010267228e-5 8.905631581753235e-4 5.102181306816477e-3, fitNDF = 996, fitWSSR = 1.5016403117905384}
--}
 
 sizeForFPR :: FPR -> NumEntries -> BloomSize
 sizeForFPR = sizeForPolicy . policyForFPR
