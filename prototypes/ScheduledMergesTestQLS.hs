@@ -375,7 +375,7 @@ runActionIO action lookUp =
     ADump      var      -> logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
-    lookUpVar = lookUpGVar (Proxy :: Proxy IO) lookUp
+    lookUpVar = realLookupVar (Proxy :: Proxy IO) lookUp
 
     tr :: Tracer (ST RealWorld) Event
     tr = nullTracer

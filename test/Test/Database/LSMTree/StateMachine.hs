@@ -1604,7 +1604,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
         session = envSession env
 
     lookUp' :: Var h x -> Realized IO x
-    lookUp' = lookUpGVar (Proxy @(RealMonad h IO)) lookUp
+    lookUp' = realLookupVar (Proxy @(RealMonad h IO)) lookUp
 
 runIOSim ::
      forall s a h. Class.IsTable h
@@ -1715,7 +1715,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
         session = envSession env
 
     lookUp' :: Var h x -> Realized (IOSim s) x
-    lookUp' = lookUpGVar (Proxy @(RealMonad h (IOSim s))) lookUp
+    lookUp' = realLookupVar (Proxy @(RealMonad h (IOSim s))) lookUp
 
 -- | @'runRealWithInjectedErrors' _ errsVar merrs action rollback@ runs @action@
 -- with injected errors if available in @merrs@.
