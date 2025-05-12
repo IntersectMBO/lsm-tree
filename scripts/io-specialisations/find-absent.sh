@@ -17,6 +17,12 @@
 #     specialisation, an operation must have an application of a type
 #     variable named `m` as its result type.
 #
+#   * This utility requires GNU sed. If there is a command `gsed`
+#     available, then this utility will consider it to be GNU sed and
+#     use it. If there is no command `gsed` available but the operating
+#     system is Linux, then this utility will assume that `sed` is GNU
+#     sed and use it. In all other cases, this utility will fail.
+#
 # Implementation notes:
 #
 #   * The `sed` script that essentially performs all the work uses the
@@ -35,12 +41,31 @@
 #         specialisation or inlining directive has been found yet in the
 #         current module or the most recently found such directive is
 #         considered to not be relevant for the remainder of the module.
+#
+#   * This utility requires GNU sed because it uses a backreference in a
+#     regular expression, something that the POSIX standard does not
+#     guarantee to work.
+
+set -e
+
+export LC_COLLATE=C LC_CTYPE=C
+
+if command -v gsed >/dev/null
+then
+    gnu_sed=gsed
+elif [ $(uname) = Linux ]
+then
+    gnu_sed=sed
+else
+    printf 'GNU sed not found\n' >&2
+    exit 1
+fi
 
 specialise='SPECIALI[SZ]E'
 pragma_types="($specialise|INLINE)"
 hic='[[:alnum:]_#]' # Haskell identifier character
 
-LC_COLLATE=C LC_CTYPE=C sed -En -e '
+$gnu_sed -En -e '
     :start
     # Process the first line of a module header
     /^module / {
