@@ -10,6 +10,7 @@ module Data.BloomFilter.Blocked.Internal (
     -- * Mutable Bloom filters
     MBloom,
     new,
+    maxSizeBits,
 
     -- * Immutable Bloom filters
     Bloom,
@@ -97,6 +98,18 @@ instance NFData (MBloom s a) where
 
 -- | Create a new mutable Bloom filter.
 --
+-- The filter size is capped at 'maxSizeBits'.
+--
+new :: BloomSize -> ST s (MBloom s a)
+new BloomSize { sizeBits, sizeHashes } = do
+    let numBlocks = bitsToBlocks (max 1 (min maxSizeBits sizeBits))
+    mbBitArray <- BitArray.new numBlocks
+    pure MBloom {
+      mbNumBlocks = numBlocks,
+      mbNumHashes = max 1 sizeHashes,
+      mbBitArray
+    }
+
 -- The maximum size is $2^41$ bits (256 Gbytes). Tell us if you need bigger
 -- bloom filters.
 --
@@ -106,15 +119,8 @@ instance NFData (MBloom s a) where
 -- element, and split that into a pair of 32bit hashes which are used for
 -- probing the filter. To go bigger would need a pair of hashes.
 --
-new :: BloomSize -> ST s (MBloom s a)
-new BloomSize { sizeBits, sizeHashes } = do
-    let numBlocks = bitsToBlocks (max 1 (min 0x200_0000_0000 sizeBits))
-    mbBitArray <- BitArray.new numBlocks
-    pure MBloom {
-      mbNumBlocks = numBlocks,
-      mbNumHashes = max 1 sizeHashes,
-      mbBitArray
-    }
+maxSizeBits :: Int
+maxSizeBits = 0x200_0000_0000
 
 {-# NOINLINE insertHashes #-}
 insertHashes :: forall s a. MBloom s a -> Hashes a -> ST s ()

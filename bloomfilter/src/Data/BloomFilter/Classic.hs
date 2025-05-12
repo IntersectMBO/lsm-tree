@@ -59,6 +59,7 @@ module Data.BloomFilter.Classic (
     -- * Mutable Bloom filters
     MBloom,
     new,
+    maxSizeBits,
     insert,
     read,
 

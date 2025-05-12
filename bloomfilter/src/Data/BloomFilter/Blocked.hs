@@ -53,6 +53,7 @@ module Data.BloomFilter.Blocked (
     -- * Mutable Bloom filters
     MBloom,
     new,
+    maxSizeBits,
     insert,
 
     -- ** Conversion

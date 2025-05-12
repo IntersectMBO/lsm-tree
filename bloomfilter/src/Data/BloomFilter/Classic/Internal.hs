@@ -9,6 +9,7 @@ module Data.BloomFilter.Classic.Internal (
     -- * Mutable Bloom filters
     MBloom,
     new,
+    maxSizeBits,
 
     -- * Immutable Bloom filters
     Bloom,
@@ -100,17 +101,23 @@ instance NFData (MBloom s a) where
 
 -- | Create a new mutable Bloom filter.
 --
--- The size is ceiled at $2^48$. Tell us if you need bigger bloom filters.
+-- The filter size is capped at 'maxSizeBits'.
 --
 new :: BloomSize -> ST s (MBloom s a)
 new BloomSize { sizeBits, sizeHashes } = do
-    let !mbNumBits = max 1 (min 0x1_0000_0000_0000 sizeBits)
+    let !mbNumBits = max 1 (min maxSizeBits sizeBits)
     mbBitArray <- BitArray.new mbNumBits
     pure MBloom {
       mbNumBits,
       mbNumHashes = max 1 sizeHashes,
       mbBitArray
     }
+
+-- | The maximum filter size is $2^48$ bits. Tell us if you need bigger bloom
+-- filters.
+--
+maxSizeBits :: Int
+maxSizeBits = 0x1_0000_0000_0000
 
 insertHashes :: MBloom s a -> Hashes a -> ST s ()
 insertHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
