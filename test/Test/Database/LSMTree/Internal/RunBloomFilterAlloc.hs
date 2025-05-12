@@ -38,7 +38,6 @@ import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
                      newMBloom)
 import           System.Random hiding (Seed)
 import           Test.QuickCheck
-import           Test.QuickCheck.Gen
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Arbitrary (noTags,
@@ -84,9 +83,7 @@ prop_verifyFPR p alloc (NumEntries numEntries) (Seed seed) =
       -- error margins
       lb = expectedFPR - 0.1
       ub = expectedFPR + 0.03
-  in  assert (fprInvariant True measuredFPR) $ -- measured FPR is in the range [0,1]
-      assert (fprInvariant True expectedFPR) $ -- expected FPR is in the range [0,1]
-      counterexample (printf "expected %f <= %f <= %f" lb measuredFPR ub) $
+  in  counterexample (printf "expected %f <= %f <= %f" lb measuredFPR ub) $
       lb <= measuredFPR .&&. measuredFPR <= ub
 
 {-------------------------------------------------------------------------------
@@ -107,7 +104,7 @@ instance Arbitrary RunBloomFilterAlloc where
 
 allocInvariant :: RunBloomFilterAlloc -> Bool
 allocInvariant (RunAllocFixed x)      = fixedInvariant x
-allocInvariant (RunAllocRequestFPR x) = fprInvariant False x
+allocInvariant (RunAllocRequestFPR x) = fprInvariant x
 
 genFixed :: Gen Word64
 genFixed = choose (fixedLB, fixedUB)
@@ -119,21 +116,30 @@ fixedInvariant :: Word64 -> Bool
 fixedInvariant x = fixedLB <= x && x <= fixedUB
 
 fixedLB :: Word64
-fixedLB = 0
+fixedLB = 3 -- bits per entry
 
 fixedUB :: Word64
-fixedUB = 20
+fixedUB = 24 -- bits per entry
 
 genFPR :: Gen Double
-genFPR = genDouble `suchThat` fprInvariant False
+genFPR = do m <- choose (1, 9.99) -- not less than 1 or it's a different exponent
+            e <- choose (fpr_exponentLB, fpr_exponentUB)
+            pure (m * 10 ^^ e)
+        `suchThat` fprInvariant
+
+fpr_exponentLB :: Int
+fpr_exponentLB = -5 -- 1 in 10,000
+
+fpr_exponentUB :: Int
+fpr_exponentUB = -1 -- 1 in 10
 
 shrinkFPR :: Double -> [Double]
-shrinkFPR x = [ x' | x' <- shrink x, fprInvariant False x']
+shrinkFPR x = [ x' | x' <- shrink x, fprInvariant x']
 
-fprInvariant :: Bool -> Double -> Bool
-fprInvariant incl x
-  | incl      = 0 <= x && x <= 1
-  | otherwise = 0 < x && x < 1
+-- | The FPR calculations are only accurate over the range 0.25 down to 0.00006
+-- which corresponds to bits in the range 3 .. 24.
+fprInvariant :: Double -> Bool
+fprInvariant x = 6e-5 < x && x < 2.5e-1
 
 --
 -- NumEntries
