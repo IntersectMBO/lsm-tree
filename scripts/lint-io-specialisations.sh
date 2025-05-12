@@ -10,7 +10,7 @@ IFS='
 
 export LC_COLLATE=C LC_TYPE=C
 
-printf 'Linting the main library regarding `IO` specialisations\n'
+printf 'Linting the main library for missing `IO` specialisations\n'
 
 if ! [ -f "$absence_allowed_file" ]
 then
