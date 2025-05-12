@@ -44,7 +44,7 @@ instance SerialiseKey Word256 where
     RB.RawBytes $ mkPrimVector 0 32 $ P.runByteArray $ do
       ba <- P.newByteArray 32
       P.writeByteArray ba 0 $ byteSwapWord256 w256
-      return ba
+      pure ba
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word256" 32 len $
       byteSwapWord256 $ indexWord8ArrayAsWord256 ba off
@@ -56,7 +56,7 @@ instance SerialiseValue Word256 where
     RB.RawBytes $ mkPrimVector 0 32 $ P.runByteArray $ do
       ba <- P.newByteArray 32
       P.writeByteArray ba 0 w256
-      return ba
+      pure ba
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word256" 32 len $
       indexWord8ArrayAsWord256 ba off
@@ -103,7 +103,7 @@ instance SerialiseKey Word128 where
     RB.RawBytes $ mkPrimVector 0 16 $ P.runByteArray $ do
       ba <- P.newByteArray 16
       P.writeByteArray ba 0 $ byteSwapWord128 w128
-      return ba
+      pure ba
   deserialiseKey (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word128" 16 len $
       byteSwapWord128 $ indexWord8ArrayAsWord128 ba off
@@ -115,7 +115,7 @@ instance SerialiseValue Word128 where
     RB.RawBytes $ mkPrimVector 0 16 $ P.runByteArray $ do
       ba <- P.newByteArray 16
       P.writeByteArray ba 0 w128
-      return ba
+      pure ba
   deserialiseValue (RawBytes (VP.Vector off len ba)) =
     requireBytesExactly "Word128" 16 len $
       indexWord8ArrayAsWord128 ba off

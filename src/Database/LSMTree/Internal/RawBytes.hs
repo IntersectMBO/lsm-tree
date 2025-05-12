@@ -197,7 +197,7 @@ force (RawBytes (VP.Vector off len ba))
     = BA.runByteArray $ do
         mba <- BA.newByteArray len
         BA.copyByteArray mba 0 ba off len
-        return mba
+        pure mba
 
 {-------------------------------------------------------------------------------
   Conversions

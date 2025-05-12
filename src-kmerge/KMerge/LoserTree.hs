@@ -46,7 +46,7 @@ newLoserTree (x0 :| xs0) = do
       [] -> do
         sizeRef <- newPrimVar 0
         holeRef <- newPrimVar 0
-        return $! (MLT sizeRef holeRef ids arr, x0)
+        pure $! (MLT sizeRef holeRef ids arr, x0)
       _ -> do
         setPrimArray ids 0 len (-1)
         loop ids arr len $ x0 :| xs0
@@ -83,13 +83,13 @@ newLoserTree (x0 :| xs0) = do
                     then do
                         sizeRef <- newPrimVar len
                         holeRef <- newPrimVar idxX
-                        return (MLT sizeRef holeRef ids arr, x)
+                        pure (MLT sizeRef holeRef ids arr, x)
                     else do
                         writePrimArray  ids j idxX
                         writeSmallArray arr j x
                         sizeRef <- newPrimVar len
                         holeRef <- newPrimVar idxY
-                        return (MLT sizeRef holeRef ids arr, y)
+                        pure (MLT sizeRef holeRef ids arr, y)
             else do
                     if x < y
                     then do
@@ -120,7 +120,7 @@ remove :: forall a m. (PrimMonad m, Ord a) => MutableLoserTree (PrimState m) a -
 remove (MLT sizeRef holeRef ids arr) = do
     size <- readPrimVar sizeRef
     if size <= 0
-    then return Nothing
+    then pure Nothing
     else do
         writePrimVar sizeRef (size - 1)
         hole <- readPrimVar holeRef
@@ -132,12 +132,12 @@ remove (MLT sizeRef holeRef ids arr) = do
         y     <- readSmallArray arr j
         if j <= 0
         then if idxY < 0
-            then return Nothing
+            then pure Nothing
             else do
                 writePrimArray  ids j (-1)
                 writeSmallArray arr j placeholder
                 writePrimVar holeRef idxY
-                return (Just y)
+                pure (Just y)
         else if idxY < 0
             then
                 siftEmpty (parentOf j)
@@ -151,7 +151,7 @@ replace :: forall a m. (PrimMonad m, Ord a) => MutableLoserTree (PrimState m) a 
 replace (MLT sizeRef holeRef ids arr) val = do
     size <- readPrimVar sizeRef
     if size <= 0
-    then return val
+    then pure val
     else do
         hole <- readPrimVar holeRef
         siftUp ids arr holeRef hole hole val
@@ -171,17 +171,17 @@ siftUp ids arr holeRef = sift
         then if idxY < 0
             then do
                 writePrimVar holeRef idxX
-                return x
+                pure x
             else do
                 if x <= y
                 then do
                     writePrimVar holeRef idxX
-                    return x
+                    pure x
                 else do
                     writePrimArray  ids j idxX
                     writeSmallArray arr j x
                     writePrimVar holeRef idxY
-                    return y
+                    pure y
         else if idxY < 0
             then sift (parentOf j) idxX x
             else do

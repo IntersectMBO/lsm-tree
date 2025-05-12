@@ -156,14 +156,14 @@ timed action = do
     x  <- action
     t2 <- Clock.getTime Clock.Monotonic
     let !t = fromIntegral (Clock.toNanoSecs (Clock.diffTimeSpec t2 t1)) * 1e-9
-    return (x, t)
+    pure (x, t)
 
 timed_ :: IO () -> IO Double
 timed_ action = do
     t1 <- Clock.getTime Clock.Monotonic
     action
     t2 <- Clock.getTime Clock.Monotonic
-    return $! fromIntegral (Clock.toNanoSecs (Clock.diffTimeSpec t2 t1)) * 1e-9
+    pure $! fromIntegral (Clock.toNanoSecs (Clock.diffTimeSpec t2 t1)) * 1e-9
 
 -------------------------------------------------------------------------------
 -- setup
@@ -270,7 +270,7 @@ doDryRun' gopts opts = do
             let k = makeKey k'
             evaluate k >> evaluate (makeValue k)
 
-        return nextG
+        pure nextG
 
     when (check opts) $ do
         duplicates <- readIORef duplicateRef
@@ -376,7 +376,7 @@ doRun' gopts opts =
 
                 RocksDB.write db wopts batch
 
-            return nextG
+            pure nextG
   where
     initGen = MCG.make
         (fromIntegral $ initialSize gopts + batchSize opts * batchCount opts)
@@ -409,7 +409,7 @@ main = do
 -------------------------------------------------------------------------------
 
 forFoldM_ :: Monad m => s -> [a] -> (a -> s -> m s) -> m s
-forFoldM_ !s []     _ = return s
+forFoldM_ !s []     _ = pure s
 forFoldM_ !s (x:xs) f = do
     !s' <- f x s
     forFoldM_ s' xs f

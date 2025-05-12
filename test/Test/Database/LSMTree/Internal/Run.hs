@@ -191,7 +191,7 @@ prop_WriteNumEntries fs hbio wb@(RunData m) =
     withRunAt fs hbio runParams (simplePath 42) wb' $ \run -> do
       let !runSize = Run.size run
 
-      return . labelRunData wb' $
+      pure . labelRunData wb' $
         NumEntries (Map.size m) === runSize
   where
     wb' = serialiseRunData wb
@@ -228,8 +228,8 @@ prop_WriteAndOpen fs hbio wb =
       -- make sure runs get closed again
       releaseRef loaded
 
-      -- TODO: return a proper Property instead of using assertEqual etc.
-      return (property True)
+      -- TODO: pure a proper Property instead of using assertEqual etc.
+      pure (property True)
 
 -- | Writing and loading a 'WriteBuffer' gives the same in-memory
 --   representation as the original write buffer.
@@ -252,8 +252,8 @@ prop_WriteAndOpenWriteBuffer hfs hbio rd = do
       withRef wbb $ \wbb' -> do
         wb' <- readWriteBuffer resolve hfs hbio kOpsPath (WBB.blobFile wbb')
         assertEqual "k/ops" wb wb'
-  -- TODO: return a proper Property instead of using assertEqual etc.
-  return (property True)
+  -- TODO: pure a proper Property instead of using assertEqual etc.
+  pure (property True)
 
 -- | Writing run data to the disk via 'writeWriteBuffer' gives the same key/ops
 --   and blob files as when written out as a run.
@@ -289,5 +289,5 @@ prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
             rdBlob <- FSL.hGetAll hfs rdBlobHandle
             wbBlob <- FSL.hGetAll hfs wbBlobHandle
             assertEqual "writtenRunBlob/writtenWriteBufferBlob" rdBlob wbBlob
-  -- TODO: return a proper Property instead of using assertEqual etc.
-  return (property True)
+  -- TODO: pure a proper Property instead of using assertEqual etc.
+  pure (property True)

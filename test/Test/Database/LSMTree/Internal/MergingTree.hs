@@ -105,12 +105,12 @@ mkEmptyMergingTree (NonObviouslyEmptyLevelMerge emt) = do
     mt  <- mkEmptyMergingTree emt
     mt' <- newPendingLevelMerge [] (Just mt)
     releaseRef mt
-    return mt'
+    pure mt'
 mkEmptyMergingTree (NonObviouslyEmptyUnionMerge emts) = do
     mts <- mapM mkEmptyMergingTree emts
     mt' <- newPendingUnionMerge mts
     mapM_ releaseRef mts
-    return mt'
+    pure mt'
 
 {-------------------------------------------------------------------------------
   Lookup
@@ -130,7 +130,7 @@ prop_lookupTree hfs hbio keys mtd = do
       arenaManager <- newArenaManager
       withActionRegistry $ \reg -> do
         res <- fetchBlobs =<< lookupsIO reg arenaManager tree
-        return $
+        pure $
           normalise res
             === normalise (modelLookup (modelFoldMergingTree mtd) keys)
   where
@@ -155,13 +155,13 @@ prop_lookupTree hfs hbio keys mtd = do
         isStructurallyEmpty tree >>= \case
           True ->
             -- if the tree was empty, then the model should also have no results
-            return $ V.map (const Nothing) keys
+            pure $ V.map (const Nothing) keys
           False -> do
             batches <- buildLookupTree reg tree
             results <- mapMStrict (performLookups mgr) batches
             acc <- foldLookupTree resolveVal results
             traverse_ (traverse_ (delayedCommit reg . releaseRef)) batches
-            return acc
+            pure acc
 
     performLookups mgr runs =
         Async.async $
@@ -235,12 +235,12 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
         (MR.MergeDebt debt, _) <- remainingMergeDebt tree
         if debt <= 0
           then
-            return $ property True
+            pure $ property True
           else do
             leftovers <-
               supplyCredits hfs hbio resolveVal runParams threshold root counter tree c
             (MR.MergeDebt debt', _) <- remainingMergeDebt tree
-            return $
+            pure $
               -- semi-useful, but mainly tells us in how many steps we supplied
               tabulate "supplied credits" [showPowersOf10 (fromIntegral c)] $
               counterexample (show (debt, leftovers, debt')) $ conjoin [
@@ -250,7 +250,7 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
                     debt' <= debt - (c - leftovers)
                 ]
       (MR.MergeDebt finalDebt, _) <- remainingMergeDebt tree
-      return $
+      pure $
         labelDebt initialDebt finalDebt $
           conjoin (toList props)
   where

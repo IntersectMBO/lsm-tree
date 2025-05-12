@@ -113,7 +113,7 @@ buildLookupTree reg (DeRef mt) =
       MT.OngoingTreeMerge mr -> do
         !rs <- withRollback reg (MR.duplicateRuns mr) (V.mapM_ releaseRef)
         ty <- MR.mergeType mr
-        return $ case ty of
+        pure $ case ty of
           Nothing            -> LookupBatch rs  -- just one run
           Just MR.MergeLevel -> LookupBatch rs  -- combine runs
           Just MR.MergeUnion -> mkLookupNode MR.MergeUnion  -- separate
@@ -124,12 +124,12 @@ buildLookupTree reg (DeRef mt) =
       MT.PendingTreeMerge (MT.PendingLevelMerge prs (Just tree)) -> do
         !child <- buildLookupTree reg tree
         if V.null prs
-          then return child
+          then pure child
           else do
             preExisting <- do
               LookupBatch . V.concatMap id <$!>  -- combine runs
                 V.mapMStrict duplicatePreExistingRun prs
-            return $ mkLookupNode MR.MergeLevel $ V.fromList [preExisting, child]
+            pure $ mkLookupNode MR.MergeLevel $ V.fromList [preExisting, child]
       MT.PendingTreeMerge (MT.PendingUnionMerge trees) ->
         mkLookupNode MR.MergeUnion <$!> V.mapMStrict (buildLookupTree reg) trees
   where

@@ -12,7 +12,7 @@ import           Prelude hiding (notElem)
 main :: IO ()
 main = do
     files <- getArgs
-    dictionary <- readFile "/usr/share/dict/words" `catchIO` \_ -> return "yes no"
+    dictionary <- readFile "/usr/share/dict/words" `catchIO` \_ -> pure "yes no"
     let !bloom = easyList 0.01 (words dictionary)
     forM_ files $ \file -> do
         ws <- words <$> readFile file

@@ -119,7 +119,7 @@ deRefWeakBlobRef WeakBlobRef{weakBlobRefFile, weakBlobRefSpan} = do
     mstrongBlobRefFile <- deRefWeak weakBlobRefFile
     case mstrongBlobRefFile of
       Just strongBlobRefFile ->
-        return StrongBlobRef {
+        pure StrongBlobRef {
           strongBlobRefFile,
           strongBlobRefSpan = weakBlobRefSpan
         }

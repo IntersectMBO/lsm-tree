@@ -77,7 +77,7 @@ insert !mb !x = insertHashes mb (makeHashes x)
 insertHashes :: Hashes h => MBloom' s h a -> h a -> ST s ()
 insertHashes (MBloom k m v) !h = go 0
   where
-    go !i | i >= k = return ()
+    go !i | i >= k = pure ()
           | otherwise = let !idx = evalHashes h i `rem` m
                         in V.unsafeWrite v idx True >> go (i + 1)
 
@@ -90,13 +90,13 @@ elem elt mb = elemHashes (makeHashes elt) mb
 elemHashes :: forall h s a. Hashes h => h a -> MBloom' s h a -> ST s Bool
 elemHashes !ch (MBloom k m v) = go 0 where
     go :: Int -> ST s Bool
-    go !i | i >= k    = return True
+    go !i | i >= k    = pure True
           | otherwise = do let !idx' = evalHashes ch i
                            let !idx = idx' `rem` m
                            b <- V.unsafeRead v idx
                            if b
                            then go (i + 1)
-                           else return False
+                           else pure False
 
 -- | Return the size of a mutable Bloom filter, in bits.
 length :: MBloom' s h a -> Word64

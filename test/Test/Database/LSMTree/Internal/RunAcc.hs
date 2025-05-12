@@ -108,10 +108,10 @@ fromListPageAcc kops =
       sequence_
         [ do added <- PageAcc.pageAccAddElem pacc k e
              -- we expect the kops to all fit in one page
-             assert added $ return ()
+             assert added $ pure ()
         | (k,e) <- kops ]
       page <- PageAcc.serialisePageAcc pacc
-      return (page, []))
+      pure (page, []))
 
 pagesToByteString :: RawPage -> [RawOverflowPage] -> BS.ByteString
 pagesToByteString rp rops =

@@ -84,7 +84,7 @@ bloomFilterFromSBS (SBS ba') = do
         vec64 = mkPrimVector 2 len64 ba
 
     let bloom = BF.Bloom (fromIntegral hsn) len (BV64.BV64 vec64)
-    assert (BF.bloomInvariant bloom) $ return bloom
+    assert (BF.bloomInvariant bloom) $ pure bloom
   where
     ba :: ByteArray
     ba = ByteArray ba'

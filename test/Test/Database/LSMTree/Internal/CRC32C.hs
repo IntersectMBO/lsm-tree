@@ -66,11 +66,11 @@ prop_putGet (PartialIOErrors errs) bss =
       crc2 <- withFile fs path ReadMode $ \h ->
                 let go crc = do
                       (bs,crc') <- hGetSomeCRC32C fs h 42 crc
-                      if BS.null bs then return crc' else go crc'
+                      if BS.null bs then pure crc' else go crc'
                  in go initialCRC32C
       crc3 <- readFileCRC32C fs path
       let expected = CRC32C (Data.Digest.CRC32C.crc32c (BS.concat bss))
-      return (all (expected==) [crc1, crc2, crc3])
+      pure (all (expected==) [crc1, crc2, crc3])
 
 -- TODO: test like prop_putGet but with put corruption, to detect that the
 -- crc doesn't match, to detect the corruption.
@@ -82,7 +82,7 @@ prop_writeRead (PartialIOErrors errs) chks =
       let path = mkFsPath ["foo.checksums"]
       writeChecksumsFile fs path chks
       chks' <- readChecksumsFile fs path
-      return (chks == chks')
+      pure (chks == chks')
 
 instance Arbitrary CRC32C where
     arbitrary = CRC32C <$> arbitraryBoundedIntegral
@@ -106,7 +106,7 @@ instance Arbitrary PartialIOErrors where
     arbitrary = do
         hGetSomeE <- genPartialErrorStream
         hPutSomeE <- genPartialErrorStream
-        return $ PartialIOErrors FsSim.emptyErrors {
+        pure $ PartialIOErrors FsSim.emptyErrors {
                                    FsSim.hGetSomeE,
                                    FsSim.hPutSomeE
                                  }
@@ -147,7 +147,7 @@ prop_hGetExactlyCRC32C_SBS (BS bs) =
     simpl fs h crc = do
       lbs <- hGetAll fs h
       let !crc' = BSL.foldlChunks (flip updateCRC32C) crc lbs
-      return (SBS.toShort (BS.toStrict lbs), crc')
+      pure (SBS.toShort (BS.toStrict lbs), crc')
 
 
 prop_hGetAllCRC32C':: Positive (Small ByteCount) -> BS -> Property
@@ -169,4 +169,4 @@ prop_hGetAllCRC32C' (Positive (Small chunkSize)) (BS bs) =
     simpl fs h crc = do
       lbs <- hGetAll fs h
       let !crc' = BSL.foldlChunks (flip updateCRC32C) crc lbs
-      return crc'
+      pure crc'

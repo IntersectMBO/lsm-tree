@@ -210,7 +210,7 @@ instance InLockstep Model where
 
   arbitraryWithVars ctx model =
     case findVars ctx (Proxy :: Proxy (LSM RealWorld)) of
-      []   -> return (Some ANew)
+      []   -> pure (Some ANew)
       vars ->
         let kvars = findVars ctx (Proxy :: Proxy Key)
             existingKey = Left <$> elements kvars
@@ -361,17 +361,17 @@ runActionIO action lookUp =
   stToIO $
   case action of
     ANew                -> new
-    AInsert var evk v b -> insert tr (lookUpVar var) k v b >> return k
+    AInsert var evk v b -> insert tr (lookUpVar var) k v b >> pure k
       where k = either lookUpVar id evk
-    ADelete var evk     -> delete tr (lookUpVar var) k >> return ()
+    ADelete var evk     -> delete tr (lookUpVar var) k >> pure ()
       where k = either lookUpVar id evk
-    AMupsert var evk v  -> mupsert tr (lookUpVar var) k v >> return k
+    AMupsert var evk v  -> mupsert tr (lookUpVar var) k v >> pure k
       where k = either lookUpVar id evk
     ALookup var evk     -> lookup (lookUpVar var) k
       where k = either lookUpVar id evk
     ADuplicate var      -> duplicate (lookUpVar var)
     AUnions vars        -> unions (map lookUpVar vars)
-    ASupplyUnion var c  -> supplyUnionCredits (lookUpVar var) (getNonNegative c) >> return ()
+    ASupplyUnion var c  -> supplyUnionCredits (lookUpVar var) (getNonNegative c) >> pure ()
     ADump      var      -> logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a

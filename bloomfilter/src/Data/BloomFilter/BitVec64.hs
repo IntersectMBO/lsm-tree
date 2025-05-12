@@ -73,7 +73,7 @@ new s
   | numWords >= 128 = do
     mba <- newPinnedByteArray numBytes
     setByteArray mba 0 numBytes (0 :: Word8)
-    return (MBV64 (VP.MVector 0 numWords mba))
+    pure (MBV64 (VP.MVector 0 numWords mba))
   | otherwise =
     MBV64 <$> VPM.new numWords
   where
@@ -90,7 +90,7 @@ unsafeWrite (MBV64 mbv) i x = do
 unsafeRead :: MBitVec64 s -> Word64 -> ST s Bool
 unsafeRead (MBV64 mbv) i = do
     !w <- VPM.unsafeRead mbv (w2i j)
-    return $! testBit w (w2i k)
+    pure $! testBit w (w2i k)
   where
     !j = unsafeShiftR i 6 -- `div` 64
     !k = i .&. 63         -- `mod` 64

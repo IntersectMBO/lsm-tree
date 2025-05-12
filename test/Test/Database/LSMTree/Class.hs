@@ -205,7 +205,7 @@ readCursorAllWithBlobs tbl ses cursor = go . getCursorReadSchedule
     go (n : ns) = do
       res <- readCursorWithBlobs tbl ses cursor n
       if V.null res
-        then return [res]
+        then pure [res]
         else (res :) <$> go ns
 
 type CursorReadSchedule = InfiniteList (Positive Int)
@@ -229,7 +229,7 @@ prop_lookupInsert h ups k v = ioProperty $ do
       inserts tbl (V.singleton (k, v, Nothing))
       res <- lookupsWithBlobs tbl ses (V.singleton k)
 
-      return $ res === V.singleton (Found v)
+      pure $ res === V.singleton (Found v)
 
 -- | Insert doesn't change the lookup results of other keys.
 prop_lookupInsertElse ::
@@ -244,7 +244,7 @@ prop_lookupInsertElse h ups k v testKeys = ioProperty $ do
       inserts tbl (V.singleton (k, v, Nothing))
       res2 <-  lookupsWithBlobs tbl ses testKeys'
 
-      return $ res1 === res2
+      pure $ res1 === res2
 
 -- | You cannot lookup what you have just deleted
 prop_lookupDelete ::
@@ -255,7 +255,7 @@ prop_lookupDelete h ups k = ioProperty $ do
     withSessionAndTableNew h ups $ \ses tbl -> do
       deletes tbl (V.singleton k)
       res <- lookupsWithBlobs tbl ses (V.singleton k)
-      return $ res === V.singleton NotFound
+      pure $ res === V.singleton NotFound
 
 -- | Delete doesn't change the lookup results of other keys
 prop_lookupDeleteElse ::
@@ -270,7 +270,7 @@ prop_lookupDeleteElse h ups k testKeys = ioProperty $ do
       deletes tbl (V.singleton k)
       res2 <-  lookupsWithBlobs tbl ses testKeys'
 
-      return $ res1 === res2
+      pure $ res1 === res2
 
 -- | Last insert wins.
 prop_insertInsert ::
@@ -281,7 +281,7 @@ prop_insertInsert h ups k v1 v2 = ioProperty $ do
     withSessionAndTableNew h ups $ \ses tbl -> do
       inserts tbl (V.fromList [(k, v1, Nothing), (k, v2, Nothing)])
       res <- lookupsWithBlobs tbl ses (V.singleton k)
-      return $ res === V.singleton (Found v2)
+      pure $ res === V.singleton (Found v2)
 
 -- | Inserts with different keys don't interfere.
 prop_insertCommutes ::
@@ -293,7 +293,7 @@ prop_insertCommutes h ups k1 v1 k2 v2 = k1 /= k2 ==> ioProperty do
       inserts tbl (V.fromList [(k1, v1, Nothing), (k2, v2, Nothing)])
 
       res <- lookupsWithBlobs tbl ses (V.fromList [k1,k2])
-      return $ res === V.fromList [Found v1, Found v2]
+      pure $ res === V.fromList [Found v1, Found v2]
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for cursors
@@ -311,7 +311,7 @@ prop_readCursorSorted h ups offset ns = ioProperty $ do
       res <- withCursor offset tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let keys = map queryResultKey (V.toList res)
-      return $ keys === List.sort keys
+      pure $ keys === List.sort keys
 
 -- | Cursor reads return the requested number of results, until the end.
 prop_readCursorNumResults ::
@@ -326,7 +326,7 @@ prop_readCursorNumResults h ups offset ns = ioProperty $ do
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let elemsRead = map V.length res
       let numFullReads = length res - 2
-      return $ last elemsRead === 0
+      pure $ last elemsRead === 0
           .&&. take numFullReads elemsRead
            === take numFullReads (getCursorReadSchedule ns)
 
@@ -341,7 +341,7 @@ prop_readCursorInsert h ups ns k v = ioProperty $ do
       inserts tbl (V.singleton (k, v, Nothing))
       res <- withCursor Nothing tbl $ \cursor ->
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      return $ V.find (\r -> queryResultKey r == k) res
+      pure $ V.find (\r -> queryResultKey r == k) res
            === Just (Entry k v)
 
 -- | You can't read what you deleted.
@@ -355,7 +355,7 @@ prop_readCursorDelete h ups ns k = ioProperty $ do
       deletes tbl (V.singleton k)
       res <- withCursor Nothing tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      return $ V.find (\r -> queryResultKey r == k) res === Nothing
+      pure $ V.find (\r -> queryResultKey r == k) res === Nothing
 
 -- | Updates don't change the cursor read results of other keys.
 prop_readCursorDeleteElse ::
@@ -372,7 +372,7 @@ prop_readCursorDeleteElse h ups offset ns ups2 = ioProperty $ do
       res2 <- withCursor offset tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       let updatedKeys = map fst ups2
-      return $ V.filter (\r -> queryResultKey r `notElem` updatedKeys) res1
+      pure $ V.filter (\r -> queryResultKey r `notElem` updatedKeys) res1
            === V.filter (\r -> queryResultKey r `notElem` updatedKeys) res2
 
 -- | Updates don't affect previously created cursors.
@@ -389,7 +389,7 @@ prop_readCursorStableView h ups offset ns ups2 = ioProperty $ do
       res2 <- withCursor offset tbl $ \cursor -> do
         updates tbl (V.fromList ups2)
         readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      return $ res1 === res2
+      pure $ res1 === res2
 
 -- | Creating a cursor at an offset simply skips a prefix.
 prop_readCursorOffset ::
@@ -404,7 +404,7 @@ prop_readCursorOffset h ups offset ns = ioProperty $ do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
       res2 <- withCursor Nothing tbl $ \cursor -> do
         V.concat <$> readCursorAllWithBlobs (Proxy.Proxy @h) ses cursor ns
-      return $ res1 === V.dropWhile ((< offset) . queryResultKey) res2
+      pure $ res1 === V.dropWhile ((< offset) . queryResultKey) res2
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for range lookups
@@ -438,7 +438,7 @@ prop_lookupRangeLikeLookups h ups r = ioProperty $ do
       res2 <- fmap (V.catMaybes . V.zipWith queryResultFromLookup testKeys) $
         lookupsWithBlobs tbl ses testKeys
 
-      return $ res1 === res2
+      pure $ res1 === res2
 
   where
     nubSort = map NE.head . NE.group . List.sort
@@ -461,8 +461,8 @@ prop_insertLookupRange h ups k v r = ioProperty $ do
           p rlr = queryResultKey rlr /= k
 
       if evalRange r k
-      then return $ vsortOn queryResultKey (V.cons (Entry k v) (V.filter p res)) === res'
-      else return $ res === res'
+      then pure $ vsortOn queryResultKey (V.cons (Entry k v) (V.filter p res)) === res'
+      else pure $ res === res'
 
   where
     vsortOn f vec = runST $ do
@@ -486,7 +486,7 @@ prop_lookupInsertBlob h ups k v blob = ioProperty $ do
       inserts tbl (V.singleton (k, v, Just blob))
       res <- lookupsWithBlobs tbl ses (V.singleton k)
 
-      return $ res === V.singleton (FoundWithBlob v blob)
+      pure $ res === V.singleton (FoundWithBlob v blob)
 
 -- | Last insert wins.
 prop_insertInsertBlob ::
@@ -497,7 +497,7 @@ prop_insertInsertBlob h ups k v1 v2 mblob1 mblob2 = ioProperty $ do
     withSessionAndTableNew h ups $ \ses tbl -> do
       inserts tbl (V.fromList [(k, v1, mblob1), (k, v2, mblob2)])
       res <- lookupsWithBlobs tbl ses (V.singleton k)
-      return $ res === case mblob2 of
+      pure $ res === case mblob2 of
           Nothing    -> V.singleton (Found v2)
           Just blob2 -> V.singleton (FoundWithBlob v2 blob2)
 
@@ -512,7 +512,7 @@ prop_insertCommutesBlob h ups k1 v1 mblob1 k2 v2 mblob2 = k1 /= k2 ==> ioPropert
       inserts tbl (V.fromList [(k1, v1, mblob1), (k2, v2, mblob2)])
 
       res <- lookupsWithBlobs tbl ses $ V.fromList [k1,k2]
-      return $ res === case (mblob1, mblob2) of
+      pure $ res === case (mblob1, mblob2) of
           (Nothing,    Nothing)    -> V.fromList [Found v1,               Found v2]
           (Just blob1, Nothing)    -> V.fromList [FoundWithBlob v1 blob1, Found v2]
           (Nothing,    Just blob2) -> V.fromList [Found v1,               FoundWithBlob v2 blob2]
@@ -561,7 +561,7 @@ prop_lookupUpdate h ups k v1 mb1 v2 = ioProperty $ do
       res <- lookupsWithBlobs tbl s (V.singleton k)
 
       -- notice the order.
-      return $ res === V.singleton (Found (resolve v2 v1))
+      pure $ res === V.singleton (Found (resolve v2 v1))
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for monoidal table unions
@@ -632,7 +632,7 @@ prop_union h ups1 ups2
           unionResult   (FoundWithBlob v1 b1) (FoundWithBlob v2 _b2)
             = FoundWithBlob (resolve v1 v2) b1
 
-      return $ V.zipWith unionResult res1 res2 === res3
+      pure $ V.zipWith unionResult res1 res2 === res3
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for snapshots
@@ -657,7 +657,7 @@ prop_snapshotNoChanges h ups ups' testKeys = ioProperty $ do
 
         res' <- lookupsWithBlobs tbl2 ses $ V.fromList testKeys
 
-        return $ res == res'
+        pure $ res == res'
 
 -- same snapshot may be opened multiple times,
 -- and the handles are separate.
@@ -677,7 +677,7 @@ prop_snapshotNoChanges2 h ups ups' testKeys = ioProperty $ do
           updates tbl1 (V.fromList ups')
           res' <- lookupsWithBlobs tbl2 sess $ V.fromList testKeys
 
-          return $ res == res'
+          pure $ res == res'
 
 -------------------------------------------------------------------------------
 -- implement classic QC tests for multiple writable tables
@@ -700,7 +700,7 @@ prop_dupInsertInsert h ups k v1 v2 testKeys = ioProperty $ do
 
         res1 <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
         res2 <- lookupsWithBlobs tbl2 sess $ V.fromList testKeys
-        return $ res1 === res2
+        pure $ res1 === res2
 
 -- | Different key inserts commute.
 prop_dupInsertCommutes ::
@@ -716,7 +716,7 @@ prop_dupInsertCommutes h ups k1 v1 k2 v2 testKeys = k1 /= k2 ==> ioProperty do
 
         res1 <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
         res2 <- lookupsWithBlobs tbl2 sess $ V.fromList testKeys
-        return $ res1 === res2
+        pure $ res1 === res2
 
 -- changes to one handle should not cause any visible changes in any others
 prop_dupNoChanges ::
@@ -734,4 +734,4 @@ prop_dupNoChanges h ups ups' testKeys = ioProperty $ do
         -- lookup tbl1 again.
         res' <- lookupsWithBlobs tbl1 sess $ V.fromList testKeys
 
-        return $ res == res'
+        pure $ res == res'
