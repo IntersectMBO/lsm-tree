@@ -574,7 +574,7 @@ fromSBS (SBS ba') = do
           let w = indexByteArray ba off64 :: Word64
           when (w > fromIntegral (maxBound :: Int)) $
             Left "Size information is too large for Int"
-          return (fromIntegral w)
+          pure (fromIntegral w)
 
     numPages <- getPositive (len64 - 2)
     numEntries <- getPositive (len64 - 1)
@@ -595,7 +595,7 @@ fromSBS (SBS ba') = do
     when (bytesUsed < sizeofByteArray ba) $
       Left "Byte array is too large for components"
 
-    return (NumEntries numEntries, IndexCompact {..})
+    pure (NumEntries numEntries, IndexCompact {..})
 
 type Offset32 = Int
 type Offset64 = Int
@@ -627,11 +627,11 @@ getTieBreaker ba = \off -> do
       Left "Tie breaker is out of bounds"
     let size = fromIntegral (indexByteArray ba off :: Word64)
     (off', pairs) <- go size (off + 1) []
-    return (off', Map.fromList pairs)
+    pure (off', Map.fromList pairs)
   where
     go :: Int -> Offset64 -> [(Unsliced SerialisedKey, PageNo)]
        -> Either String (Offset64, [(Unsliced SerialisedKey, PageNo)])
-    go 0 off pairs = return (off, pairs)
+    go 0 off pairs = pure (off, pairs)
     go n off pairs = do
         when (mul8 off >= sizeofByteArray ba) $
           Left "Clash map entry is out of bounds"
@@ -652,7 +652,7 @@ getTieBreaker ba = \off -> do
         !key <- case checkedPrimVec off8 len8 ba of
           Nothing  -> Left ("Clash map key is out of bounds")
           Just vec -> Right (SerialisedKey' vec)
-        return (off + ceilDiv8 len8, makeUnslicedKey key)
+        pure (off + ceilDiv8 len8, makeUnslicedKey key)
 
 -- | Offset and length are in number of elements.
 checkedPrimVec :: forall a.

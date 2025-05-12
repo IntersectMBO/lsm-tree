@@ -142,11 +142,11 @@ unit_snapshots =
                         (SnapshotLabel "Key2 Value2 Blob2")
                         (SnapshotLabel "Key1 Value1 Blob1")) $ do
         _ <- openTableFromSnapshot @_ @Key2 @Value2 @Blob2 sess snap1 label2
-        return ()
+        pure ()
 
       assertException (ErrSnapshotDoesNotExist snap2) $ do
         _ <- openTableFromSnapshot @_ @Key1 @Value1 @Blob1 sess snap2 label2
-        return ()
+        pure ()
   where
     snap1, snap2 :: SnapshotName
     snap1 = "table1"
@@ -236,7 +236,7 @@ unit_union_blobref_invalidation =
 
       -- try to resolve the blob refs we obtained earlier
       _blobs <- retrieveBlobs sess (V.mapMaybe R.getBlob res)
-      return ()
+      pure ()
   where
     config = defaultTableConfig {
         confWriteBufferAlloc = AllocNumEntries 4

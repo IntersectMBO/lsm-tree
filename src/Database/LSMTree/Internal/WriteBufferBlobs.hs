@@ -207,7 +207,7 @@ addBlob fs (DeRef WriteBufferBlobs {blobFile, blobFilePointer}) blob = do
     -- If an exception happens while writing the blob, the bytes in the file
     -- might be corrupted.
     BlobFile.writeBlob fs blobFile blob bloboffset
-    return BlobSpan {
+    pure BlobSpan {
       blobSpanOffset = bloboffset,
       blobSpanSize   = fromIntegral blobsize
     }

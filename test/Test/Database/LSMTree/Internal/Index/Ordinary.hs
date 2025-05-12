@@ -288,7 +288,7 @@ incrementalConstruction appends = runST $ do
                      map Chunk.toByteVector              $
                      commonChunks ++ maybeToList remnant
 
-    return (unserialised, serialised)
+    pure (unserialised, serialised)
     where
 
     {-
@@ -534,7 +534,7 @@ instance Arbitrary SearchableIndex where
             <- concat <$>
                mapM ((<$> genKeyCount) . flip replicate)
                     availableUnslicedLastKeys
-        return $ SearchableIndex (indexFromUnslicedLastKeyList unslicedLastKeys)
+        pure $ SearchableIndex (indexFromUnslicedLastKeyList unslicedLastKeys)
         where
 
         genKeyCount :: Gen Int

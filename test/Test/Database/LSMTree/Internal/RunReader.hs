@@ -92,7 +92,7 @@ prop_readAtOffset fs hbio rd offsetKey =
     withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
       rhs <- readKOps (coerce offsetKey) run
 
-      return . labelRunData rd' $
+      pure . labelRunData rd' $
         counterexample ("entries expected: " <> show (length lhs)) $
         counterexample ("entries found: " <> show (length rhs)) $
           lhs === rhs
@@ -137,7 +137,7 @@ prop_readAtOffsetIdempotence fs hbio rd offsetKey =
     lhs <- readKOps (coerce offsetKey) run
     rhs <- readKOps (coerce offsetKey) run
 
-    return . labelRunData rd' $
+    pure . labelRunData rd' $
       counterexample ("entries expected: " <> show (length lhs)) $
       counterexample ("entries found: " <> show (length rhs)) $
         lhs === rhs
@@ -160,10 +160,10 @@ prop_readAtOffsetReadHead fs hbio rd =
     withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
       lhs <- readKOps Nothing run
       rhs <- case lhs of
-        []        -> return []
+        []        -> pure []
         (key,_):_ -> readKOps (Just key) run
 
-      return . labelRunData rd' $
+      pure . labelRunData rd' $
         counterexample ("entries expected: " <> show (length lhs)) $
         counterexample ("entries found: " <> show (length rhs)) $
           lhs === rhs
@@ -189,7 +189,7 @@ readKOps offset run = do
 
     go reader = do
       Reader.next reader >>= \case
-        Reader.Empty -> return []
+        Reader.Empty -> pure []
         Reader.ReadEntry key e -> do
           let fs = Reader.readerHasFS reader
           e' <- traverse (readRawBlobRef fs) $ Reader.toFullEntry e

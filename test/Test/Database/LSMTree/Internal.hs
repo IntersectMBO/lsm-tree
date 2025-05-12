@@ -145,7 +145,7 @@ prop_roundtripCursor lb ub kops = ioProperty $
           updates resolve (coerce kops) t
           fromCursor <- withCursor resolve (toOffsetKey lb) t $ \c ->
             fetchBlobs hfs =<< readCursorUntil ub c
-          return $
+          pure $
             tabulate "duplicates" (show <$> Map.elems duplicates) $
             tabulate "any blobs" [show (any (isJust . snd . snd) fromCursor)] $
             expected === fromCursor
@@ -194,7 +194,7 @@ readCursorUntil ub cursor = go V.empty
       res <- case ub of
         Nothing -> readCursor resolve chunkSize cursor toResult
         Just k  -> readCursorWhile resolve (<= coerce k) chunkSize cursor toResult
-      if V.length res < chunkSize then return (acc <> res)
+      if V.length res < chunkSize then pure (acc <> res)
                                   else go (acc <> res)
 
 resolve :: ResolveSerialisedValue

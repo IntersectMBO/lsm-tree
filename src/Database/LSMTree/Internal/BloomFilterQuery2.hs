@@ -212,7 +212,7 @@ bloomQueries filters keys =
 
     output <- bloomQueriesBody filters' keyhashes candidateProbes
                                i_r i_w nextCandidate
-    return $! P.primArrayToPrimVector output
+    pure $! P.primArrayToPrimVector output
 
 prepKeyHashes :: V.Vector SerialisedKey
               -> P.PrimArray (Bloom.CheapHashes SerialisedKey)
@@ -250,7 +250,7 @@ prepInitialCandidateProbes
                      `BV64.unsafeRemWord64` -- size must be > 0
                    BF.size filter           -- bloomInvariant ensures this
     BV64.prefetchIndex (BF.bitArray filter) bix
-    assert ((rix, kix, hn, bix) == unpackCandidateProbe (CandidateProbe rix kix hn bix)) $ return ()
+    assert ((rix, kix, hn, bix) == unpackCandidateProbe (CandidateProbe rix kix hn bix)) $ pure ()
     P.writePrimArray candidateProbes i_w (CandidateProbe rix kix hn bix)
     prepInitialCandidateProbes
       filters keyhashes
@@ -259,7 +259,7 @@ prepInitialCandidateProbes
       (succCandidate keyhashes nextCandidate)
 
     -- Filled the buffer or ran out of candidates
-  | otherwise = return (i_w, nextCandidate)
+  | otherwise = pure (i_w, nextCandidate)
 
 
 {-# NOINLINE bloomQueriesBody #-}
@@ -327,7 +327,7 @@ bloomQueriesBody !filters !keyhashes !candidateProbes =
                 P.writePrimArray output outputix (RunIxKeyIx rix kix)
                 outputsz <- P.getSizeofMutablePrimArray output
                 output'  <- if outputix+1 < outputsz
-                              then return output
+                              then pure output
                               else P.resizeMutablePrimArray output (outputsz * 2)
                 prepNextCandidateProbe
                   i_r i_w nextCandidate

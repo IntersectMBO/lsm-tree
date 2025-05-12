@@ -127,26 +127,26 @@ new !offsetKey
 
     when (isNothing page) $
       close reader
-    return reader
+    pure reader
   where
     seekFirstEntry readerKOpsHandle =
         case offsetKey of
           NoOffsetKey -> do
             -- Load first page from disk, if it exists.
             firstPage <- readDiskPage readerHasFS readerKOpsHandle
-            return (firstPage, 0)
+            pure (firstPage, 0)
           OffsetKey offset -> do
             -- Use the index to find the page number for the key (if it exists).
             let PageSpan pageNo pageEnd = Index.search offset index
             seekToDiskPage readerHasFS pageNo readerKOpsHandle
             readDiskPage readerHasFS readerKOpsHandle >>= \case
               Nothing ->
-                return (Nothing, 0)
+                pure (Nothing, 0)
               Just foundPage -> do
                 case rawPageFindKey foundPage offset of
                   Just n ->
                     -- Found an appropriate index within the index's page.
-                    return (Just foundPage, n)
+                    pure (Just foundPage, n)
 
                   _ -> do
                     -- The index said that the key, if it were to exist, would
@@ -160,7 +160,7 @@ new !offsetKey
                     -- starting from the next (non-overflow) page.
                     seekToDiskPage readerHasFS (nextPageNo pageEnd) readerKOpsHandle
                     nextPage <- readDiskPage readerHasFS readerKOpsHandle
-                    return (nextPage, 0)
+                    pure (nextPage, 0)
 
 {-# SPECIALISE close ::
      RunReader IO h
@@ -249,7 +249,7 @@ next :: forall m h.
 next reader@RunReader {..} = do
     readMutVar readerCurrentPage >>= \case
       Nothing ->
-        return Empty
+        pure Empty
       Just page -> do
         entryNo <- readPrimVar readerCurrentEntryNo
         go entryNo page
@@ -265,7 +265,7 @@ next reader@RunReader {..} = do
             case newPage of
               Nothing -> do
                 close reader
-                return Empty
+                pure Empty
               Just p -> do
                 writePrimVar readerCurrentEntryNo 0
                 go 0 p  -- try again on the new page
@@ -273,7 +273,7 @@ next reader@RunReader {..} = do
             modifyPrimVar readerCurrentEntryNo (+1)
             let entry' = fmap (BlobRef.mkRawBlobRef readerBlobFile) entry
             let rawEntry = Entry entry'
-            return (ReadEntry key rawEntry)
+            pure (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
@@ -281,7 +281,7 @@ next reader@RunReader {..} = do
                 entry' = fmap (BlobRef.mkRawBlobRef readerBlobFile) entry
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
-            return (ReadEntry key rawEntry)
+            pure (ReadEntry key rawEntry)
 
 {-------------------------------------------------------------------------------
   Utilities
@@ -317,7 +317,7 @@ readDiskPage fs h = do
       assert (fromIntegral bytesRead == pageSize) $ pure ()
       ba <- unsafeFreezeByteArray mba
       let !rawPage = unsafeMakeRawPage ba 0
-      return (Just rawPage)
+      pure (Just rawPage)
 
 pageSize :: Int
 pageSize = 4096
@@ -341,4 +341,4 @@ readOverflowPages fs h len = do
     _ <- FS.hGetBufExactly fs h mba 0 (fromIntegral lenPages)
     ba <- unsafeFreezeByteArray mba
     -- should not copy since 'ba' is pinned and its length is a multiple of 4k.
-    return $ pinnedByteArrayToOverflowPages 0 lenPages ba
+    pure $ pinnedByteArrayToOverflowPages 0 lenPages ba

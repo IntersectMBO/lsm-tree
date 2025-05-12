@@ -163,7 +163,7 @@ prop_withRunDoesntLeak hfs hbio rd = do
     let fsPaths = RunFsPaths path (RunNumber 0)
     FS.createDirectory hfs path
     withRunAt hfs hbio (runParams indexType) fsPaths rd $ \_run -> do
-      return (QC.property True)
+      pure (QC.property True)
 
 prop_withMergingRunDoesntLeak ::
      FS.HasFS IO h
@@ -177,7 +177,7 @@ prop_withMergingRunDoesntLeak hfs hbio mrd = do
     counter <- newUniqCounter 0
     withMergingRun hfs hbio resolveVal (runParams indexType) path counter mrd $
       \_mr -> do
-        return (QC.property True)
+        pure (QC.property True)
 
 -- TODO: This only tests the happy path. For everything else, we'd need to
 -- inject errors, e.g. with @simErrorHasBlockIO@.
@@ -193,7 +193,7 @@ prop_withMergingTreeDoesntLeak hfs hbio mrd = do
     counter <- newUniqCounter 0
     withMergingTree hfs hbio resolveVal (runParams indexType) path counter mrd $
       \_tree -> do
-        return (QC.property True)
+        pure (QC.property True)
 
 resolveVal :: SerialisedValue -> SerialisedValue -> SerialisedValue
 resolveVal (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)

@@ -115,7 +115,7 @@ newPinnedMVec64 :: Int -> ST s (VUM.MVector s Word64)
 newPinnedMVec64 lenWords = do
     mba <- newPinnedByteArray (mul8 lenWords)
     setByteArray mba 0 lenWords (0 :: Word64)
-    return (VUM.MV_Word64 (VPM.MVector 0 lenWords mba))
+    pure (VUM.MV_Word64 (VPM.MVector 0 lenWords mba))
 
 {-|
     For a specification of this operation, see the documentation of [its

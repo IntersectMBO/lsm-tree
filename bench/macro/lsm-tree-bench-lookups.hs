@@ -266,7 +266,7 @@ benchmark name description action n (subtractTime, subtractAlloc) = do
     printStat "Alloc net per key: " allocPerKey "bytes"
 
     putStrLn ""
-    return (timeNet, allocNet)
+    pure (timeNet, allocNet)
 
 -- | (numEntries, sizeFactor)
 type RunSizeInfo = (Int, Int)

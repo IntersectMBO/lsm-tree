@@ -85,7 +85,7 @@ instance NFData (RefCounter m) where
 newRefCounter :: PrimMonad m => m () -> m (RefCounter m)
 newRefCounter finaliser = do
     countVar <- newPrimVar 1
-    return $! RefCounter { countVar, finaliser }
+    pure $! RefCounter { countVar, finaliser }
 
 {-# SPECIALISE incrementRefCounter :: RefCounter IO -> IO () #-}
 -- | Increase the reference counter by one.
@@ -137,11 +137,11 @@ tryIncrementRefCounter RefCounter{countVar} = do
     -- If no other thread changed the old value, we succeed.
     -- Otherwise we go round the loop again.
     casLoop prevCount
-      | prevCount <= 0 = return False
+      | prevCount <= 0 = pure False
       | otherwise      = do
           prevCount' <- casInt countVar prevCount (prevCount+1)
           if prevCount' == prevCount
-            then return True
+            then pure True
             else casLoop prevCount'
 
 
@@ -357,18 +357,18 @@ deRefWeak ::
 deRefWeak (WeakRef obj) = do
     success <- tryIncrementRefCounter (getRefCounter obj)
     if success then Just <$> newRefWithTracker obj
-               else return Nothing
+               else pure Nothing
 
 {-# INLINE newRefWithTracker #-}
 #ifndef NO_IGNORE_ASSERTS
 newRefWithTracker :: PrimMonad m => obj -> m (Ref obj)
 newRefWithTracker obj =
-    return $! Ref obj
+    pure $! Ref obj
 #else
 newRefWithTracker :: (PrimMonad m, HasCallStack) => obj -> m (Ref obj)
 newRefWithTracker obj = do
     reftracker' <- newRefTracker callStack
-    return $! Ref obj reftracker'
+    pure $! Ref obj reftracker'
 #endif
 
 data RefException =
@@ -409,19 +409,19 @@ instance Exception RefException where
 
 {-# INLINE releaseRefTracker #-}
 releaseRefTracker :: PrimMonad m => Ref a -> m ()
-releaseRefTracker _ = return ()
+releaseRefTracker _ = pure ()
 
 {-# INLINE assertNoForgottenRefs #-}
 assertNoForgottenRefs :: PrimMonad m => m ()
-assertNoForgottenRefs = return ()
+assertNoForgottenRefs = pure ()
 
 {-# INLINE assertNoUseAfterRelease #-}
 assertNoUseAfterRelease :: PrimMonad m => Ref a -> m ()
-assertNoUseAfterRelease _ = return ()
+assertNoUseAfterRelease _ = pure ()
 
 {-# INLINE assertNoDoubleRelease #-}
 assertNoDoubleRelease :: PrimMonad m => Ref a -> m ()
-assertNoDoubleRelease _ = return ()
+assertNoDoubleRelease _ = pure ()
 
 #else
 
@@ -475,7 +475,7 @@ newRefTracker allocSite = unsafeIOToPrimStrict $ do
     refid <- fetchAddInt globalRefIdSupply 1
     weak  <- mkWeakIORef outer $
                finaliserRefTracker inner (RefId refid) allocSite
-    return (RefTracker (RefId refid) weak outer allocSite)
+    pure (RefTracker (RefId refid) weak outer allocSite)
 
 releaseRefTracker :: (HasCallStack, PrimMonad m) => Ref a -> m ()
 releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer _ } =
@@ -501,15 +501,15 @@ finaliserRefTracker inner refid allocSite = do
           -- is the best place to start hunting for ref leaks. Otherwise one can
           -- go on a wild goose chase tracking down inner refs that were only
           -- forgotten due to an outer ref being forgotten.
-          Enabled (Just (refid', _)) | refid < refid' -> return ()
+          Enabled (Just (refid', _)) | refid < refid' -> pure ()
           Enabled _ -> writeIORef globalForgottenRef (Enabled (Just (refid, allocSite)))
 
 assertNoForgottenRefs :: (PrimMonad m, MonadThrow m) => m ()
 assertNoForgottenRefs = do
     mrefs <- unsafeIOToPrimStrict $ readIORef globalForgottenRef
     case mrefs of
-      Disabled      -> return ()
-      Enabled Nothing -> return ()
+      Disabled      -> pure ()
+      Enabled Nothing -> pure ()
       Enabled (Just (refid, allocSite)) -> do
         -- Clear the var so we don't assert again.
         --
@@ -559,7 +559,7 @@ assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite 
 checkForgottenRefs :: forall m. (PrimMonad m, MonadThrow m) => m ()
 checkForgottenRefs = do
 #ifndef NO_IGNORE_ASSERTS
-    return ()
+    pure ()
 #else
     -- The hope is that by combining `performMajorGC` with `yield` that the
     -- former starts the finalizer threads for all dropped weak references and

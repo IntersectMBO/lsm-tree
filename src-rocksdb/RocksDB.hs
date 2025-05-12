@@ -82,15 +82,15 @@ withErrPtr kont = alloca $ \ptr -> do
     x <- kont ptr
     ptr' <- peek ptr
     if ptr' == nullPtr
-    then return ()
+    then pure ()
     else free ptr'
-    return x
+    pure x
 
 assertErrPtr :: String -> ErrPtr -> IO ()
 assertErrPtr fun ptr = do
     ptr' <- peek ptr
     if ptr' == nullPtr
-    then return ()
+    then pure ()
     else do
         msg <- peekCString ptr'
         fail $ fun ++ ": " ++ msg
@@ -171,7 +171,7 @@ withRocksDB (Options opt) path kont =
     rocksdb_open' path' errptr = do
         ptr <- rocksdb_open opt path' errptr
         assertErrPtr "rocksdb_open" errptr
-        return ptr
+        pure ptr
 
 put :: RocksDB -> WriteOptions -> ByteString -> ByteString -> IO ()
 put (RocksDB dbPtr errPtr) (WriteOptions opts) key val =
@@ -188,7 +188,7 @@ get (RocksDB dbPtr errPtr) (ReadOptions opts) key =
         assertErrPtr "rocksdb_get" errPtr -- TODO: may leak
         vl <- peek vlPtr
         if vp == nullPtr
-        then return Nothing
+        then pure Nothing
         else Just <$> unsafePackMallocCStringLen (vp, csizeToInt vl)
 
 multiGet :: RocksDB -> ReadOptions -> [ByteString] -> IO [Maybe ByteString]
@@ -215,7 +215,7 @@ multiGet (RocksDB db _errPtr) (ReadOptions opts) keys =
             -- TODO: we don't check errs here. we should.
 
             if vp == nullPtr
-            then return Nothing
+            then pure Nothing
             else Just <$> unsafePackMallocCStringLen (vp, csizeToInt vl)
 
   where
@@ -242,7 +242,7 @@ checkpoint (RocksDB dbPtr errPtr) path =
     rocksdb_checkpoint_object_create' = do
         cp <- rocksdb_checkpoint_object_create dbPtr errPtr
         assertErrPtr "rocksdb_checkpoint_object_create" errPtr
-        return cp
+        pure cp
 
 -------------------------------------------------------------------------------
 -- write batch
@@ -296,7 +296,7 @@ newtype FilterPolicy = FilterPolicy (Ptr FILTERPOLICY)
 withFilterPolicyBloom :: Int -> (FilterPolicy -> IO r) -> IO r
 withFilterPolicyBloom bits_per_key kont = bracket
     (rocksdb_filterpolicy_create_bloom (intToCInt bits_per_key))
-    (\_ -> return ()) -- rocksdb_filterpolicy_destroy, causes segfault if we free it.
+    (\_ -> pure ()) -- rocksdb_filterpolicy_destroy, causes segfault if we free it.
     (\ptr -> kont (FilterPolicy ptr))
 
 -------------------------------------------------------------------------------

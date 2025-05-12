@@ -226,19 +226,19 @@ newtype Wrapped a = Wrap a -- { unwrap :: Word256 }
 instance Eq a => Eq (Wrapped a) where
     Wrap x == Wrap y = unsafePerformIO $ do
         atomicModifyIORef' counter $ \n -> (1 + n, ())
-        return $! x == y
+        pure $! x == y
     {-# NOINLINE (==) #-}
 
 instance Ord a => Ord (Wrapped a) where
     compare (Wrap x) (Wrap y) = unsafePerformIO $ do
         atomicModifyIORef' counter $ \n -> (1 + n, ())
-        return $! compare x y
+        pure $! compare x y
     Wrap x < Wrap y = unsafePerformIO $ do
         atomicModifyIORef' counter $ \n -> (1 + n, ())
-        return $! x < y
+        pure $! x < y
     Wrap x <= Wrap y = unsafePerformIO $ do
         atomicModifyIORef' counter $ \n -> (1 + n, ())
-        return $! x <= y
+        pure $! x <= y
 
     {-# NOINLINE compare #-}
     {-# NOINLINE (<) #-}
@@ -420,7 +420,7 @@ loserTreeMerge xss = case [ Heap.Entry x xs | x : xs <- xss ] of
       go tree $ Just element
   where
     go :: K.Tree.MutableLoserTree s (Heap.Entry a [a]) -> Maybe (Heap.Entry a [a]) -> ST s [a]
-    go !_    Nothing                  = return []
+    go !_    Nothing                  = pure []
     go !tree (Just (Heap.Entry x xs)) = fmap (x :) $ case xs of
         []     -> K.Tree.remove tree                      >>= go tree
         x':xs' -> K.Tree.replace tree (Heap.Entry x' xs') >>= go tree . Just
@@ -438,7 +438,7 @@ mutHeapMerge xss = case [ Heap.Entry x xs | x : xs <- xss ] of
       go heap $ Just element
   where
     go :: K.Heap.MutableHeap s (Heap.Entry a [a]) -> Maybe (Heap.Entry a [a]) -> ST s [a]
-    go !_    Nothing                  = return []
+    go !_    Nothing                  = pure []
     go !heap (Just (Heap.Entry x xs)) = fmap (x :) $ case xs of
         []     -> K.Heap.extract     heap                     >>= go heap
         x':xs' -> K.Heap.replaceRoot heap (Heap.Entry x' xs') >>= go heap . Just

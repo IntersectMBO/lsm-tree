@@ -337,4 +337,4 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
         -- drop the file from the OS page cache
         FS.hAdviseAll hbio h FS.AdviceDontNeed
         CRC.expectChecksum fp expected checksum
-        return sbs
+        pure sbs

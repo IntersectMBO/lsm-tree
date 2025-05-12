@@ -317,16 +317,16 @@ invariant :: forall s. LSMContent s -> ST s ()
 invariant (LSMContent _ levels ul) = do
     levelsInvariant 1 levels
     case ul of
-      NoUnion      -> return ()
+      NoUnion      -> pure ()
       Union tree _ -> expectInvariant (treeInvariant tree)
   where
     levelsInvariant :: Int -> Levels s -> ST s ()
-    levelsInvariant !_ [] = return ()
+    levelsInvariant !_ [] = pure ()
 
     levelsInvariant !ln (Level ir rs : ls) = do
       mrs <- case ir of
         Single r ->
-          return (CompletedMerge r)
+          pure (CompletedMerge r)
         Merging mp _ _ (MergingRun mt _ ref) -> do
           assertST $ ln > 1  -- no merges on level 1
           assertST $ mp == mergePolicyForLevel ln ls ul
@@ -441,7 +441,7 @@ treeInvariant tree@(MergingTree treeState) = do
         -- trees are shared, so if one of them completes as an empty run,
         -- all tables referencing it suddenly contain an empty run and would
         -- need to be updated immediately.
-        return ()
+        pure ()
 
       OngoingTreeMerge mr ->
         mergeInvariant mr
@@ -453,7 +453,7 @@ treeInvariant tree@(MergingTree treeState) = do
         assertI "pending level merges have at least one input" $
           length prs + length t > 0
         for_ prs $ \case
-          PreExistingRun        _r -> return ()
+          PreExistingRun        _r -> pure ()
           PreExistingMergingRun mr -> mergeInvariant mr
         for_ t treeInvariant
 
@@ -465,12 +465,12 @@ treeInvariant tree@(MergingTree treeState) = do
     (debt, _) <- liftI $ remainingDebtMergingTree tree
     when (debt <= 0) $ do
       _ <- isCompletedMergingTree tree
-      return ()
+      pure ()
 
 mergeInvariant :: MergingRun t s -> Invariant s ()
 mergeInvariant (MergingRun _ mergeDebt ref) =
     liftI (readSTRef ref) >>= \case
-      CompletedMerge _ -> return ()
+      CompletedMerge _ -> pure ()
       OngoingMerge mergeCredit rs _ -> do
         assertI "merge debt & credit invariant" $
           mergeDebtInvariant mergeDebt mergeCredit
@@ -483,7 +483,7 @@ isCompletedMergingRun :: MergingRun t s -> Invariant s Run
 isCompletedMergingRun (MergingRun _ d ref) = do
     mrs <- liftI $ readSTRef ref
     case mrs of
-      CompletedMerge r   -> return r
+      CompletedMerge r   -> pure r
       OngoingMerge c _ _ -> failI $ "not completed: OngoingMerge with"
                                  ++ " remaining debt "
                                  ++ show (mergeDebtLeft d c)
@@ -492,14 +492,14 @@ isCompletedMergingTree :: MergingTree s -> Invariant s Run
 isCompletedMergingTree (MergingTree ref) = do
     mts <- liftI $ readSTRef ref
     case mts of
-      CompletedTreeMerge r -> return r
+      CompletedTreeMerge r -> pure r
       OngoingTreeMerge mr  -> isCompletedMergingRun mr
       PendingTreeMerge _   -> failI $ "not completed: PendingTreeMerge"
 
 type Invariant s = E.ExceptT String (ST s)
 
 assertI :: String -> Bool -> Invariant s ()
-assertI _ True  = return ()
+assertI _ True  = pure ()
 assertI e False = failI e
 
 failI :: String -> Invariant s a
@@ -520,7 +520,7 @@ assert :: HasCallStack => Bool -> a -> a
 assert p x = Exc.assert p (const x callStack)
 
 assertST :: HasCallStack => Bool -> ST s ()
-assertST p = assert p $ return ()
+assertST p = assert p $ pure ()
 
 -------------------------------------------------------------------------------
 -- Merging credits
@@ -657,14 +657,14 @@ newMergingRun mergeType runs = do
     -- in some cases, no merging is required at all
     (debt, state) <- case filter (\r -> runSize r > 0) runs of
       []  -> let (r:_) = runs -- just reuse the empty input
-              in return (runSize r, CompletedMerge r)
-      [r] -> return (runSize r, CompletedMerge r)
+              in pure (runSize r, CompletedMerge r)
+      [r] -> pure (runSize r, CompletedMerge r)
       rs  -> do
         -- The (physical) debt is always exactly the cost (merge steps),
         -- which is the sum of run lengths in elements.
         let !debt  = sum (map runSize rs)
         let merged = mergek mergeType rs  -- deliberately lazy
-        return (debt, OngoingMerge zeroMergeCredit rs merged)
+        pure (debt, OngoingMerge zeroMergeCredit rs merged)
     MergingRun mergeType (MergeDebt debt) <$> newSTRef state
 
 mergek :: IsMergeType t => t -> [Run] -> Run
@@ -708,31 +708,31 @@ supplyCreditsMergingRun =
     checked remainingDebtMergingRun $ \credits (MergingRun _ mergeDebt ref) -> do
     mrs <- readSTRef ref
     case mrs of
-      CompletedMerge{} -> return credits
+      CompletedMerge{} -> pure credits
       OngoingMerge mergeCredit rs r ->
         case paydownMergeDebt mergeDebt mergeCredit credits of
           MergeDebtDischarged _ leftover -> do
             writeSTRef ref (CompletedMerge r)
-            return leftover
+            pure leftover
 
           MergeDebtPaydownCredited mergeCredit' -> do
             writeSTRef ref (OngoingMerge mergeCredit' rs r)
-            return 0
+            pure 0
 
           MergeDebtPaydownPerform _mergeSteps mergeCredit' -> do
             -- we're not doing any actual merging
             -- just tracking what we would do
             writeSTRef ref (OngoingMerge mergeCredit' rs r)
-            return 0
+            pure 0
 
 suppliedCreditMergingRun :: MergingRun t s -> ST s Credit
 suppliedCreditMergingRun (MergingRun _ d ref) =
     readSTRef ref >>= \case
       CompletedMerge{} ->
         let MergeDebt { totalDebt } = d in
-        return totalDebt
+        pure totalDebt
       OngoingMerge MergeCredit {spentCredits, unspentCredits} _ _ ->
-        return (spentCredits + unspentCredits)
+        pure (spentCredits + unspentCredits)
 
 -------------------------------------------------------------------------------
 -- LSM handle
@@ -742,7 +742,7 @@ new :: ST s (LSM s)
 new = do
   c   <- newSTRef 0
   lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
-  return (LSMHandle c lsm)
+  pure (LSMHandle c lsm)
 
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
 inserts tr lsm kvbs = updates tr lsm [ (k, Insert v b) | (k, v, b) <- kvbs ]
@@ -816,7 +816,7 @@ duplicate :: LSM s -> ST s (LSM s)
 duplicate (LSMHandle _scr lsmr) = do
     scr'  <- newSTRef 0
     lsmr' <- newSTRef =<< readSTRef lsmr
-    return (LSMHandle scr' lsmr')
+    pure (LSMHandle scr' lsmr')
     -- it's that simple here, because we share all the pure value and all the
     -- STRefs and there's no ref counting to be done
 
@@ -834,13 +834,13 @@ unions lsms = do
     -- TODO: if only one table is non-empty, we don't have to create a Union,
     -- we can just duplicate the table.
     unionLevel <- newPendingUnionMerge (catMaybes trees) >>= \case
-      Nothing -> return NoUnion
+      Nothing -> pure NoUnion
       Just tree -> do
         debt <- fst <$> remainingDebtMergingTree tree
         Union tree <$> newSTRef debt
     lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
     c    <- newSTRef 0
-    return (LSMHandle c lsmr)
+    pure (LSMHandle c lsmr)
 
 -- | The /current/ upper bound on the number of 'UnionCredits' that have to be
 -- supplied before a 'union' is completed.
@@ -859,7 +859,7 @@ remainingUnionDebt :: LSM s -> ST s UnionDebt
 remainingUnionDebt (LSMHandle _ lsmr) = do
     LSMContent _ _ ul <- readSTRef lsmr
     UnionDebt <$> case ul of
-      NoUnion      -> return 0
+      NoUnion      -> pure 0
       Union tree d -> checkedUnionDebt tree d
 
 -- | Credits are used to pay off 'UnionDebt', completing a 'union' in the
@@ -883,12 +883,12 @@ newtype UnionCredits = UnionCredits Credit
 -- non-negative, then the union is finished.
 supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
 supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
-  | credits <= 0 = return (UnionCredits 0)
+  | credits <= 0 = pure (UnionCredits 0)
   | otherwise = do
     content@(LSMContent _ _ ul) <- readSTRef lsmr
     UnionCredits <$> case ul of
       NoUnion ->
-        return credits
+        pure credits
       Union tree debtRef -> do
         modifySTRef' scr (+1)
         _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
@@ -897,7 +897,7 @@ supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
         when (debt' > 0) $
           assertST $ c' == 0  -- should have spent these credits
         invariant content
-        return c'
+        pure c'
 
 -- TODO: At some point the completed merging tree should to moved into the
 -- regular levels, so it can be merged with other runs and last level merges can
@@ -927,7 +927,7 @@ checkedUnionDebt tree debtRef = do
     debt <- fst <$> remainingDebtMergingTree tree
     assertST $ debt <= storedDebt
     writeSTRef debtRef debt
-    return debt
+    pure debt
 
 -------------------------------------------------------------------------------
 -- Lookups
@@ -956,11 +956,11 @@ doLookup wb runs ul k = do
     let acc0 = lookupBatch (Map.lookup k wb) k runs
     case ul of
       NoUnion ->
-        return (convertAcc acc0)
+        pure (convertAcc acc0)
       Union tree _ -> do
         treeBatches <- buildLookupTree tree
         let treeResults = lookupBatch Nothing k <$> treeBatches
-        return $ convertAcc $ foldLookupTree $
+        pure $ convertAcc $ foldLookupTree $
           if null wb && null runs
           then treeResults
           else LookupNode MergeLevel [LookupBatch acc0, treeResults ]
@@ -1007,22 +1007,22 @@ buildLookupTree = go
     go :: MergingTree s -> ST s (LookupTree [Run])
     go (MergingTree treeState) = readSTRef treeState >>= \case
         CompletedTreeMerge r ->
-          return $ LookupBatch [r]
+          pure $ LookupBatch [r]
         OngoingTreeMerge (MergingRun mt _ mergeState) ->
           readSTRef mergeState >>= \case
             CompletedMerge r ->
-              return $ LookupBatch [r]
+              pure $ LookupBatch [r]
             OngoingMerge _ rs _ -> case mt of
-              MergeLevel -> return $ LookupBatch rs  -- combine into batch
-              MergeUnion -> return $ LookupNode MergeUnion $ map (\r -> LookupBatch [r]) rs
+              MergeLevel -> pure $ LookupBatch rs  -- combine into batch
+              MergeUnion -> pure $ LookupNode MergeUnion $ map (\r -> LookupBatch [r]) rs
         PendingTreeMerge (PendingLevelMerge prs tree) -> do
           preExisting <- LookupBatch . concat <$>
             traverse flattenPreExistingRun prs -- combine into batch
           case tree of
-            Nothing -> return preExisting
+            Nothing -> pure preExisting
             Just t  -> do
               lTree <- go t
-              return (LookupNode MergeLevel [preExisting, lTree])
+              pure (LookupNode MergeLevel [preExisting, lTree])
         PendingTreeMerge (PendingUnionMerge trees) -> do
           LookupNode MergeUnion <$> traverse go trees
 
@@ -1074,7 +1074,7 @@ supplyCreditsLevels :: NominalCredit -> Levels s -> ST s ()
 supplyCreditsLevels nominalDeposit =
   traverse_ $ \(Level ir _rs) -> do
     case ir of
-      Single{} -> return ()
+      Single{} -> pure ()
       Merging _mp nominalDebt nominalCreditVar
               mr@(MergingRun _  physicalDebt _) -> do
 
@@ -1098,7 +1098,7 @@ supplyCreditsLevels nominalDeposit =
           -- that we credited. This is all just for sanity checking.
           physicalCredit'' <- suppliedCreditMergingRun mr
           assert (leftoverCredits == 0 || physicalCredit' /= physicalCredit'')
-                 (return ())
+                 (pure ())
 
         -- There is a potential race here in between deciding how much physical
         -- credit to supply, and then supplying it. That's because we read the
@@ -1152,7 +1152,7 @@ depositNominalCredit (NominalDebt nominalDebt)
     -- credits.
     let !after = NominalCredit (min (before + deposit) nominalDebt)
     writeSTRef nominalCreditVar after
-    return after
+    pure after
 
 -------------------------------------------------------------------------------
 -- Updates
@@ -1171,13 +1171,13 @@ increment tr sc run0 ls0 ul = do
         let mergePolicy = mergePolicyForLevel ln [] ul
         traceWith tr' AddLevelEvent
         ir <- newLevelMerge tr' ln mergePolicy (mergeTypeFor []) incoming
-        return (Level ir [] : [])
+        pure (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
 
     go !ln incoming (Level ir rs : ls) = do
       r <- case ir of
-        Single r -> return r
+        Single r -> pure r
         Merging mergePolicy _ _ mr -> do
           r <- expectCompletedMergingRun mr
           traceWith tr' MergeCompletedEvent {
@@ -1185,7 +1185,7 @@ increment tr sc run0 ls0 ul = do
               mergeType = let MergingRun mt _ _ = mr in mt,
               mergeSize = runSize r
             }
-          return r
+          pure r
 
       let resident = r:rs
       case mergePolicyForLevel ln ls ul of
@@ -1194,7 +1194,7 @@ increment tr sc run0 ls0 ul = do
         -- with the incoming runs.
         MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
           ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
-          return (Level ir' rs : ls)
+          pure (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
@@ -1203,31 +1203,31 @@ increment tr sc run0 ls0 ul = do
         MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
           ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
-          return (Level ir' [] : ls')
+          pure (Level ir' [] : ls')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
           ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) incoming
           traceWith tr' (AddRunEvent (length resident))
-          return (Level ir' resident : ls)
+          pure (Level ir' resident : ls)
 
         -- The final level is using levelling. If the existing completed merge
         -- run is too large for this level, we promote the run to the next
         -- level and start merging the incoming runs into this (otherwise
         -- empty) level .
         MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
-          assert (null rs && null ls) $ return ()
+          assert (null rs && null ls) $ pure ()
           ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
-          return (Level ir' [] : ls')
+          pure (Level ir' [] : ls')
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
-          assert (null rs && null ls) $ return ()
+          assert (null rs && null ls) $ pure ()
           ir' <- newLevelMerge tr' ln MergePolicyLevelling (mergeTypeFor ls)
                           (incoming ++ [r])
-          return (Level ir' [] : [])
+          pure (Level ir' [] : [])
 
       where
         tr' = contramap (EventAt sc ln) tr
@@ -1235,7 +1235,7 @@ increment tr sc run0 ls0 ul = do
 newLevelMerge :: Tracer (ST s) EventDetail
               -> Int -> MergePolicy -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
-newLevelMerge _ _ _ _ [r] = return (Single r)
+newLevelMerge _ _ _ _ [r] = pure (Single r)
 newLevelMerge tr level mergePolicy mergeType rs = do
     assertST (length rs `elem` [4, 5])
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
@@ -1323,7 +1323,7 @@ levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > 
 newPendingLevelMerge :: [IncomingRun s]
                      -> Maybe (MergingTree s)
                      -> ST s (Maybe (MergingTree s))
-newPendingLevelMerge [] t = return t
+newPendingLevelMerge [] t = pure t
 newPendingLevelMerge [Single r] Nothing =
     Just . MergingTree <$> newSTRef (CompletedTreeMerge r)
 newPendingLevelMerge [Merging{}] Nothing =
@@ -1341,8 +1341,8 @@ newPendingLevelMerge irs tree = do
 
 -- | Ensures that the merge contains more than one input.
 newPendingUnionMerge :: [MergingTree s] -> ST s (Maybe (MergingTree s))
-newPendingUnionMerge []  = return Nothing
-newPendingUnionMerge [t] = return (Just t)
+newPendingUnionMerge []  = pure Nothing
+newPendingUnionMerge [t] = pure (Just t)
 newPendingUnionMerge trees = do
     let st = PendingTreeMerge (PendingUnionMerge trees)
     Just . MergingTree <$> newSTRef st
@@ -1370,7 +1370,7 @@ type Size = Int
 remainingDebtMergingTree :: MergingTree s -> ST s (Debt, Size)
 remainingDebtMergingTree (MergingTree ref) =
     readSTRef ref >>= \case
-      CompletedTreeMerge r -> return (0, runSize r)
+      CompletedTreeMerge r -> pure (0, runSize r)
       OngoingTreeMerge mr  -> addDebtOne <$> remainingDebtMergingRun mr
       PendingTreeMerge pm  -> addDebtOne <$> remainingDebtPendingMerge pm
   where
@@ -1391,19 +1391,19 @@ remainingDebtPendingMerge (PendingMerge _ prs trees) = do
         ]
     let totalSize = sum sizes
     let totalDebt = sum debts + totalSize
-    return (totalDebt, totalSize)
+    pure (totalDebt, totalSize)
   where
     remainingDebtPreExistingRun = \case
-        PreExistingRun         r -> return (0, runSize r)
+        PreExistingRun         r -> pure (0, runSize r)
         PreExistingMergingRun mr -> remainingDebtMergingRun mr
 
 remainingDebtMergingRun :: MergingRun t s -> ST s (Debt, Size)
 remainingDebtMergingRun (MergingRun _ d ref) =
     readSTRef ref >>= \case
       CompletedMerge r ->
-        return (0, runSize r)
+        pure (0, runSize r)
       OngoingMerge c inputRuns _ ->
-        return (mergeDebtLeft d c, sum (map runSize inputRuns))
+        pure (mergeDebtLeft d c, sum (map runSize inputRuns))
 
 -- | For each of the @supplyCredits@ type functions, we want to check some
 -- common properties.
@@ -1422,14 +1422,14 @@ checked query supply credits x = do
     assertST $ debt' >= 0
     -- the debt was reduced sufficiently (amount of credits spent)
     assertST $ debt' <= debt - (credits - c')
-    return c'
+    pure c'
 
 supplyCreditsMergingTree :: Credit -> MergingTree s -> ST s Credit
 supplyCreditsMergingTree = checked remainingDebtMergingTree $ \credits (MergingTree ref) -> do
     treeState <- readSTRef ref
     (!c', !treeState') <- supplyCreditsMergingTreeState credits treeState
     writeSTRef ref treeState'
-    return c'
+    pure c'
 
 supplyCreditsMergingTreeState :: Credit -> MergingTreeState s
                               -> ST s (Credit, MergingTreeState s)
@@ -1437,26 +1437,26 @@ supplyCreditsMergingTreeState credits !state = do
     assertST (credits >= 0)
     case state of
       CompletedTreeMerge{} ->
-        return (credits, state)
+        pure (credits, state)
       OngoingTreeMerge mr -> do
         c' <- supplyCreditsMergingRun credits mr
         if c' <= 0
-          then return (0, state)
+          then pure (0, state)
           else do
             r <- expectCompletedMergingRun mr
             -- all work is done, we can't spend any more credits
-            return (c', CompletedTreeMerge r)
+            pure (c', CompletedTreeMerge r)
       PendingTreeMerge pm -> do
         c' <- supplyCreditsPendingMerge credits pm
         if c' <= 0
           then
             -- still remaining work in children, we can't do more for now
-            return (c', state)
+            pure (c', state)
           else do
             -- all children must be done, create new merge!
             (mergeType, rs) <- expectCompletedChildren pm
             case rs of
-              [r] -> return (c', CompletedTreeMerge r)
+              [r] -> pure (c', CompletedTreeMerge r)
               _   -> do
                 state' <- OngoingTreeMerge <$> newMergingRun mergeType rs
                 -- use any remaining credits to progress the new merge
@@ -1471,13 +1471,13 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
       splitEqually supplyCreditsMergingTree trees credits
   where
     supplyPreExistingRun c = \case
-        PreExistingRun        _r -> return c
+        PreExistingRun        _r -> pure c
         PreExistingMergingRun mr -> supplyCreditsMergingRun c mr
 
     -- supply credits left to right until they are used up
     leftToRight :: (Credit -> a -> ST s Credit) -> [a] -> Credit -> ST s Credit
-    leftToRight _ _      0 = return 0
-    leftToRight _ []     c = return c
+    leftToRight _ _      0 = pure 0
+    leftToRight _ []     c = pure c
     leftToRight f (x:xs) c = f c x >>= leftToRight f xs
 
     -- approximately equal, being more precise would require more iterations
@@ -1491,21 +1491,21 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
         !n = length xs
         !k = (credits + (n - 1)) `div` n
 
-        supply 0 _ = return 0
+        supply 0 _ = pure 0
         supply c t = do
             let creditsToSpend = min k c
             leftovers <- f creditsToSpend t
-            return (c - creditsToSpend + leftovers)
+            pure (c - creditsToSpend + leftovers)
 
 expectCompletedChildren :: HasCallStack
                         => PendingMerge s -> ST s (TreeMergeType, [Run])
 expectCompletedChildren (PendingMerge mt prs trees) = do
     rs1 <- traverse expectCompletedPreExistingRun prs
     rs2 <- traverse expectCompletedMergingTree trees
-    return (mt, rs1 ++ rs2)
+    pure (mt, rs1 ++ rs2)
   where
     expectCompletedPreExistingRun = \case
-        PreExistingRun         r -> return r
+        PreExistingRun         r -> pure r
         PreExistingMergingRun mr -> expectCompletedMergingRun mr
 
 expectCompletedMergingTree :: HasCallStack => MergingTree s -> ST s Run
@@ -1524,9 +1524,9 @@ allLevels (LSMHandle _ lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     rs <- flattenLevels ls
     tree <- case ul of
-      NoUnion   -> return Nothing
+      NoUnion   -> pure Nothing
       Union t _ -> Just <$> flattenTree t
-    return (wb, rs, tree)
+    pure (wb, rs, tree)
 
 flattenLevels :: Levels s -> ST s [[Run]]
 flattenLevels = mapM flattenLevel
@@ -1536,34 +1536,34 @@ flattenLevel (Level ir rs) = (++ rs) <$> flattenIncomingRun ir
 
 flattenIncomingRun :: IncomingRun s -> ST s [Run]
 flattenIncomingRun = \case
-    Single r         -> return [r]
+    Single r         -> pure [r]
     Merging _ _ _ mr -> flattenMergingRun mr
 
 flattenMergingRun :: MergingRun t s -> ST s [Run]
 flattenMergingRun (MergingRun _ _ ref) = do
     mrs <- readSTRef ref
     case mrs of
-      CompletedMerge r    -> return [r]
-      OngoingMerge _ rs _ -> return rs
+      CompletedMerge r    -> pure [r]
+      OngoingMerge _ rs _ -> pure rs
 
 flattenTree :: MergingTree s -> ST s (MTree Run)
 flattenTree (MergingTree ref) = do
     mts <- readSTRef ref
     case mts of
       CompletedTreeMerge r ->
-        return (MLeaf r)
+        pure (MLeaf r)
       OngoingTreeMerge (MergingRun mt _ mrs) ->
         readSTRef mrs >>= \case
-          CompletedMerge r    -> return (MLeaf r)
-          OngoingMerge _ rs _ -> return (MNode mt (MLeaf <$> rs))
+          CompletedMerge r    -> pure (MLeaf r)
+          OngoingMerge _ rs _ -> pure (MNode mt (MLeaf <$> rs))
       PendingTreeMerge (PendingMerge mt irs trees) -> do
         irs' <- map MLeaf . concat <$> traverse flattenPreExistingRun irs
         trees' <- traverse flattenTree trees
-        return (MNode mt (irs' ++ trees'))
+        pure (MNode mt (irs' ++ trees'))
 
 flattenPreExistingRun :: PreExistingRun s -> ST s [Run]
 flattenPreExistingRun = \case
-    PreExistingRun         r -> return [r]
+    PreExistingRun         r -> pure [r]
     PreExistingMergingRun mr -> flattenMergingRun mr
 
 logicalValue :: LSM s -> ST s (Map Key (Value, Maybe Blob))
@@ -1572,7 +1572,7 @@ logicalValue lsm = do
     let r = mergek
               MergeLevel
               (wb : concat levels ++ toList (mergeTree <$> tree))
-    return (Map.mapMaybe justInsert r)
+    pure (Map.mapMaybe justInsert r)
   where
     mergeTree :: MTree Run -> Run
     mergeTree (MLeaf r)     = r
@@ -1594,17 +1594,17 @@ dumpRepresentation (LSMHandle _ lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     levels <- mapM dumpLevel ls
     tree <- case ul of
-      NoUnion   -> return Nothing
+      NoUnion   -> pure Nothing
       Union t _ -> Just <$> flattenTree t
-    return (wb, levels, tree)
+    pure (wb, levels, tree)
 
 dumpLevel :: Level s -> ST s LevelRepresentation
 dumpLevel (Level (Single r) rs) =
-    return (Nothing, (r:rs))
+    pure (Nothing, (r:rs))
 dumpLevel (Level (Merging mp nd ncv (MergingRun mt _ ref)) rs) = do
     mrs <- readSTRef ref
     nc  <- readSTRef ncv
-    return (Just (mp, nd, nc, mt, mrs), rs)
+    pure (Just (mp, nd, nc, mt, mrs), rs)
 
 -- For each level:
 -- 1. the runs involved in an ongoing merge

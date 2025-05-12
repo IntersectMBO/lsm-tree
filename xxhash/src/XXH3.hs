@@ -76,7 +76,7 @@ xxh3_64bit_createState = do
     -- see XXH3_createState implementation
     P.MutableByteArray ba <- P.newAlignedPinnedByteArray unsafe_xxh3_sizeof_state 64
     unsafeIOToST (unsafe_xxh3_initState ba)
-    return (XXH3 ba)
+    pure (XXH3 ba)
 
 -- | Reset 'XXH3_State' with a seed.
 xxh3_64bit_reset_withSeed :: XXH3_State s -> Word64 -> ST s ()

@@ -131,7 +131,7 @@ benchmarks = do
                 0
 #endif
 
-    return ()
+    pure ()
 
 type Alloc = Int
 
@@ -178,7 +178,7 @@ benchmark name description action n (subtractTime, subtractAlloc) expectedAlloc 
             (truncate allocPerKey :: Int)
 
     putStrLn ""
-    return (timeNet, allocNet)
+    pure (timeNet, allocNet)
 
 -- | (numEntries, sizeFactor, numBits, numHashFuncs)
 type BloomFilterSizeInfo = (Integer, Integer, Integer, Integer)
@@ -252,7 +252,7 @@ elemManyEnv filterSizes rng0 =
          let k :: Word256
              (!k, !rng') = uniform rng
          MBloom.insert mb (serialiseKey k)
-         return rng'
+         pure rng'
       )
       rng0
       (zip [0 .. totalNumEntries filterSizes - 1]

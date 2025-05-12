@@ -59,10 +59,10 @@ tests = testGroup "Database.LSMTree.Internal.Readers"
             (prop, RealState _ mCtx) <- runRealMonad hfs hbio
                                                      (RealState 0 Nothing) act
             traverse_ closeReadersCtx mCtx  -- close current readers
-            return prop
+            pure prop
 
           -- ensure that all handles have been closed
-          return $ prop
+          pure $ prop
               .&&. counterexample "file handles" (MockFS.numOpenHandles mockFS === 0)
     ]
 
@@ -290,7 +290,7 @@ instance InLockstep ReadersState where
                  [ liftArbitrary (elements (coerce keys))  -- existing key
                  , arbitrary                               -- any key
                  ]
-        return $ Some $ New offset sources
+        pure $ Some $ New offset sources
     | otherwise =
         QC.frequency $
           [ (5, pure (Some PeekKey))
@@ -427,23 +427,23 @@ runIO act lu = case act of
         case mreaders of
           Nothing -> do
             traverse_ closeReaderSource sources
-            return Nothing
+            pure Nothing
           Just readers ->
-            return $ Just (sources, readers)
+            pure $ Just (sources, readers)
       -- TODO: unnecessarily convoluted, should we just drop the State monad?
       numRuns' <- liftIO $ uniqueToInt <$> incrUniqCounter counter
       put (RealState numRuns' newReaders)
-      return (Right ())
+      pure (Right ())
     PeekKey -> expectReaders $ \_ r -> do
       (,) HasMore <$> Readers.peekKey r
     Pop n | n <= 1 -> pop
     Pop n -> pop >>= \case
-      Left  ()              -> return (Left ())
-      Right (_, _, Drained) -> return (Left ()) -- n > 1, so n too big
+      Left  ()              -> pure (Left ())
+      Right (_, _, Drained) -> pure (Left ()) -- n > 1, so n too big
       Right (_, _, HasMore) -> runIO (Pop (n-1)) lu
     DropWhileKey k -> expectReaders $ \_ r -> do
       (n, hasMore) <- Readers.dropWhileKey resolve r k
-      return (hasMore, (n, hasMore))
+      pure (hasMore, (n, hasMore))
   where
     fromSourceData hfs hbio counter = \case
         FromWriteBufferData rd -> do
@@ -451,17 +451,17 @@ runIO act lu = case act of
           wbblobs <- WBB.new hfs (FS.mkFsPath [show (uniqueToInt n) <> ".wb.blobs"])
           let kops = unRunData (serialiseRunData rd)
           wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hfs wbblobs)) kops
-          return $ Readers.FromWriteBuffer wb wbblobs
+          pure $ Readers.FromWriteBuffer wb wbblobs
         FromRunData rd -> do
           r <- unsafeCreateRun hfs hbio runParams (FS.mkFsPath []) counter $ serialiseRunData rd
-          return $ Readers.FromRun r
+          pure $ Readers.FromRun r
         FromReadersData ty rds -> do
           Readers.FromReaders ty <$> traverse (fromSourceData hfs hbio counter) rds
 
     pop = expectReaders $ \hfs r -> do
       (key, e, hasMore) <- Readers.pop resolve r
       fullEntry <- toMockEntry hfs e
-      return (hasMore, (key, fullEntry, hasMore))
+      pure (hasMore, (key, fullEntry, hasMore))
 
     expectReaders ::
          (FS.HasFS IO MockFS.HandleMock -> Readers IO MockFS.HandleMock -> IO (HasMore, a))
@@ -469,17 +469,17 @@ runIO act lu = case act of
     expectReaders f =
         ReaderT $ \(hfs, _hbio) -> do
           get >>= \case
-            RealState _ Nothing -> return (Left ())
+            RealState _ Nothing -> pure (Left ())
             RealState n (Just (sources, readers)) -> do
               (hasMore, x) <- liftIO $ f hfs readers
               case hasMore of
                 HasMore ->
-                  return (Right x)
+                  pure (Right x)
                 Drained -> do
                   -- Readers is drained, clean up the sources
                   liftIO $ traverse_ closeReaderSource sources
                   put (RealState n Nothing)
-                  return (Right x)
+                  pure (Right x)
 
     toMockEntry :: FS.HasFS IO MockFS.HandleMock -> Reader.Entry IO MockFS.HandleMock -> IO SerialisedEntry
     toMockEntry hfs = traverse (readRawBlobRef hfs) . Reader.toFullEntry

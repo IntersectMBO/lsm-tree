@@ -77,7 +77,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
                 ch1 <- flip appendToCompact ica $ AppendSinglePage k1 k2
                 ch2 <- flip appendToCompact ica $ AppendSinglePage k3 k3
                 (mCh3, idx) <- unsafeEnd ica
-                return (ch1 <> ch2 <> toList mCh3, idx)
+                pure (ch1 <> ch2 <> toList mCh3, idx)
 
           let expectedVersion :: [Word8]
               expectedVersion = word32toBytesLE 0x0000_0001 <> word32toBytesLE 0x0000_0000
@@ -347,7 +347,7 @@ writeIndexCompact numEntries (ChunkSize csize) ps = runST $ do
     ica <- new csize
     cs <- mapM (`appendToCompact` ica) (toAppends ps)
     (c, index) <- unsafeEnd ica
-    return
+    pure
       ( headerLBS
       , LBS.fromChunks $
         foldMap (map Chunk.toByteString) $ cs <> pure (toList c)
@@ -476,7 +476,7 @@ instance Arbitrary Chunks where
     icClashes <- VU.fromList . map Bit <$> vector numPages
     icLargerThanPage <- VU.fromList . map Bit <$> vector numPages
     icTieBreaker <- arbitrary
-    return (Chunks chunks IndexCompact {..})
+    pure (Chunks chunks IndexCompact {..})
 
   shrink (Chunks chunks index) =
     -- shrink number of pages

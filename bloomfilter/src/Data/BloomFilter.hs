@@ -127,7 +127,7 @@ empty :: Int                    -- ^ number of hash functions to use
       -> Word64                 -- ^ number of bits in filter
       -> Bloom' h a
 {-# INLINE [1] empty #-}
-empty hash numBits = create hash numBits (\_ -> return ())
+empty hash numBits = create hash numBits (\_ -> pure ())
 
 -- | Create a Bloom filter with a single element.
 singleton :: (Hashes h, Hashable a)
@@ -195,7 +195,7 @@ unfold hs numBits f k = create hs numBits (loop k)
   where loop :: forall s. b -> MBloom' s h a -> ST s ()
         loop j mb = case f j of
                       Just (a, j') -> insert mb a >> loop j' mb
-                      _            -> return ()
+                      _            -> pure ()
 
 -- | Create an immutable Bloom filter, populating it from a list of
 -- values.
