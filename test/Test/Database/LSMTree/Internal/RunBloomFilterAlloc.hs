@@ -78,7 +78,7 @@ prop_verifyFPR p alloc (NumEntries numEntries) (Seed seed) =
   let stdgen      = mkStdGen seed
       measuredFPR = measureApproximateFPR p (mkBloomFromAlloc alloc) numEntries stdgen
       expectedFPR = case alloc of
-        RunAllocFixed bits -> Bloom.policyFPR (Bloom.policyForBits (fromIntegral bits))
+        RunAllocFixed bits -> Bloom.policyFPR (Bloom.policyForBits bits)
         RunAllocRequestFPR requestedFPR -> requestedFPR
       -- error margins
       lb = expectedFPR - 0.1
@@ -106,19 +106,19 @@ allocInvariant :: RunBloomFilterAlloc -> Bool
 allocInvariant (RunAllocFixed x)      = fixedInvariant x
 allocInvariant (RunAllocRequestFPR x) = fprInvariant x
 
-genFixed :: Gen Word64
+genFixed :: Gen Double
 genFixed = choose (fixedLB, fixedUB)
 
-shrinkFixed :: Word64 -> [Word64]
+shrinkFixed :: Double -> [Double]
 shrinkFixed x = [ x' | x' <- shrink x, fixedInvariant x']
 
-fixedInvariant :: Word64 -> Bool
+fixedInvariant :: Double -> Bool
 fixedInvariant x = fixedLB <= x && x <= fixedUB
 
-fixedLB :: Word64
+fixedLB :: Double
 fixedLB = 3 -- bits per entry
 
-fixedUB :: Word64
+fixedUB :: Double
 fixedUB = 24 -- bits per entry
 
 genFPR :: Gen Double

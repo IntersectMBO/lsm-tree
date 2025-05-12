@@ -31,7 +31,6 @@ module Database.LSMTree.Internal.Config (
   ) where
 
 import           Control.DeepSeq (NFData (..))
-import           Data.Word (Word64)
 import           Database.LSMTree.Internal.Index (IndexType)
 import qualified Database.LSMTree.Internal.Index as Index
                      (IndexType (Compact, Ordinary))
@@ -172,14 +171,18 @@ instance NFData WriteBufferAlloc where
 --
 data BloomFilterAlloc =
     -- | Allocate a fixed number of bits per physical entry in each bloom
-    -- filter.
-    AllocFixed
-      !Word64 -- ^ Bits per physical entry.
+    -- filter. Non-integer values are legal. Once the number of entries is know,
+    -- the number of bits is rounded.
+    --
+    -- The value must strictly positive, 0 < x. Sane values are 2 .. 24.
+    --
+    AllocFixed !Double
   | -- | Allocate as many bits as required per physical entry to get the requested
-    -- false-positive rate. Do this for each bloom filter. The value must be
-    -- in the range 0 < x < 1.
-    AllocRequestFPR
-      !Double -- ^ Requested FPR.
+    -- false-positive rate. Do this for each bloom filter.
+    --
+    -- The value must be in the range 0 < x < 1. Sane values are 1e-2 .. 1e-5.
+    --
+    AllocRequestFPR !Double
   deriving stock (Show, Eq)
 
 instance NFData BloomFilterAlloc where

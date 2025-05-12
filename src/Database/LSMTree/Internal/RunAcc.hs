@@ -40,7 +40,6 @@ import           Data.BloomFilter.Blocked (Bloom, MBloom)
 import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
-import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
@@ -320,7 +319,7 @@ selectPagesAndChunks mpagemchunkPre page chunks =
 -- | See 'Database.LSMTree.Internal.Config.BloomFilterAlloc'
 data RunBloomFilterAlloc =
     -- | Bits per element in a filter
-    RunAllocFixed !Word64 --TODO: this could be Double too
+    RunAllocFixed      !Double
   | RunAllocRequestFPR !Double
   deriving stock (Show, Eq)
 
@@ -335,5 +334,5 @@ newMBloom (NumEntries nentries) alloc =
     --TODO: it'd be possible to turn the RunBloomFilterAlloc into a BloomPolicy
     -- without the NumEntries, and cache the policy, avoiding recalculating the
     -- policy every time.
-    policy (RunAllocFixed bitsPerEntry) = Bloom.policyForBits (fromIntegral bitsPerEntry)
+    policy (RunAllocFixed bitsPerEntry) = Bloom.policyForBits bitsPerEntry
     policy (RunAllocRequestFPR fpr)     = Bloom.policyForFPR fpr

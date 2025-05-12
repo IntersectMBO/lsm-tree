@@ -18,7 +18,6 @@ import qualified Data.Vector.Generic.Mutable as VGM
 import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Primitive as VP
 import qualified Data.Vector.Unboxed.Mutable as VUM
-import           Data.Word (Word64)
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager,
@@ -91,7 +90,7 @@ benchmarkNumLookups = 1_000_000 -- 10 * the stretch target
 benchmarkGenBatchSize :: Int
 benchmarkGenBatchSize = 256
 
-benchmarkNumBitsPerEntry :: Word64
+benchmarkNumBitsPerEntry :: Double
 benchmarkNumBitsPerEntry = 10
 
 benchmarkResolveSerialisedValue :: ResolveSerialisedValue
