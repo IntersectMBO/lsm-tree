@@ -16,18 +16,14 @@
 -- Finally, it demonstrates a design for table unions, including a
 -- representation for in-progress merging trees.
 --
--- The merging policy that this prototype uses is \"lazy levelling\".
--- Each level is T times bigger than the previous level.
--- Lazy levelling means we use tiering for every level except the last level
--- which uses levelling. Though note that the first level always uses tiering,
--- even if the first level is also the last level. This is to simplify flushing
--- the write buffer: if we used levelling on the first level we would need a
--- code path for merging the write buffer into the first level.
+-- The merging policy that this prototype uses can be \"levelling\" or \"lazy
+-- levelling\". Each level is T times bigger than the previous level.
 --
 module ScheduledMerges (
     -- * Main API
     LSM,
     LSMConfig (..),
+    MergePolicy (..),
     Key (K), Value (V), resolveValue, Blob (B),
     new,
     newWith,
@@ -125,7 +121,24 @@ data LSMConfig = LSMConfig {
       configMaxWriteBufferSize :: !Int
       -- | Also known as the parameter @T@
     , configSizeRatio          :: !Int
+    , configMergePolicy        :: !MergePolicy
     }
+  deriving stock (Show, Eq)
+
+data MergePolicy =
+    -- | Tiering in all levels except the last one, where we use levelling. This
+    -- makes it possible to remove 'Delete' entries on the last level. The first
+    -- level always uses tiering however, even if it's also the last level.
+    --
+    -- Lazy levelling means we use tiering for every level except the last level
+    -- which uses levelling. Though note that the first level always uses tiering,
+    -- even if the first level is also the last level. This is to simplify flushing
+    -- the write buffer: if we used levelling on the first level we would need a
+    -- code path for merging the write buffer into the first level.
+    LazyLevelling
+    -- | Use levelling in all levels. The first level always uses tiering
+    -- however. TODO: why?
+  | Levelling
   deriving stock (Show, Eq)
 
 -- | A simple count of LSM operations to allow logging the operation
@@ -163,10 +176,11 @@ data IncomingRun s = Merging !MergePolicyForLevel
                    | Single  !Run
 
 -- | The merge policy for a LSM level can be either tiering or levelling.
--- In this design we use levelling for the last level, and tiering for
--- all other levels. The first level always uses tiering however, even if
--- it's also the last level. So 'MergePolicyForLevel' and 'LevelMergeType' are
--- orthogonal, all combinations are possible.
+-- 'MergePolicyForLevel' and 'LevelMergeType' are orthogonal, all combinations
+-- are possible.
+--
+-- Variables referring to values of type 'MergePolicyForLevel' are often named
+-- @mpl@.
 --
 data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock (Eq, Show)
@@ -302,11 +316,19 @@ resolveValue (V x) (V y) = V (x + y)
 newtype Blob = B Int
   deriving stock (Eq, Show)
 
--- | We use levelling on the last level, unless that is also the first level.
-mergePolicyForLevel :: Int -> [Level s] -> UnionLevel s -> MergePolicyForLevel
-mergePolicyForLevel 1 _  _       = LevelTiering
-mergePolicyForLevel _ [] NoUnion = LevelLevelling
-mergePolicyForLevel _ _  _       = LevelTiering
+mergePolicyForLevel :: LSMConfig -> Int -> [Level s] -> UnionLevel s -> MergePolicyForLevel
+mergePolicyForLevel conf = go (configMergePolicy conf)
+  where
+    -- If the table-wide merge policy is levelling, then the merge policy for
+    -- each level is also levelling
+    go Levelling     _ _  _       = LevelLevelling
+
+    -- If the table-wide merge policy is lazy levelling, then we use levelling
+    -- on the last level if there is nu union level, unless that is also the
+    -- first level.
+    go LazyLevelling 1 _  _       = LevelTiering
+    go LazyLevelling _ [] NoUnion = LevelLevelling
+    go LazyLevelling _ _  _       = LevelTiering
 
 -- | If there are no further levels provided, this level is the last one.
 -- However, if a 'Union' is present, it acts as another (last) level.
@@ -333,7 +355,7 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
           pure (CompletedMerge r)
         Merging mp _ _ (MergingRun mt _ ref) -> do
           assertST $ ln > 1  -- no merges on level 1
-          assertST $ mp == mergePolicyForLevel ln ls ul
+          assertST $ mp == mergePolicyForLevel conf ln ls ul
           assertST $ mt == mergeTypeForLevel ls ul
           readSTRef ref
 
@@ -347,7 +369,7 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
     -- being merged) should be of the correct size for the level.
     expectedRunLengths :: Int -> [Run] -> [Level s] -> ST s ()
     expectedRunLengths ln rs ls =
-      case mergePolicyForLevel ln ls ul of
+      case mergePolicyForLevel conf ln ls ul of
         -- Levels using levelling have only one (incoming) run, which almost
         -- always consists of an ongoing merge. The exception is when a
         -- levelling run becomes too large and is promoted, in that case
@@ -367,7 +389,7 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
     expectedMergingRunLengths :: Int -> IncomingRun s -> MergingRunState
                               -> [Level s] -> ST s ()
     expectedMergingRunLengths ln ir mrs ls =
-      case mergePolicyForLevel ln ls ul of
+      case mergePolicyForLevel conf ln ls ul of
         LevelLevelling -> do
           case (ir, mrs) of
             -- A single incoming run (which thus didn't need merging) must be
@@ -946,6 +968,7 @@ new = newWith conf
     conf = LSMConfig {
         configMaxWriteBufferSize = 4
       , configSizeRatio = 4
+      , configMergePolicy = LazyLevelling
       }
 
 newWith :: LSMConfig -> ST s (LSM s)
@@ -1389,9 +1412,9 @@ increment tr sc conf run0 ls0 ul = do
 
     go :: Int -> [Run] -> Levels s -> ST s (Levels s)
     go !ln incoming [] = do
-        let mergePolicy = mergePolicyForLevel ln [] ul
+        let mpl = mergePolicyForLevel conf ln [] ul
         traceWith tr' AddLevelEvent
-        ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeFor []) incoming
+        ir <- newLevelMerge tr' conf ln mpl (mergeTypeFor []) incoming
         pure (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
@@ -1399,17 +1422,17 @@ increment tr sc conf run0 ls0 ul = do
     go !ln incoming (Level ir rs : ls) = do
       r <- case ir of
         Single r -> pure r
-        Merging mergePolicy _ _ mr -> do
+        Merging mpl _ _ mr -> do
           r <- expectCompletedMergingRun mr
           traceWith tr' MergeCompletedEvent {
-              mergePolicy,
+              mergePolicyThisLevel = mpl,
               mergeType = let MergingRun mt _ _ = mr in mt,
               mergeSize = runSize r
             }
           pure r
 
       let resident = r:rs
-      case mergePolicyForLevel ln ls ul of
+      case mergePolicyForLevel conf ln ls ul of
 
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
@@ -1458,18 +1481,18 @@ newLevelMerge :: Tracer (ST s) EventDetail
               -> Int -> MergePolicyForLevel -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
 newLevelMerge _ _ _ _ _ [r] = pure (Single r)
-newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
+newLevelMerge tr conf@LSMConfig{..} level mpl mergeType rs = do
     assertST (length rs `elem` [configSizeRatio, configSizeRatio + 1])
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
     assertST (totalDebt physicalDebt <= maxPhysicalDebt)
     traceWith tr MergeStartedEvent {
-                   mergePolicy,
+                   mergePolicyThisLevel = mpl,
                    mergeType,
                    mergeDebt     = totalDebt physicalDebt,
                    mergeRunsSize = map runSize rs
                  }
     nominalCreditVar <- newSTRef (NominalCredit 0)
-    pure (Merging mergePolicy nominalDebt nominalCreditVar mergingRun)
+    pure (Merging mpl nominalDebt nominalCreditVar mergingRun)
   where
     -- The nominal debt equals the minimum of credits we will supply before we
     -- expect the merge to complete. This is the same as the number of updates
@@ -1487,7 +1510,7 @@ newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
     -- steps a merge at this level could need. Note that for levelling this is
     -- includes the single run in the current level.
     maxPhysicalDebt =
-      case mergePolicy of
+      case mpl of
         LevelLevelling ->
           configSizeRatio * levelNumberToMaxRunSize LevelTiering conf (level-1)
             + levelNumberToMaxRunSize LevelLevelling conf level
@@ -1860,15 +1883,15 @@ data EventDetail =
          runsAtLevel   :: Int
        }
      | MergeStartedEvent {
-         mergePolicy   :: MergePolicyForLevel,
-         mergeType     :: LevelMergeType,
-         mergeDebt     :: Debt,
-         mergeRunsSize :: [Int]
+         mergePolicyThisLevel :: MergePolicyForLevel,
+         mergeType            :: LevelMergeType,
+         mergeDebt            :: Debt,
+         mergeRunsSize        :: [Int]
        }
      | MergeCompletedEvent {
-         mergePolicy :: MergePolicyForLevel,
-         mergeType   :: LevelMergeType,
-         mergeSize   :: Int
+         mergePolicyThisLevel :: MergePolicyForLevel,
+         mergeType            :: LevelMergeType,
+         mergeSize            :: Int
        }
   deriving stock Show
 

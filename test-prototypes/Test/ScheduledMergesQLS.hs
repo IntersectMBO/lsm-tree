@@ -219,6 +219,7 @@ instance InLockstep Model where
         fmap Some $ ANew <$> (
             LSMConfig <$> frequency [(10, choose (1,10)), (90, choose (3,5))]
                       <*> frequency [(10, choose (2,10)), (90, choose (3,5))]
+                      <*> elements [LazyLevelling, Levelling]
           )
       vars ->
         let kvars = findVars ctx (Proxy :: Proxy Key)
@@ -308,7 +309,7 @@ instance InLockstep Model where
          , sr' >= 2, sr' <= 10
          ]
     where
-      LSMConfig mwbs sr = conf
+      LSMConfig mwbs sr _mp = conf
 
   shrinkWithVars _ctx _model (AInsert var (Right k) v b) =
     [ Some $ AInsert var (Right k') v' b' | (k', v', b') <- shrink (k, v, b) ]

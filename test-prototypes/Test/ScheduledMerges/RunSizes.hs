@@ -1,7 +1,8 @@
 module Test.ScheduledMerges.RunSizes (tests) where
 
+import           Data.Coerce (coerce)
 import qualified ScheduledMerges as Proto
-import           ScheduledMerges hiding (MergePolicyForLevel)
+import           ScheduledMerges hiding (MergePolicy, MergePolicyForLevel)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -71,9 +72,11 @@ instance Arbitrary Config where
   arbitrary = Config <$> do
       bufSize <- (getSmall <$> arbitrary) `suchThat` (>0)
       sizeRatio <- (getSmall <$> arbitrary) `suchThat` (>1)
+      MergePolicy mergePolicy <- arbitrary
       pure $ LSMConfig {
           configMaxWriteBufferSize = bufSize
         , configSizeRatio = sizeRatio
+        , configMergePolicy = mergePolicy
         }
   shrink (Config conf@LSMConfig{..}) =
       [ Config conf{configMaxWriteBufferSize = bufSize'}
@@ -84,7 +87,18 @@ instance Arbitrary Config where
       | sizeRatio' <- shrink configSizeRatio
       , sizeRatio' > 1
       ]
+   ++ [ Config conf{configMergePolicy = mergePolicy'}
+      | MergePolicy mergePolicy' <- shrink (MergePolicy configMergePolicy)
+      ]
 
+newtype MergePolicy = MergePolicy Proto.MergePolicy
+  deriving stock (Show, Eq)
+
+instance Arbitrary MergePolicy where
+  arbitrary = MergePolicy <$> elements [Proto.Levelling, Proto.LazyLevelling]
+  shrink = coerce $ \case
+      Proto.Levelling -> []
+      Proto.LazyLevelling -> [Proto.Levelling]
 
 newtype LevelNo = LevelNo Int
   deriving stock (Show, Eq, Ord)
