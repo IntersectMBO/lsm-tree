@@ -216,7 +216,7 @@ instance InLockstep Model where
         -- Generate a write buffer size and size ratio in the range [3,5]. 4 was
         -- the hard-coded default for both before they were made configurable,
         -- and we still test that 1/3 of the time.
-        fmap Some $ ANew <$> (LSMConfig <$> choose (3,5) <*> choose (3,5))
+        fmap Some $ ANew <$> (LSMConfig <$> choose (3,5) <*> choose (3,5) <*> elements [LazyLevelling, Levelling])
       vars ->
         let kvars = findVars ctx (Proxy :: Proxy Key)
             existingKey = Left <$> elements kvars
