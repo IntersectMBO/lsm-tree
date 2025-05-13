@@ -62,7 +62,7 @@ module ScheduledMerges (
     PreExistingRun(..),
     MergingRun(..),
     MergingRunState(..),
-    MergePolicy(..),
+    MergePolicyForLevel(..),
     IsMergeType(..),
     TreeMergeType(..),
     LevelMergeType(..),
@@ -139,7 +139,7 @@ data Level s = Level !(IncomingRun s) ![Run]
 -- single run without having to read the 'STRef', and secondly to make it easier
 -- to avoid supplying merge credits. It's not essential, but simplifies things
 -- somewhat.
-data IncomingRun s = Merging !MergePolicy
+data IncomingRun s = Merging !MergePolicyForLevel
                              !NominalDebt !(STRef s NominalCredit)
                              !(MergingRun LevelMergeType s)
                    | Single  !Run
@@ -147,10 +147,10 @@ data IncomingRun s = Merging !MergePolicy
 -- | The merge policy for a LSM level can be either tiering or levelling.
 -- In this design we use levelling for the last level, and tiering for
 -- all other levels. The first level always uses tiering however, even if
--- it's also the last level. So 'MergePolicy' and 'LevelMergeType' are
+-- it's also the last level. So 'MergePolicyForLevel' and 'LevelMergeType' are
 -- orthogonal, all combinations are possible.
 --
-data MergePolicy = MergePolicyTiering | MergePolicyLevelling
+data MergePolicyForLevel = LevelTiering | LevelLevelling
   deriving stock (Eq, Show)
 
 -- | A \"merging run\" is a mutable representation of an incremental merge.
@@ -175,7 +175,7 @@ class Show t => IsMergeType t where
 --
 -- A last level merge behaves differently from a mid-level merge: last level
 -- merges can actually remove delete operations, whereas mid-level merges must
--- preserve them. This is orthogonal to the 'MergePolicy'.
+-- preserve them. This is orthogonal to the 'MergePolicyForLevel'.
 data LevelMergeType = MergeMidLevel | MergeLastLevel
   deriving stock (Eq, Show)
 
@@ -313,10 +313,10 @@ maxBufferSize :: LSMConfig -> Int
 maxBufferSize conf = tieringRunSize conf 1 -- maxWriteBufferSize
 
 -- | We use levelling on the last level, unless that is also the first level.
-mergePolicyForLevel :: Int -> [Level s] -> UnionLevel s -> MergePolicy
-mergePolicyForLevel 1 _  _       = MergePolicyTiering
-mergePolicyForLevel _ [] NoUnion = MergePolicyLevelling
-mergePolicyForLevel _ _  _       = MergePolicyTiering
+mergePolicyForLevel :: Int -> [Level s] -> UnionLevel s -> MergePolicyForLevel
+mergePolicyForLevel 1 _  _       = LevelTiering
+mergePolicyForLevel _ [] NoUnion = LevelLevelling
+mergePolicyForLevel _ _  _       = LevelTiering
 
 -- | If there are no further levels provided, this level is the last one.
 -- However, if a 'Union' is present, it acts as another (last) level.
@@ -363,10 +363,10 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
         -- levelling run becomes too large and is promoted, in that case
         -- initially there's no merge, but it is still represented as an
         -- 'IncomingRun', using 'Single'. Thus there are no other resident runs.
-        MergePolicyLevelling -> assertST $ null rs
+        LevelLevelling -> assertST $ null rs
         -- Runs in tiering levels usually fit that size, but they can be one
         -- larger, if a run has been held back (creating a @sizeRatio+1@-way merge).
-        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel conf r `elem` [ln, ln+1]) rs
+        LevelTiering   -> assertST $ all (\r -> tieringRunSizeToLevel conf r `elem` [ln, ln+1]) rs
         -- (This is actually still not really true, but will hold in practice.
         -- In the pathological case, all runs passed to the next level can be
         -- factor ((sizeRatio+1)/sizeRatio) too large, and there the same holding back can lead to
@@ -378,7 +378,7 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
                               -> [Level s] -> ST s ()
     expectedMergingRunLengths ln ir mrs ls =
       case mergePolicyForLevel ln ls ul of
-        MergePolicyLevelling -> do
+        LevelLevelling -> do
           case (ir, mrs) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size range already
@@ -407,7 +407,7 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
               assertST $ all (\r -> tieringRunSizeToLevel conf r `elem` [ln-1, ln]) incoming
               assertST $ all (\r -> levellingRunSizeToLevel conf r <= ln+1) resident
 
-        MergePolicyTiering ->
+        LevelTiering ->
           case (ir, mrs, mergeTypeForLevel ls ul) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
@@ -1226,23 +1226,23 @@ increment tr sc conf run0 ls0 ul = do
 
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
-        MergePolicyTiering | tieringRunSizeToLevel conf r < ln -> do
-          ir' <- newLevelMerge tr' conf ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
+        LevelTiering | tieringRunSizeToLevel conf r < ln -> do
+          ir' <- newLevelMerge tr' conf ln LevelTiering (mergeTypeFor ls) (incoming ++ [r])
           return (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
-        MergePolicyTiering | tieringLevelIsFull conf ln incoming resident -> do
-          ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
+        LevelTiering | tieringLevelIsFull conf ln incoming resident -> do
+          ir' <- newLevelMerge tr' conf ln LevelTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
           return (Level ir' [] : ls')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
-        MergePolicyTiering -> do
-          ir' <- newLevelMerge tr' conf ln MergePolicyTiering (mergeTypeFor ls) incoming
+        LevelTiering -> do
+          ir' <- newLevelMerge tr' conf ln LevelTiering (mergeTypeFor ls) incoming
           traceWith tr' (AddRunEvent (length resident))
           return (Level ir' resident : ls)
 
@@ -1250,16 +1250,16 @@ increment tr sc conf run0 ls0 ul = do
         -- run is too large for this level, we promote the run to the next
         -- level and start merging the incoming runs into this (otherwise
         -- empty) level .
-        MergePolicyLevelling | levellingLevelIsFull conf ln incoming r -> do
+        LevelLevelling | levellingLevelIsFull conf ln incoming r -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newLevelMerge tr' conf ln LevelTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
           return (Level ir' [] : ls')
 
         -- Otherwise we start merging the incoming runs into the run.
-        MergePolicyLevelling -> do
+        LevelLevelling -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' conf ln MergePolicyLevelling (mergeTypeFor ls)
+          ir' <- newLevelMerge tr' conf ln LevelLevelling (mergeTypeFor ls)
                           (incoming ++ [r])
           return (Level ir' [] : [])
 
@@ -1268,7 +1268,7 @@ increment tr sc conf run0 ls0 ul = do
 
 newLevelMerge :: Tracer (ST s) EventDetail
               -> LSMConfig
-              -> Int -> MergePolicy -> LevelMergeType
+              -> Int -> MergePolicyForLevel -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
 newLevelMerge _ _ _ _ _ [r] = return (Single r)
 newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
@@ -1301,9 +1301,9 @@ newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
     -- includes the single run in the current level.
     maxPhysicalDebt =
       case mergePolicy of
-        MergePolicyLevelling -> sizeRatio * tieringRunSize conf (level-1)
+        LevelLevelling -> sizeRatio * tieringRunSize conf (level-1)
                                           + levellingRunSize conf level
-        MergePolicyTiering   -> length rs * tieringRunSize conf (level-1)
+        LevelTiering   -> length rs * tieringRunSize conf (level-1)
 
 -- | Only based on run count, not their sizes.
 tieringLevelIsFull :: LSMConfig -> Int -> [Run] -> [Run] -> Bool
@@ -1620,7 +1620,7 @@ logicalValue lsm = do
 type Representation = (Run, [LevelRepresentation], Maybe (MTree Run))
 
 type LevelRepresentation =
-    (Maybe (MergePolicy, NominalDebt, NominalCredit,
+    (Maybe (MergePolicyForLevel, NominalDebt, NominalCredit,
             LevelMergeType, MergingRunState),
      [Run])
 
@@ -1680,13 +1680,13 @@ data EventDetail =
          runsAtLevel   :: Int
        }
      | MergeStartedEvent {
-         mergePolicy   :: MergePolicy,
+         mergePolicy   :: MergePolicyForLevel,
          mergeType     :: LevelMergeType,
          mergeDebt     :: Debt,
          mergeRunsSize :: [Int]
        }
      | MergeCompletedEvent {
-         mergePolicy :: MergePolicy,
+         mergePolicy :: MergePolicyForLevel,
          mergeType   :: LevelMergeType,
          mergeSize   :: Int
        }
