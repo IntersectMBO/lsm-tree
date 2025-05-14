@@ -55,6 +55,7 @@ module Data.BloomFilter.Blocked (
     new,
     maxSizeBits,
     insert,
+    insertMany,
 
     -- ** Conversion
     freeze,
@@ -74,7 +75,9 @@ module Data.BloomFilter.Blocked (
 import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld,
                      stToPrim)
 import           Control.Monad.ST (ST, runST)
+import           Data.Bits ((.&.))
 import           Data.Primitive.ByteArray (MutableByteArray)
+import qualified Data.Primitive.PrimArray as P
 
 import           Data.BloomFilter.Blocked.Calc
 import           Data.BloomFilter.Blocked.Internal hiding (deserialise)
@@ -190,3 +193,86 @@ deserialise bloomsize fill = do
     Internal.deserialise mbloom fill
     stToPrim $ unsafeFreeze mbloom
 
+
+-----------------------------------------------------------
+-- Bulk insert
+--
+
+{-# INLINABLE insertMany #-}
+-- | A bulk insert of many elements.
+--
+-- This is somewhat faster than repeated insertion using 'insert'. It uses
+-- memory prefetching to improve the utilisation of memory bandwidth. This has
+-- greatest benefit for large filters (that do not fit in L3 cache) and for
+-- inserting many elements, e.g. > 10.
+--
+-- To get best performance, you probably want to specialise this function to
+-- the 'Hashable' instance and to the lookup action. It is marked @INLINABLE@
+-- to help with this.
+--
+insertMany ::
+     forall a s.
+     Hashable a
+  => MBloom s a
+  -> (Int -> ST s a) -- ^ Action to lookup elements, indexed @0..n-1@
+  -> Int             -- ^ @n@, number of elements to insert
+  -> ST s ()
+insertMany bloom key n =
+    P.newPrimArray 0x10 >>= body
+  where
+    -- The general strategy is to use a rolling buffer @buf@ (of size 16). At
+    -- the write end of the buffer, we prepare the probe locations and prefetch
+    -- the corresponding cache line. At the read end, we do the hash insert.
+    -- By having a prefetch distance of 15 between the write and read ends, we
+    -- can have up to 15 memory reads in flight at once, thus improving
+    -- utilisation of the memory bandwidth.
+    body :: P.MutablePrimArray s (Hashes a) -> ST s ()
+    body !buf = prepareProbes 0 0
+      where
+        -- Start by filling the buffer as far as we can, either to the end of
+        -- the buffer or until we run out of elements.
+        prepareProbes :: Int -> Int -> ST s ()
+        prepareProbes !i !i_w
+          | i_w < 0x0f && i < n = do
+              k <- key i
+              let !kh = hashes k
+              prefetchInsert bloom kh
+              P.writePrimArray buf i_w kh
+              prepareProbes (i+1) (i_w+1)
+
+          | n > 0     = insertProbe 0 0 i_w
+          | otherwise = return ()
+
+        -- Read from the read end of the buffer and do the inserts.
+        insertProbe :: Int -> Int -> Int -> ST s ()
+        insertProbe !i !i_r !i_w = do
+            kh <- P.readPrimArray buf i_r
+            insertHashes bloom kh
+            nextProbe i i_r i_w
+
+        -- Move on to the next entry.
+        nextProbe :: Int -> Int -> Int -> ST s ()
+        nextProbe !i !i_r !i_w
+          -- If there are elements left, we prepare them and add them at the
+          -- write end of the buffer, before inserting the next element
+          -- (from the read end of the buffer).
+          | i < n = do
+              k <- key i
+              let !kh = hashes k
+              prefetchInsert bloom kh
+              P.writePrimArray buf i_w kh
+              insertProbe
+                (i+1)
+                ((i_r + 1) .&. 0x0f)
+                ((i_w + 1) .&. 0x0f)
+
+          -- Or if there's no more elements to add to the buffer, but the
+          -- buffer is still non-empty, we just loop draining the buffer.
+          | ((i_r + 1) .&. 0x0f) /= i_w =
+              insertProbe
+                i
+                ((i_r + 1) .&. 0x0f)
+                i_w
+
+          -- When the buffer is empty, we're done.
+          | otherwise = return ()
