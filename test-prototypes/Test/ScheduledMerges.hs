@@ -177,11 +177,11 @@ test_merge_again_with_incoming =
 --
 
 -- | Supplying enough credits for the remaining debt completes the union merge.
-prop_union :: [[(LSM.Key, LSM.Op)]] -> Property
-prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
+prop_union :: [[(LSM.Key, LSM.Entry)]] -> Property
+prop_union kess = length (filter (not . null) kess) > 1 QC.==>
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
-        ts <- traverse (mkTable tr) kopss
+        ts <- traverse (mkTable tr) kess
         t <- LSM.unions ts
 
         debt@(UnionDebt x) <- LSM.remainingUnionDebt t
@@ -199,7 +199,7 @@ prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
         MLeaf{} -> True
         MNode{} -> False
 
-mkTable :: Tracer (ST s) Event -> [(LSM.Key, LSM.Op)] -> ST s (LSM s)
+mkTable :: Tracer (ST s) Event -> [(LSM.Key, LSM.Entry)] -> ST s (LSM s)
 mkTable tr ks = do
     t <- LSM.new
     LSM.updates tr t ks
