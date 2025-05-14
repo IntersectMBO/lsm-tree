@@ -44,6 +44,7 @@ tests =
             test_calculations proxyBlocked
               (FPR 1e-4, FPR 1e-1) (BitsPerEntry 3, BitsPerEntry 24) 1e-2
         , test_fromList     proxyBlocked
+        , testProperty "prop_insertMany" prop_insertMany
         ]
     , tests_hashes
     ]
@@ -239,6 +240,25 @@ prop_rechunked f s =
 
 prop_rechunked_eq :: LBS.ByteString -> Property
 prop_rechunked_eq = prop_rechunked hash64
+
+-------------------------------------------------------------------------------
+-- Bulk operations
+-------------------------------------------------------------------------------
+
+-- Currently only for Bloom.Blocked.
+prop_insertMany :: FPR -> [Word64] -> Property
+prop_insertMany (FPR fpr) keys =
+     bloom_insert === bloom_insertMany
+  where
+    bloom_insert =
+      Bloom.Blocked.create (Bloom.Blocked.sizeForFPR fpr n) $ \mb ->
+        mapM_ (Bloom.Blocked.insert mb) keys
+
+    bloom_insertMany =
+      Bloom.Blocked.create (Bloom.Blocked.sizeForFPR fpr n) $ \mb ->
+        Bloom.Blocked.insertMany mb (\k -> pure $ keys !! k) n
+
+    !n = length keys
 
 -------------------------------------------------------------------------------
 -- Class to allow testing two filter implementations
