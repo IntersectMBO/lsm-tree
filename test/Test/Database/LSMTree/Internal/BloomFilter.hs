@@ -100,8 +100,9 @@ prop_total_deserialisation_whitebox hsn (Small nbits) =
         prop_total_deserialisation (prefix version <> BS.pack bytes)
   where
     genBytes   = do n <- choose (-1,1)
-                    vector (nbytes+n)
-    nbytes     = ((((fromIntegral nbits+7) `div` 8) + 7) `div` 8) * 8
+                    vector (nbytes' + n)
+    nbytes     = (fromIntegral nbits+7) `div` 8
+    nbytes'    = ((nbytes + 63) `div` 64) * 64 -- rounded to nearest 64 bytes
     genVersion = frequency [
                    (6, pure bloomFilterVersion),
                    (1, pure (byteSwap32 bloomFilterVersion)),
