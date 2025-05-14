@@ -33,7 +33,7 @@ module ScheduledMerges (
     newWith,
     LookupResult (..),
     lookup, lookups,
-    Op,
+    Entry,
     Update (..),
     update, updates,
     insert, inserts,
@@ -192,7 +192,7 @@ class Show t => IsMergeType t where
 -- | Different types of merges created as part of a regular (non-union) level.
 --
 -- A last level merge behaves differently from a mid-level merge: last level
--- merges can actually remove delete operations, whereas mid-level merges must
+-- merges can actually remove delete entries, whereas mid-level merges must
 -- preserve them. This is orthogonal to the 'MergePolicyForLevel'.
 data LevelMergeType = MergeMidLevel | MergeLastLevel
   deriving stock (Eq, Show)
@@ -275,8 +275,8 @@ pattern PendingMerge :: TreeMergeType
                      -> PendingMerge s
 pattern PendingMerge mt prs ts <- (pendingContent -> (mt, prs, ts))
 
-type Run    = Map Key Op
-type Buffer = Map Key Op
+type Run    = Map Key Entry
+type Buffer = Map Key Entry
 
 bufferToRun :: Buffer -> Run
 bufferToRun = id
@@ -287,7 +287,7 @@ runSize = Map.size
 bufferSize :: Buffer -> Int
 bufferSize = Map.size
 
-type Op = Update Value Blob
+type Entry = Update Value Blob
 
 newtype Key = K Int
   deriving stock (Eq, Ord, Show)
@@ -875,7 +875,7 @@ mergek t =
 -- | Combines two entries that have been performed after another. Therefore, the
 -- newer one overwrites the old one (or modifies it for 'Mupsert'). Only take a
 -- blob from the left entry.
-combine :: Op -> Op -> Op
+combine :: Entry -> Entry -> Entry
 combine new_ old = case new_ of
     Insert{}  -> new_
     Delete{}  -> new_
@@ -890,7 +890,7 @@ combine new_ old = case new_ of
 -- from the left entry.
 --
 -- See 'MergeUnion'.
-combineUnion :: Op -> Op -> Op
+combineUnion :: Entry -> Entry -> Entry
 combineUnion Delete         (Mupsert v)  = Insert v Nothing
 combineUnion Delete         old          = old
 combineUnion (Mupsert u)    Delete       = Insert u Nothing
@@ -983,17 +983,17 @@ data Update v b =
   | Delete
   deriving stock (Eq, Show)
 
-updates :: Tracer (ST s) Event -> LSM s -> [(Key, Op)] -> ST s ()
+updates :: Tracer (ST s) Event -> LSM s -> [(Key, Entry)] -> ST s ()
 updates tr lsm = mapM_ (uncurry (update tr lsm))
 
-update :: Tracer (ST s) Event -> LSM s -> Key -> Op -> ST s ()
-update tr (LSMHandle scr conf lsmr) k op = do
+update :: Tracer (ST s) Event -> LSM s -> Key -> Entry -> ST s ()
+update tr (LSMHandle scr conf lsmr) k entry = do
     sc <- readSTRef scr
     content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels (NominalCredit 1) ls
     invariant conf content
-    let wb' = Map.insertWith combine k op wb
+    let wb' = Map.insertWith combine k entry wb
     if bufferSize wb' >= maxWriteBufferSize conf
       then do
         ls' <- increment tr sc conf (bufferToRun wb') ls unionLevel
@@ -1152,11 +1152,11 @@ checkedUnionDebt tree debtRef = do
 -- Lookups
 --
 
-type LookupAcc = Maybe Op
+type LookupAcc = Maybe Entry
 
-updateAcc :: (Op -> Op -> Op) -> LookupAcc -> Op -> LookupAcc
+updateAcc :: (Entry -> Entry -> Entry) -> LookupAcc -> Entry -> LookupAcc
 updateAcc _ Nothing     old = Just old
-updateAcc f (Just new_) old = Just (f new_ old)  -- acc has more recent Op
+updateAcc f (Just new_) old = Just (f new_ old)  -- acc has more recent Entry
 
 mergeAcc :: TreeMergeType -> [LookupAcc] -> LookupAcc
 mergeAcc mt = foldl (updateAcc com) Nothing . catMaybes
@@ -1197,8 +1197,8 @@ doLookup wb runs ul k = do
 -- In a real implementation, this would take all keys at once and be in IO.
 lookupBatch :: LookupAcc -> Key -> [Run] -> LookupAcc
 lookupBatch acc k rs =
-    let ops = [op | r <- rs, Just op <- [Map.lookup k r]]
-    in foldl (updateAcc combine) acc ops
+    let entries = [entry | r <- rs, Just entry <- [Map.lookup k r]]
+    in foldl (updateAcc combine) acc entries
 
 data LookupTree a = LookupBatch a
                   | LookupNode TreeMergeType [LookupTree a]
@@ -1255,7 +1255,7 @@ foldLookupTree = \case
 --
 
 -- | Nominal credit is the credit supplied to each level as we insert update
--- operations, one credit per update operation inserted.
+-- entries, one credit per update entry inserted.
 --
 -- Nominal credit must be supplied up to the 'NominalDebt' to ensure the merge
 -- is complete.
@@ -1263,14 +1263,14 @@ foldLookupTree = \case
 -- Nominal credits are a similar order of magnitude to physical credits (see
 -- 'Credit') but not the same, and we have to scale linearly to convert between
 -- them. Physical credits are the actual number of inputs to the merge, which
--- may be somewhat more or somewhat less than the number of update operations
+-- may be somewhat more or somewhat less than the number of update entries
 -- we will insert before we need the merge to be complete.
 --
 newtype NominalCredit = NominalCredit Credit
   deriving stock Show
 
 -- | The nominal debt for a merging run is the worst case (minimum) number of
--- update operations we expect to insert before we expect the merge to be
+-- update entries we expect to insert before we expect the merge to be
 -- complete.
 --
 -- We require that an equal amount of nominal credit is supplied before we can
