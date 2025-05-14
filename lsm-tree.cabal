@@ -886,6 +886,7 @@ test-suite prototypes-test
     Test.FormatPage
     Test.ScheduledMerges
     Test.ScheduledMergesQLS
+    Test.ScheduledMergesQLS.Op
 
   build-depends:
     , base                 <5
@@ -894,6 +895,7 @@ test-suite prototypes-test
     , containers
     , contra-tracer
     , lsm-tree:prototypes
+    , mtl
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-lockstep
