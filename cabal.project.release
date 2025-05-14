@@ -35,3 +35,9 @@ source-repository-package
   subdir:
     fs-api
     fs-sim
+
+-- comparible GVars based on variable number
+source-repository-package
+  type: git
+  location: https://github.com/well-typed/quickcheck-lockstep
+  tag: 094b5c1caa8e1f61a75ed6ce2b80b1327a5c4b16
