@@ -316,6 +316,38 @@ resolveValue (V x) (V y) = V (x + y)
 newtype Blob = B Int
   deriving stock (Eq, Show)
 
+<<<<<<< HEAD
+=======
+-- | The size of the @sizeRatio@ tiering runs at each level are allowed to be:
+-- @maxWriteBufferSize * sizeRatio^(level-1) < size <= maxWriteBufferSize * sizeRatio^level@
+--
+tieringRunSize :: HasCallStack => LSMConfig -> Int -> Int
+tieringRunSize LSMConfig {maxWriteBufferSize, sizeRatio} n
+  | n <= 0 = error $ "tieringRunSize: level number must be positive"
+  | otherwise = maxWriteBufferSize * sizeRatio^(pred n)
+
+-- | Levelling runs take up the whole level, so are 'sizeRatio' x larger.
+--
+levellingRunSize :: LSMConfig -> Int -> Int
+levellingRunSize LSMConfig {maxWriteBufferSize, sizeRatio} n = maxWriteBufferSize * sizeRatio^(succ n)
+
+tieringRunSizeToLevel :: LSMConfig -> Run -> Int
+tieringRunSizeToLevel conf  r
+  | s <= maxBufferSize conf = 1  -- level numbers start at 1
+  | otherwise =
+    1 + (finiteBitSize s - countLeadingZeros (s-1) - 1) `div` 2
+  where
+    s = runSize r
+
+levellingRunSizeToLevel :: LSMConfig -> Run -> Int
+levellingRunSizeToLevel conf r =
+    max 1 (tieringRunSizeToLevel conf r - 1)  -- level numbers start at 1
+
+maxBufferSize :: LSMConfig -> Int
+maxBufferSize conf = tieringRunSize conf 1 -- maxWriteBufferSize
+
+
+>>>>>>> fb496fb8 (WIP)
 mergePolicyForLevel :: LSMConfig -> Int -> [Level s] -> UnionLevel s -> MergePolicyForLevel
 mergePolicyForLevel conf = go (configMergePolicy conf)
   where
@@ -354,7 +386,8 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
         Single r ->
           pure (CompletedMerge r)
         Merging mp _ _ (MergingRun mt _ ref) -> do
-          assertST $ ln > 1  -- no merges on level 1
+          when (mp == LevelTiering) $
+            assertST $ ln > 1  -- no merges on level 1
           assertST $ mp == mergePolicyForLevel conf ln ls ul
           assertST $ mt == mergeTypeForLevel ls ul
           readSTRef ref
@@ -410,6 +443,7 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
             -- holding back underfull runs), and 1 run from this level,
             -- but the run from this level can be of almost any size for the
             -- same reasons as above. Although if this is the first merge for
+<<<<<<< HEAD
             -- a new level, it'll have only T runs.
             (_, OngoingMerge _ rs _) -> do
               assertST $ length rs `elem` [configSizeRatio, configSizeRatio + 1]
@@ -418,6 +452,23 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
               let resident = drop configSizeRatio rs
               assertST $ all (\r -> runToLevelNumber LevelTiering conf r `elem` [ln-1, ln]) incoming
               assertST $ all (\r -> runToLevelNumber LevelLevelling conf r <= ln+1) resident
+=======
+            -- a new level, it'll have only @sizeRatio@ runs.
+            (Merging{}, OngoingMerge _ rs _) -> do
+
+              assertST $ all (\r -> runSize r > 0) rs  -- don't merge empty runs
+              let incoming = take sizeRatio rs
+              let resident = drop sizeRatio rs
+              case mergePolicy of
+                LazyLevelling -> do
+                  assertST $ length rs `elem` [sizeRatio, sizeRatio + 1]
+                  assertST $ all (\r -> tieringRunSizeToLevel conf r `elem` [ln-1, ln]) incoming
+                  assertST $ all (\r -> levellingRunSizeToLevel conf r <= ln+1) resident
+                Levelling -> do
+                  assertST $ length rs == 2
+                  assertST $ all (\r -> levellingRunSizeToLevel conf r `elem` [ln-1, ln]) incoming
+                  assertST $ all (\r -> levellingRunSizeToLevel conf r <= ln+1) resident
+>>>>>>> fb496fb8 (WIP)
 
         LevelTiering ->
           case (ir, mrs, mergeTypeForLevel ls ul) of
@@ -1068,7 +1119,7 @@ duplicate (LSMHandle _scr conf lsmr) = do
 unions :: [LSM s] -> ST s (LSM s)
 unions lsms = do
     (confs, trees) <- fmap unzip $ forM lsms $ \(LSMHandle _ conf lsmr) ->
-      (conf,) <$> (contentToMergingTree =<< readSTRef lsmr)
+      (conf,) <$> (contentToMergingTree conf =<< readSTRef lsmr)
     -- Check that the configurations are equal
     conf <- case confs of
       []       -> error "unions: 0 tables"
@@ -1482,9 +1533,17 @@ newLevelMerge :: Tracer (ST s) EventDetail
               -> [Run] -> ST s (IncomingRun s)
 newLevelMerge _ _ _ _ _ [r] = pure (Single r)
 newLevelMerge tr conf@LSMConfig{..} level mpl mergeType rs = do
+<<<<<<< HEAD
     assertST (length rs `elem` [configSizeRatio, configSizeRatio + 1])
+=======
+    case mergePolicy of
+      LazyLevelling -> assertST (length rs `elem` [sizeRatio, sizeRatio + 1])
+      Levelling -> assertST (length rs == 2)
+>>>>>>> fb496fb8 (WIP)
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
-    assertST (totalDebt physicalDebt <= maxPhysicalDebt)
+    case mpl of
+      LevelLevelling -> assertST (totalDebt physicalDebt <= maxPhysicalDebt)
+      LevelTiering -> assertST (totalDebt physicalDebt <= maxPhysicalDebt)
     traceWith tr MergeStartedEvent {
                    mergePolicyThisLevel = mpl,
                    mergeType,
@@ -1511,11 +1570,26 @@ newLevelMerge tr conf@LSMConfig{..} level mpl mergeType rs = do
     -- includes the single run in the current level.
     maxPhysicalDebt =
       case mpl of
+<<<<<<< HEAD
         LevelLevelling ->
           configSizeRatio * levelNumberToMaxRunSize LevelTiering conf (level-1)
             + levelNumberToMaxRunSize LevelLevelling conf level
         LevelTiering   ->
           length rs * levelNumberToMaxRunSize LevelTiering conf (level-1)
+=======
+        LevelLevelling -> levellingRunSize conf (level-1)
+                                          + levellingRunSize conf level
+        LevelTiering   -> length rs * tieringRunSize conf (level-1)
+
+-- | Only based on run count, not their sizes.
+tieringLevelIsFull :: LSMConfig -> Int -> [Run] -> [Run] -> Bool
+tieringLevelIsFull LSMConfig{..} _ln _incoming resident = length resident >= sizeRatio
+
+-- | The level is only considered full once the resident run is /too large/ for
+-- the level.
+levellingLevelIsFull :: LSMConfig -> Int -> [Run] -> Run -> Bool
+levellingLevelIsFull conf ln _incoming resident = levellingRunSizeToLevel conf resident > ln
+>>>>>>> fb496fb8 (WIP)
 
 -------------------------------------------------------------------------------
 -- MergingTree abstraction
@@ -1558,18 +1632,24 @@ newLevelMerge tr conf@LSMConfig{..} level mpl mergeType rs = do
 
 -- | Ensures that the merge contains more than one input, avoiding creating a
 -- pending merge where possible.
-newPendingLevelMerge :: [IncomingRun s]
+newPendingLevelMerge :: LSMConfig
+                     -> [IncomingRun s]
                      -> Maybe (MergingTree s)
                      -> ST s (Maybe (MergingTree s))
+<<<<<<< HEAD
 newPendingLevelMerge [] t = pure t
 newPendingLevelMerge [Single r] Nothing =
+=======
+newPendingLevelMerge _ [] t = return t
+newPendingLevelMerge _ [Single r] Nothing =
+>>>>>>> fb496fb8 (WIP)
     Just . MergingTree <$> newSTRef (CompletedTreeMerge r)
-newPendingLevelMerge [Merging{}] Nothing =
+newPendingLevelMerge LSMConfig{mergePolicy=LazyLevelling} [Merging{}] Nothing =
     -- This case should never occur. If there is a single entry in the list,
     -- there can only be one level in the input table. At level 1 there are no
     -- merging runs, so it must be a PreExistingRun.
     error "newPendingLevelMerge: singleton Merging run"
-newPendingLevelMerge irs tree = do
+newPendingLevelMerge _ irs tree = do
     let prs = map incomingToPreExistingRun irs
         st  = PendingTreeMerge (PendingLevelMerge prs tree)
     Just . MergingTree <$> newSTRef st
@@ -1585,9 +1665,9 @@ newPendingUnionMerge trees = do
     let st = PendingTreeMerge (PendingUnionMerge trees)
     Just . MergingTree <$> newSTRef st
 
-contentToMergingTree :: LSMContent s -> ST s (Maybe (MergingTree s))
-contentToMergingTree (LSMContent wb ls ul) =
-    newPendingLevelMerge (buffers ++ levels) trees
+contentToMergingTree :: LSMConfig -> LSMContent s -> ST s (Maybe (MergingTree s))
+contentToMergingTree conf (LSMContent wb ls ul) =
+    newPendingLevelMerge conf (buffers ++ levels) trees
   where
     -- flush the write buffer (but this should not modify the content)
     buffers
