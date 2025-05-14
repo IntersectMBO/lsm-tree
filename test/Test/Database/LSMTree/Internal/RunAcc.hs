@@ -8,7 +8,7 @@ module Test.Database.LSMTree.Internal.RunAcc (tests) where
 import           Control.Exception (assert)
 import           Control.Monad.ST
 import           Data.Bifunctor (Bifunctor (..))
-import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Blocked as Bloom
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Maybe

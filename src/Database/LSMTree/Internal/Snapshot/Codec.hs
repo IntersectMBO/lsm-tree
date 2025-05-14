@@ -22,7 +22,6 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
-import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (Exception (displayException),
                      MonadThrow (..))
 import           Data.Bifunctor (Bifunctor (..))
@@ -130,16 +129,15 @@ readFileSnapshotMetaData hfs contentPath checksumPath = do
     checksumFile <- readChecksumsFile hfs checksumPath
     let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
 
-    expectedChecksum <- getChecksum checksumPath checksumFile checksumFileName
+    expectedChecksum <- getChecksum hfs checksumPath checksumFile checksumFileName
 
     (lbs, actualChecksum) <- FS.withFile hfs contentPath FS.ReadMode $ \h -> do
       n <- FS.hGetSize hfs h
       FS.hGetExactlyCRC32C hfs h n initialCRC32C
 
-    when (expectedChecksum /= actualChecksum) . throwIO $
-      ErrFileChecksumMismatch contentPath (unCRC32C expectedChecksum) (unCRC32C actualChecksum)
+    expectChecksum hfs contentPath expectedChecksum actualChecksum
 
-    expectValidFile contentPath FormatSnapshotMetaData (decodeSnapshotMetaData lbs)
+    expectValidFile hfs contentPath FormatSnapshotMetaData (decodeSnapshotMetaData lbs)
 
 decodeSnapshotMetaData :: ByteString -> Either String SnapshotMetaData
 decodeSnapshotMetaData lbs = bimap displayException (getVersioned . snd) (deserialiseFromBytes decode lbs)
@@ -388,7 +386,7 @@ instance Encode RunBloomFilterAlloc where
   encode (RunAllocFixed bits) =
          encodeListLen 2
       <> encodeWord 0
-      <> encodeWord64 bits
+      <> encodeIntOrDouble bits
   encode (RunAllocRequestFPR fpr) =
          encodeListLen 2
       <> encodeWord 1
@@ -399,7 +397,7 @@ instance DecodeVersioned RunBloomFilterAlloc where
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (2, 0) -> RunAllocFixed      <$> decodeWord64
+        (2, 0) -> RunAllocFixed      <$> decodeIntOrDouble
         (2, 1) -> RunAllocRequestFPR <$> decodeDouble
         _ -> fail ("[RunBloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
 
@@ -409,7 +407,7 @@ instance Encode BloomFilterAlloc where
   encode (AllocFixed x) =
          encodeListLen 2
       <> encodeWord 0
-      <> encodeWord64 x
+      <> encodeIntOrDouble x
   encode (AllocRequestFPR x) =
          encodeListLen 2
       <> encodeWord 1
@@ -420,9 +418,27 @@ instance DecodeVersioned BloomFilterAlloc where
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (2, 0) -> AllocFixed <$> decodeWord64
+        (2, 0) -> AllocFixed      <$> decodeIntOrDouble
         (2, 1) -> AllocRequestFPR <$> decodeDouble
         _ -> fail ("[BloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
+
+-- Avoid a format change when the value is an integer: int or double encoding.
+encodeIntOrDouble :: Double -> Encoding
+encodeIntOrDouble x
+  | let x' = floor x
+  , x == fromIntegral x' = encodeInt x'
+  | otherwise            = encodeDouble x
+
+decodeIntOrDouble :: Decoder s Double
+decodeIntOrDouble = do
+    tok <- peekTokenType
+    if isTokInt tok
+      then fromIntegral <$> decodeInt
+      else decodeDouble
+  where
+    isTokInt TypeUInt = True
+    isTokInt TypeNInt = True
+    isTokInt _        = False
 
 -- FencePointerIndexType
 

@@ -269,7 +269,9 @@ flag bloom-query-fast
 
 common bloom-query-fast
   if (flag(bloom-query-fast) && impl(ghc >=9.4))
-    cpp-options: -DBLOOM_QUERY_FAST
+
+--TODO: temporarily disabled:
+--cpp-options: -DBLOOM_QUERY_FAST
 
 library
   import:          language, warnings, wno-x-partial, bloom-query-fast
@@ -360,10 +362,10 @@ library
 
   if (flag(bloom-query-fast) && impl(ghc >=9.4))
     -- The bulk bloom filter query uses some fancy stuff
-    exposed-modules:
-      Database.LSMTree.Internal.BloomFilterQuery2
-      Database.LSMTree.Internal.StrictArray
+    exposed-modules: Database.LSMTree.Internal.StrictArray
 
+    --TODO: temporarily disabled
+    --  Database.LSMTree.Internal.BloomFilterQuery2
     build-depends:   data-elevator ^>=0.1.0.2 || ^>=0.2
 
 -- this exists due windows
@@ -405,60 +407,74 @@ test-suite xxhash-tests
 
 -- this fork doesn't work on 32bit systems
 library bloomfilter
-  import:          language
+  import:          language, warnings
   visibility:      private
   hs-source-dirs:  bloomfilter/src
   build-depends:
-    , base             >=4.16      && <5
-    , bitvec           ^>=1.1.5.0
+    , base             >=4.16 && <5
     , bytestring       >=0.9
-    , data-array-byte
     , deepseq
     , lsm-tree:xxhash
     , primitive
-    , vector           ^>=0.13.0.0
 
   exposed-modules:
     Data.BloomFilter
-    Data.BloomFilter.BitVec64
-    Data.BloomFilter.Calc
-    Data.BloomFilter.Easy
+    Data.BloomFilter.Blocked
+    Data.BloomFilter.Classic
     Data.BloomFilter.Hash
-    Data.BloomFilter.Internal
-    Data.BloomFilter.Mutable
-    Data.BloomFilter.Mutable.Internal
 
-  ghc-options:     -O2 -Wall
+  other-modules:
+    Data.BloomFilter.Blocked.BitArray
+    Data.BloomFilter.Blocked.Calc
+    Data.BloomFilter.Blocked.Internal
+    Data.BloomFilter.Classic.BitArray
+    Data.BloomFilter.Classic.Calc
+    Data.BloomFilter.Classic.Internal
+
+  ghc-options:     -O2
 
 test-suite bloomfilter-tests
-  import:         language
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bloomfilter/tests
   main-is:        bloomfilter-tests.hs
-  other-modules:  QCSupport
   build-depends:
     , base                  <5
     , bytestring
     , lsm-tree:bloomfilter
-    , QuickCheck
     , quickcheck-instances
-    , random
     , tasty
     , tasty-quickcheck
-    , vector
 
-test-suite bloomfilter-primes
+benchmark bloomfilter-bench
   import:         language
   type:           exitcode-stdio-1.0
-  hs-source-dirs: bloomfilter/tests
-  main-is:        primes.hs
+  hs-source-dirs: bloomfilter/bench
+  main-is:        bloomfilter-bench.hs
   build-depends:
-    , base    <5
-    , primes  ^>=0.2.1.0
+    , base
+    , criterion
+    , lsm-tree:bloomfilter
+    , random
 
-test-suite bloomfilter-spell
+executable bloomfilter-fpr-calc
+  import:         language, warnings
+  scope:          private
+  hs-source-dirs: bloomfilter/tests
+  main-is:        fpr-calc.hs
+  build-depends:
+    , base
+    , containers
+    , lsm-tree:bloomfilter
+    , parallel
+    , random
+    , regression-simple
+
+  ghc-options:    -threaded
+
+executable bloomfilter-spell
   import:         language
-  type:           exitcode-stdio-1.0
+  scope:          private
   hs-source-dirs: bloomfilter/examples
   main-is:        spell.hs
   build-depends:
@@ -495,7 +511,6 @@ library extras
     , io-classes:strict-mvar
     , io-classes:strict-stm
     , lsm-tree
-    , lsm-tree:bloomfilter
     , lsm-tree:control
     , lsm-tree:kmerge
     , lsm-tree:prototypes

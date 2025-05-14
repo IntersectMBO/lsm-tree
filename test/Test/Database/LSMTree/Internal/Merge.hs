@@ -3,7 +3,7 @@ module Test.Database.LSMTree.Internal.Merge (tests) where
 import           Control.Exception (evaluate)
 import           Control.RefCount
 import           Data.Bifoldable (bifoldMap)
-import qualified Data.BloomFilter as Bloom
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -103,7 +103,8 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
               (lhsSize === rhsSize)
           .&&. -- we can't just test bloom filter equality, their sizes may differ.
               counterexample "runFilter"
-              (Bloom.length lhsFilter >= Bloom.length rhsFilter)
+              (   Bloom.sizeBits (Bloom.size lhsFilter)
+               >= Bloom.sizeBits (Bloom.size rhsFilter))
           .&&. -- the index is equal, but only because range finder precision is
               -- always 0 for the numbers of entries we are dealing with.
               counterexample "runIndex"

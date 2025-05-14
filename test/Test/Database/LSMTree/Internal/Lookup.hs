@@ -24,8 +24,8 @@ import           Control.Exception
 import           Control.Monad.ST.Strict
 import           Control.RefCount
 import           Data.Bifunctor
-import           Data.BloomFilter (Bloom)
-import qualified Data.BloomFilter as Bloom
+import           Data.BloomFilter.Blocked (Bloom)
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Coerce (coerce)
 import           Data.Either (rights)
 import qualified Data.Foldable as F
