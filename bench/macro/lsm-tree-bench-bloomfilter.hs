@@ -25,7 +25,7 @@ import           Text.Printf (printf)
 
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Internal.Assertions (fromIntegralChecked)
-import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
@@ -108,7 +108,7 @@ benchmarks = do
       benchmark "bloomQueries1"
                 "(this is the batch lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (\ks -> Bloom1.bloomQueries vbs ks `seq` ()))
+                  (\ks -> Bloom.bloomQueries vbs ks `seq` ()))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0

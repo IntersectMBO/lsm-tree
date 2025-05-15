@@ -36,8 +36,7 @@ import           Control.Monad.ST.Strict
 import           Control.RefCount
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
-import           Database.LSMTree.Internal.BloomFilter (Bloom)
-import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..),
+import           Database.LSMTree.Internal.BloomFilter (Bloom, RunIxKeyIx (..),
                      bloomQueries)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (Index)

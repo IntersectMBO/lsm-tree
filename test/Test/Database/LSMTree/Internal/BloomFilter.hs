@@ -25,7 +25,6 @@ import           Test.Tasty.QuickCheck hiding ((.&.))
 
 import qualified Data.BloomFilter.Blocked as BF
 import           Database.LSMTree.Internal.BloomFilter
-import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
@@ -144,13 +143,13 @@ prop_bloomQueries1 (FPR fpr) filters keys =
         distribution   = truePositives ++ falsePositives
                       ++ trueNegatives ++ falseNegatives
 
-    -- To get coverage of Bloom1.bloomQueries array resizing we want some
+    -- To get coverage of bloomQueries array resizing we want some
     -- cases with high FPRs.
      in tabulate "FPR" [show (round (fpr * 10) * 10 :: Int) ++ "%"] $
         coverTable "FPR" [("100%", 5)] $
         tabulate "distribution of true/false positives/negatives" distribution $
         referenceResults
        ===
-        map (\(Bloom1.RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (Bloom1.bloomQueries (V.fromList filters')
-                                            (V.fromList keys')))
+        map (\(RunIxKeyIx rix kix) -> (rix, kix))
+            (VP.toList (bloomQueries (V.fromList filters')
+                                     (V.fromList keys')))

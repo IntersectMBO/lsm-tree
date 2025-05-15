@@ -273,7 +273,6 @@ library
     Database.LSMTree.Internal.BlobFile
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
-    Database.LSMTree.Internal.BloomFilterQuery1
     Database.LSMTree.Internal.ByteString
     Database.LSMTree.Internal.ChecksumHandle
     Database.LSMTree.Internal.Chunk
