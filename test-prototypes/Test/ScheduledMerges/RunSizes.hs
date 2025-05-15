@@ -12,6 +12,9 @@ tests = testGroup "Test.ScheduledMerges.RunSizes" [
             prop_roundTrip_levelNumberMaxRunSize mpl conf ln
     , testProperty "prop_roundTrip_runSizeLevelNumber" prop_roundTrip_runSizeLevelNumber
     , testProperty "prop_maxWriteBufferSize" prop_maxWriteBufferSize
+    , testProperty "prop_runSizeFitsInLevel" $
+        \mpl conf ln -> levelNumberInvariant mpl conf ln ==>
+            prop_runSizeFitsInLevel mpl conf ln
     ]
 
 -- | Test 'levelNumberToMaxRunSize' roundtrips with 'runSizeToLevelNumber'.
@@ -35,6 +38,17 @@ prop_roundTrip_runSizeLevelNumber (MergePolicyForLevel mpl) (Config conf) (RunSi
 prop_maxWriteBufferSize :: Config -> Property
 prop_maxWriteBufferSize (Config conf) =
     configMaxWriteBufferSize conf === maxWriteBufferSize conf
+
+-- | If a run is neither too small or too large for a level, then it fits in
+-- that level.
+prop_runSizeFitsInLevel :: MergePolicyForLevel -> Config -> LevelNo -> RunSize -> Property
+prop_runSizeFitsInLevel (MergePolicyForLevel mpl) (Config conf) (LevelNo ln) (RunSize n) =
+    classify  (runSizeFitsInLevel mpl conf ln n) "Run size fits in level" $
+      (not tooSmall && not tooLarge) === fits
+  where
+    tooSmall = runSizeTooSmallForLevel mpl conf ln n
+    tooLarge = runSizeTooLargeForLevel mpl conf ln n
+    fits = runSizeFitsInLevel mpl conf ln n
 
 {-------------------------------------------------------------------------------
   Generators and shrinkers

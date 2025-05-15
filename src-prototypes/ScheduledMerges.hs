@@ -88,7 +88,13 @@ module ScheduledMerges (
     -- * Run sizes
     levelNumberToMaxRunSize,
     runSizeToLevelNumber,
-    maxWriteBufferSize
+    maxWriteBufferSize,
+    runSizeFitsInLevel,
+    runSizeTooSmallForLevel,
+    runSizeTooLargeForLevel,
+
+    -- * Level capacity
+    levelIsFull,
   ) where
 
 import           Prelude hiding (lookup)
@@ -619,6 +625,97 @@ fromIntegerChecked x
   where
     x' = fromInteger x
     x'' = toInteger x'
+
+-- | See 'runSizeFitsInLevel'.
+_runFitsInLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Run -> Bool
+_runFitsInLevel mpl conf ln r = runSizeFitsInLevel mpl conf ln (runSize r)
+
+-- | Check wheter a run of the given size fits in the given level.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeFitsInLevel MergePolicyTiering (LSMConfig 2) 3 <$> [8,9,16,32,33]
+-- [False,True,True,True,False]
+--
+-- >>> runSizeFitsInLevel MergePolicyLevelling (LSMConfig 2) 2 <$> [8,9,16,32,33]
+-- [False,True,True,True,False]
+runSizeFitsInLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
+runSizeFitsInLevel mpl conf ln n
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = n == 0
+  | otherwise =
+         levelNumberToMaxRunSize mpl conf (pred ln) < n
+      && n <= levelNumberToMaxRunSize mpl conf ln
+
+-- | See 'runSizeTooSmallForLevel'.
+runTooSmallForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Run -> Bool
+runTooSmallForLevel mpl conf ln r = runSizeTooSmallForLevel mpl conf ln (runSize r)
+
+-- | Check wheter a run of the given size is too small for the given level.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeTooSmallForLevel MergePolicyTiering (LSMConfig 2) 3 <$> [8,9]
+-- [True,False]
+--
+-- >>> runSizeTooSmallForLevel MergePolicyLevelling (LSMConfig 2) 2 <$> [8,9]
+-- [True,False]
+runSizeTooSmallForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
+runSizeTooSmallForLevel mpl conf ln n
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = False
+  | otherwise = case mpl of
+      MergePolicyTiering ->
+        n <= levelNumberToMaxRunSize MergePolicyTiering conf (pred ln)
+      MergePolicyLevelling ->
+        n <= levelNumberToMaxRunSize MergePolicyLevelling conf (pred ln)
+
+-- | See 'runSizeTooLargeForLevel'.
+runTooLargeForLevel :: HasCallStack =>MergePolicy -> LSMConfig -> LevelNo -> Run -> Bool
+runTooLargeForLevel mpl conf ln r = runSizeTooLargeForLevel mpl conf ln (runSize r)
+
+-- | Check wheter a run of the given size is too large for the given level.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeTooLargeForLevel MergePolicyTiering (LSMConfig 2) 2 <$> [8,9]
+-- [False,True]
+--
+-- >>> runSizeTooLargeForLevel MergePolicyLevelling (LSMConfig 2) 1 <$> [8,9]
+-- [False,True]
+runSizeTooLargeForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
+runSizeTooLargeForLevel mpl conf ln n
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = not (n == 0)
+  | otherwise = case mpl of
+      MergePolicyTiering ->
+        n > levelNumberToMaxRunSize MergePolicyTiering conf ln
+      MergePolicyLevelling ->
+        n > levelNumberToMaxRunSize MergePolicyLevelling conf ln
+
+-------------------------------------------------------------------------------
+-- Level capacity
+--
+
+levelIsFull :: MergePolicy -> LSMConfig -> LevelNo -> [Run] -> [Run] -> Bool
+levelIsFull mpl conf ln incoming resident = case mpl of
+    MergePolicyTiering -> levelIsFullTiering conf ln incoming resident
+    MergePolicyLevelling ->
+      assert (length resident == 1) $
+      levelIsFullLevelling conf ln incoming (head resident)
+
+-- | Only based on run count, not their sizes.
+levelIsFullTiering :: LSMConfig -> LevelNo -> [Run] -> [Run] -> Bool
+levelIsFullTiering _conf _ln _incoming resident = length resident >= 4
+
+-- | The level is only considered full once the resident run is /too large/
+-- for the level.
+levelIsFullLevelling :: LSMConfig -> LevelNo -> [Run] -> Run -> Bool
+levelIsFullLevelling conf ln _incoming resident =
+    runTooLargeForLevel MergePolicyLevelling conf ln resident
 
 -------------------------------------------------------------------------------
 -- Merging credits
@@ -1308,7 +1405,7 @@ increment tr sc conf run0 ls0 ul = do
 
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
-        MergePolicyTiering | runToLevelNumber MergePolicyTiering conf r < ln -> do
+        MergePolicyTiering | runTooSmallForLevel MergePolicyTiering conf ln r -> do
           ir' <- newLevelMerge tr' conf ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
           return (Level ir' rs : ls)
 
@@ -1316,7 +1413,7 @@ increment tr sc conf run0 ls0 ul = do
         -- (the previous incoming runs), plus all the other runs on this level
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
-        MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
+        MergePolicyTiering | levelIsFullTiering conf ln incoming resident  -> do
           ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
           return (Level ir' [] : ls')
@@ -1332,7 +1429,7 @@ increment tr sc conf run0 ls0 ul = do
         -- run is too large for this level, we promote the run to the next
         -- level and start merging the incoming runs into this (otherwise
         -- empty) level .
-        MergePolicyLevelling | levellingLevelIsFull conf ln incoming r -> do
+        MergePolicyLevelling | levelIsFullLevelling conf ln incoming r -> do
           assert (null rs && null ls) $ return ()
           ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
@@ -1386,15 +1483,6 @@ newLevelMerge tr conf level mergePolicy mergeType rs = do
         MergePolicyLevelling -> 4 * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
                                   + levelNumberToMaxRunSize MergePolicyLevelling conf level
         MergePolicyTiering   -> length rs * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
-
--- | Only based on run count, not their sizes.
-tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
-tieringLevelIsFull _ln _incoming resident = length resident >= 4
-
--- | The level is only considered full once the resident run is /too large/ for
--- the level.
-levellingLevelIsFull :: LSMConfig -> Int -> [Run] -> Run -> Bool
-levellingLevelIsFull conf ln _incoming resident = runToLevelNumber MergePolicyLevelling conf resident > ln
 
 -------------------------------------------------------------------------------
 -- MergingTree abstraction
