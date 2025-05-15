@@ -213,10 +213,13 @@ instance InLockstep Model where
   arbitraryWithVars ctx model =
     case findVars ctx (Proxy :: Proxy (LSM RealWorld)) of
       []   ->
-        -- Generate a write buffer size in the range [3,5] most of the time,
-        -- sometimes in the range [1,10] to hit edge cases. 4 was the hard-coded
-        -- default before it was made configurable.
-        fmap Some $ ANew <$> (LSMConfig <$> frequency [(10, choose (1,10)), (90, choose (3,5))])
+        -- Generate a write buffer size and size ratio in the range [3,5] most
+        -- of the time, sometimes in the range [1,10] to hit edge cases. 4 was
+        -- the hard-coded default for both before it was made configurable.
+        fmap Some $ ANew <$> (
+            LSMConfig <$> frequency [(10, choose (1,10)), (90, choose (3,5))]
+                      <*> frequency [(10, choose (2,10)), (90, choose (3,5))]
+          )
       vars ->
         let kvars = findVars ctx (Proxy :: Proxy Key)
             existingKey = Left <$> elements kvars
@@ -300,8 +303,12 @@ instance InLockstep Model where
          | mwbs' <- shrink mwbs
          , mwbs' >= 1, mwbs' <= 10
          ]
+      ++ [ Some $ ANew conf { configSizeRatio = sr' }
+         | sr' <- shrink sr
+         , sr' >= 2, sr' <= 10
+         ]
     where
-      LSMConfig mwbs = conf
+      LSMConfig mwbs sr = conf
 
   shrinkWithVars _ctx _model (AInsert var (Right k) v b) =
     [ Some $ AInsert var (Right k') v' b' | (k', v', b') <- shrink (k, v, b) ]
