@@ -34,6 +34,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
 import           Data.Monoid (Endo (..))
+import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
@@ -130,21 +131,28 @@ prop_bloomQueriesModel ::
      SmallList (InMemLookupData SerialisedKey SerialisedValue BlobSpan)
   -> Property
 prop_bloomQueriesModel dats =
-    real === model
+    -- The model never returns false positives, but the real bloom filter does,
+    -- so the model result should be a subsequence of the real result.
+    counterexample (show model ++ " is not a subsequence of " ++ show real) $
+    property (model `List.isSubsequenceOf` real)
   where
-    runs = getSmallList $ fmap (mkTestRun . runData) dats
+    runDatas = getSmallList $ fmap runData dats
+    runs = fmap mkTestRun runDatas
     blooms = fmap snd3 runs
     lookupss = concatMap lookups $ getSmallList dats
     real  = map (\(RunIxKeyIx rix kix) -> (rix,kix)) $ VP.toList $
             bloomQueries (V.fromList blooms) (V.fromList lookupss)
-    model = bloomQueriesModel blooms lookupss
+    model = bloomQueriesModel (fmap Map.keysSet runDatas) lookupss
 
-bloomQueriesModel :: [Bloom SerialisedKey] -> [SerialisedKey] -> [(RunIx, KeyIx)]
+-- | A bloom filter is a probablistic set that can return false positives, but
+-- not false negatives. The simplest model of a bloom filter is therefore a
+-- non-probablistic set: a set that only returns true positives or negatives.
+bloomQueriesModel :: [Set SerialisedKey] -> [SerialisedKey] -> [(RunIx, KeyIx)]
 bloomQueriesModel blooms ks = [
       (rix, kix)
     | (rix, b) <- rs'
     , (kix, k) <- ks'
-    , Bloom.elem k b
+    , Set.member k b
     ]
   where
     rs' = zip [0..] blooms
