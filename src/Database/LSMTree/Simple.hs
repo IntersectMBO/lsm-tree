@@ -344,15 +344,15 @@ newtype Session = Session (LSMT.Session IO)
 {- |
 Run an action with access to a session opened from a session directory.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+If there are no open tables or cursors when the session terminates, then this disk I\/O complexity of this operation is \(O(1)\).
+Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
+The following assumes all tables in the session have the same merge policy:
 
 ['LazyLevelling']:
-    \(O(o \: T \log_T \frac{n}{B})\).
+  \(O(o \: T \log_T \frac{n}{B})\).
 
 The variable \(o\) refers to the number of open tables and cursors in the session.
-
-If the session has any open tables, then 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
-Otherwise, the disk I\/O cost operation is \(O(1)\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -406,15 +406,15 @@ openSession dir = do
 {- |
 Close a session.
 
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+If there are no open tables or cursors in the session, then this disk I\/O complexity of this operation is \(O(1)\).
+Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the tables in the session.
+The following assumes all tables in the session have the same merge policy:
 
 ['LazyLevelling']:
-    \(O(o \: T \log_T \frac{n}{B})\).
+  \(O(o \: T \log_T \frac{n}{B})\).
 
 The variable \(o\) refers to the number of open tables and cursors in the session.
-
-If the session has any open tables, then 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
-Otherwise, the disk I\/O cost operation is \(O(1)\).
 
 Closing is idempotent, i.e., closing a closed session does nothing.
 All other operations on a closed session will throw an exception.
