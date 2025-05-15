@@ -885,6 +885,7 @@ test-suite prototypes-test
   other-modules:
     Test.FormatPage
     Test.ScheduledMerges
+    Test.ScheduledMerges.RunSizes
     Test.ScheduledMergesQLS
 
   build-depends:
