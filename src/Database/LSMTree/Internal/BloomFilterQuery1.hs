@@ -1,9 +1,10 @@
-{-# LANGUAGE CPP             #-}
 {-# LANGUAGE MagicHash       #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE UnboxedTuples   #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
+-- | An implementation of batched bloom filter query, optimised using memory
+-- prefetch.
 module Database.LSMTree.Internal.BloomFilterQuery1 (
   bloomQueries,
   RunIxKeyIx(RunIxKeyIx),
@@ -14,16 +15,18 @@ import           Data.Bits
 import qualified Data.Primitive as P
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
-import qualified Data.Vector.Primitive.Mutable as VPM
 import           Data.Word (Word32)
 
 import           Control.Exception (assert)
-import           Control.Monad.ST (ST)
+import           Control.Monad.ST (ST, runST)
 
 import           Data.BloomFilter.Blocked (Bloom)
 import qualified Data.BloomFilter.Blocked as Bloom
 
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
+import qualified Database.LSMTree.Internal.Vector as P
+
+import           Prelude hiding (filter)
 
 
 -- Bulk query
@@ -75,7 +78,9 @@ instance Show RunIxKeyIx where
 type ResIx = Int -- Result index
 
 -- | Perform a batch of bloom queries. The result is a tuple of indexes into the
--- vector of runs and vector of keys respectively.
+-- vector of runs and vector of keys respectively. The order of keys and
+-- runs\/filters in the input is maintained in the output. This implementation
+-- produces results in key-major order.
 --
 -- The result vector can be of variable length. The initial estimate is 2x the
 -- number of keys but this is grown if needed (using a doubling strategy).
@@ -84,47 +89,57 @@ bloomQueries ::
      V.Vector (Bloom SerialisedKey)
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
-bloomQueries !blooms !ks
-  | rsN == 0 || ksN == 0 = VP.empty
-  | otherwise            = VP.create $ do
-      res <- VPM.unsafeNew (V.length ks * 2)
-      loop1 res 0 0
+bloomQueries !filters !keys | V.null filters || V.null keys = VP.empty
+bloomQueries !filters !keys =
+    runST $ do
+      res  <- P.newPrimArray (ksN * 2)
+      res' <- loop1 res 0 0
+      parr <- P.unsafeFreezePrimArray res'
+      pure $! P.primArrayToPrimVector parr
   where
-    !rsN = V.length blooms
-    !ksN = V.length ks
+    !rsN = V.length filters
+    !ksN = V.length keys
+    !keyhashes = P.generatePrimArray (V.length keys) $ \i ->
+                   Bloom.hashes (V.unsafeIndex keys i)
 
-    hs :: VP.Vector (Bloom.Hashes SerialisedKey)
-    !hs  = VP.generate ksN $ \i -> Bloom.hashes (V.unsafeIndex ks i)
-
-    -- Loop over all run indexes
+    -- loop over all filters
     loop1 ::
-         VPM.MVector s RunIxKeyIx
+         P.MutablePrimArray s RunIxKeyIx
       -> ResIx
       -> RunIx
-      -> ST s (VPM.MVector s RunIxKeyIx)
-    loop1 !res1 !resix1 !rix
-      | rix == rsN = pure $ VPM.slice 0 resix1 res1
-      | otherwise
-      = do
-          (res1', resix1') <- loop2 res1 resix1 0 (blooms `V.unsafeIndex` rix)
-          loop1 res1' resix1' (rix+1)
+      -> ST s (P.MutablePrimArray s RunIxKeyIx)
+    loop1 !res !resix !rix | rix == rsN = P.resizeMutablePrimArray res resix
+    loop1 !res !resix !rix = do
+        loop2_prefetch 0
+        (res', resix') <- loop2 res resix 0
+        loop1 res' resix' (rix+1)
       where
-        -- Loop over all key indexes
+        !filter = V.unsafeIndex filters rix
+
+        -- loop over all keys
         loop2 ::
-             VPM.MVector s RunIxKeyIx
+             P.MutablePrimArray s RunIxKeyIx
           -> ResIx
           -> KeyIx
-          -> Bloom SerialisedKey
-          -> ST s (VPM.MVector s RunIxKeyIx, ResIx)
-        loop2 !res2 !resix2 !kix !b
+          -> ST s (P.MutablePrimArray s RunIxKeyIx, ResIx)
+        loop2 !res2 !resix2 !kix
           | kix == ksN = pure (res2, resix2)
-          | let !h = hs `VP.unsafeIndex` kix
-          , Bloom.elemHashes b h = do
-              -- Double the vector if we've reached the end.
-              -- Note unsafeGrow takes the number to grow by, not the new size.
-              res2' <- if resix2 == VPM.length res2
-                        then VPM.unsafeGrow res2 (VPM.length res2)
-                        else pure res2
-              VPM.unsafeWrite res2' resix2 (RunIxKeyIx rix kix)
-              loop2 res2' (resix2+1) (kix+1) b
-          | otherwise = loop2 res2 resix2 (kix+1) b
+          | let !keyhash = P.indexPrimArray keyhashes kix
+          , Bloom.elemHashes filter keyhash = do
+              P.writePrimArray res2 resix2 (RunIxKeyIx rix kix)
+              ressz2 <- P.getSizeofMutablePrimArray res2
+              res2'  <- if resix2+1 < ressz2
+                         then return res2
+                         else P.resizeMutablePrimArray res2 (ressz2 * 2)
+              loop2 res2' (resix2+1) (kix+1)
+
+          | otherwise =
+              loop2 res2 resix2 (kix+1)
+
+        loop2_prefetch :: KeyIx -> ST s ()
+        loop2_prefetch !kix
+          | kix == ksN = pure ()
+          | otherwise  = do
+              let !keyhash = P.indexPrimArray keyhashes kix
+              Bloom.prefetchElem filter keyhash
+              loop2_prefetch (kix+1)

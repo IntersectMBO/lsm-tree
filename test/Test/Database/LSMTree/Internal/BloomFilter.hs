@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
 import           Control.DeepSeq (deepseq)
@@ -31,12 +29,6 @@ import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
-#ifdef BLOOM_QUERY_FAST
-import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
-import           Test.QuickCheck.Classes (primLaws)
-import           Test.Util.QC
-#endif
-
 --TODO: add a golden test for the BloomFilter format vs the 'formatVersion'
 -- to ensure we don't change the format without conciously bumping the version.
 tests :: TestTree
@@ -50,11 +42,6 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
         prop_total_deserialisation_whitebox
     , testProperty "bloomQueries (bulk)" $
         prop_bloomQueries1
-#ifdef BLOOM_QUERY_FAST
-    , testClassLaws "CandidateProbe" (primLaws (Proxy :: Proxy Bloom2.CandidateProbe))
-    , testProperty "bloomQueries (bulk, prefetching)" $
-        prop_bloomQueries2
-#endif
     ]
 
 roundtrip_prop :: Positive (Small Int) -> Positive Int ->  [Word64] -> Property
@@ -167,41 +154,3 @@ prop_bloomQueries1 (FPR fpr) filters keys =
         map (\(Bloom1.RunIxKeyIx rix kix) -> (rix, kix))
             (VP.toList (Bloom1.bloomQueries (V.fromList filters')
                                             (V.fromList keys')))
-
-#ifdef BLOOM_QUERY_FAST
-prop_bloomQueries2 :: FPR
-                   -> [[Small Word64]]
-                   -> [Small Word64]
-                   -> Property
-prop_bloomQueries2 (FPR fpr) filters keys =
-    let filters' :: [BF.Bloom SerialisedKey]
-        filters' = map (BF.fromList (BF.policyForFPR fpr) .
-                        map (\(Small k) -> serialiseKey k)) filters
-
-        keys' :: [SerialisedKey]
-        keys' = map (\(Small k) -> serialiseKey k) keys
-
-        referenceResults :: [(Int, Int)]
-        referenceResults =
-          [ (f_i, k_i)
-          | (f, f_i) <- zip filters' [0..]
-          , (k, k_i) <- zip keys' [0..]
-          , BF.elem k f
-          ]
-
-    -- To get coverage of Bloom2.bloomQueries array resizing we want some
-    -- cases with high FPRs.
-     in tabulate "FPR" [show (round (fpr * 10) * 10 :: Int) ++ "%"] $
-        coverTable "FPR" [("100%", 5)] $
-
-        referenceResults
-       ===
-        map (\(Bloom2.RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (Bloom2.bloomQueries (V.fromList filters')
-                                            (V.fromList keys')))
-
-instance Arbitrary Bloom2.CandidateProbe where
-  arbitrary = Bloom2.MkCandidateProbe <$> arbitrary <*> arbitrary
-
-deriving stock instance Eq Bloom2.CandidateProbe
-#endif
