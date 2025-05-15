@@ -27,8 +27,10 @@
 module ScheduledMerges (
     -- * Main API
     LSM,
+    LSMConfig (..),
     Key (K), Value (V), resolveValue, Blob (B),
     new,
+    newWith,
     LookupResult (..),
     lookup, lookups,
     Op,
@@ -82,11 +84,21 @@ module ScheduledMerges (
     evalInvariant,
     treeInvariant,
     mergeDebtInvariant,
+
+    -- * Run sizes
+    levelNumberToMaxRunSize,
+    runSizeToLevelNumber,
+    maxWriteBufferSize,
+    runSizeFitsInLevel,
+    runSizeTooSmallForLevel,
+    runSizeTooLargeForLevel,
+
+    -- * Level capacity
+    levelIsFull,
   ) where
 
 import           Prelude hiding (lookup)
 
-import           Data.Bits
 import           Data.Foldable (for_, toList, traverse_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -100,10 +112,19 @@ import qualified Control.Monad.Trans.Except as E
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
 
+import           Text.Printf (printf)
+
 import qualified Test.QuickCheck as QC
 
 data LSM s  = LSMHandle !(STRef s Counter)
+                        !LSMConfig
                         !(STRef s (LSMContent s))
+
+-- | Configuration options for individual LSM tables.
+data LSMConfig = LSMConfig {
+      configMaxWriteBufferSize :: !Int
+    }
+  deriving stock (Show, Eq)
 
 -- | A simple count of LSM operations to allow logging the operation
 -- number in each event. This enables relating merge events to the
@@ -119,6 +140,10 @@ data LSMContent s =
       (UnionLevel s)  -- ^ a potential last level
 
 type Levels s = [Level s]
+
+-- | The number of the level. The write buffer lives at level 0, and all other
+-- levels are numbered starting from 1.
+type LevelNo = Int
 
 -- | A level is a sequence of resident runs at this level, prefixed by an
 -- incoming run, which is usually multiple runs that are being merged. Once
@@ -275,32 +300,6 @@ resolveValue (V x) (V y) = V (x + y)
 newtype Blob = B Int
   deriving stock (Eq, Show)
 
--- | The size of the 4 tiering runs at each level are allowed to be:
--- @4^(level-1) < size <= 4^level@
---
-tieringRunSize :: Int -> Int
-tieringRunSize n = 4^n
-
--- | Levelling runs take up the whole level, so are 4x larger.
---
-levellingRunSize :: Int -> Int
-levellingRunSize n = 4^(n+1)
-
-tieringRunSizeToLevel :: Run -> Int
-tieringRunSizeToLevel r
-  | s <= maxBufferSize = 1  -- level numbers start at 1
-  | otherwise =
-    1 + (finiteBitSize s - countLeadingZeros (s-1) - 1) `div` 2
-  where
-    s = runSize r
-
-levellingRunSizeToLevel :: Run -> Int
-levellingRunSizeToLevel r =
-    max 1 (tieringRunSizeToLevel r - 1)  -- level numbers start at 1
-
-maxBufferSize :: Int
-maxBufferSize = tieringRunSize 1 -- 4
-
 -- | We use levelling on the last level, unless that is also the first level.
 mergePolicyForLevel :: Int -> [Level s] -> UnionLevel s -> MergePolicy
 mergePolicyForLevel 1 _  _       = MergePolicyTiering
@@ -316,8 +315,8 @@ mergeTypeForLevel _  _       = MergeMidLevel
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-invariant :: forall s. LSMContent s -> ST s ()
-invariant (LSMContent _ levels ul) = do
+invariant :: forall s. LSMConfig -> LSMContent s -> ST s ()
+invariant conf (LSMContent _ levels ul) = do
     levelsInvariant 1 levels
     case ul of
       NoUnion      -> return ()
@@ -355,7 +354,7 @@ invariant (LSMContent _ levels ul) = do
         MergePolicyLevelling -> assertST $ null rs
         -- Runs in tiering levels usually fit that size, but they can be one
         -- larger, if a run has been held back (creating a 5-way merge).
-        MergePolicyTiering   -> assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln, ln+1]) rs
+        MergePolicyTiering   -> assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r `elem` [ln, ln+1]) rs
         -- (This is actually still not really true, but will hold in practice.
         -- In the pathological case, all runs passed to the next level can be
         -- factor (5/4) too large, and there the same holding back can lead to
@@ -374,13 +373,13 @@ invariant (LSMContent _ levels ul) = do
             (Single r, m) -> do
               assertST $ case m of CompletedMerge{} -> True
                                    OngoingMerge{}   -> False
-              assertST $ levellingRunSizeToLevel r == ln
+              assertST $ runToLevelNumber MergePolicyLevelling conf r == ln
 
             -- A completed merge for levelling can be of almost any size at all!
             -- It can be smaller, due to deletions in the last level. But it
             -- can't be bigger than would fit into the next level.
             (_, CompletedMerge r) ->
-              assertST $ levellingRunSizeToLevel r <= ln+1
+              assertST $ runToLevelNumber MergePolicyLevelling conf r <= ln+1
 
             -- An ongoing merge for levelling should have 4 incoming runs of
             -- the right size for the level below (or slightly larger due to
@@ -393,8 +392,8 @@ invariant (LSMContent _ levels ul) = do
               assertST $ all (\r -> runSize r > 0) rs  -- don't merge empty runs
               let incoming = take 4 rs
               let resident = drop 4 rs
-              assertST $ all (\r -> tieringRunSizeToLevel r `elem` [ln-1, ln]) incoming
-              assertST $ all (\r -> levellingRunSizeToLevel r <= ln+1) resident
+              assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r `elem` [ln-1, ln]) incoming
+              assertST $ all (\r -> runToLevelNumber MergePolicyLevelling conf r <= ln+1) resident
 
         MergePolicyTiering ->
           case (ir, mrs, mergeTypeForLevel ls ul) of
@@ -403,7 +402,7 @@ invariant (LSMContent _ levels ul) = do
             (Single r, m, _) -> do
               assertST $ case m of CompletedMerge{} -> True
                                    OngoingMerge{}   -> False
-              assertST $ tieringRunSizeToLevel r == ln
+              assertST $ runToLevelNumber MergePolicyTiering conf r == ln
 
             -- A completed last level run can be of almost any smaller size due
             -- to deletions, but it can't be bigger than the next level down.
@@ -411,14 +410,14 @@ invariant (LSMContent _ levels ul) = do
             -- a single level only.
             (_, CompletedMerge r, MergeLastLevel) -> do
               assertST $ ln == 1
-              assertST $ tieringRunSizeToLevel r <= ln+1
+              assertST $ runToLevelNumber MergePolicyTiering conf r <= ln+1
 
             -- A completed mid level run is usually of the size for the
             -- level it is entering, but can also be one smaller (in which case
             -- it'll be held back and merged again) or one larger (because it
             -- includes a run that has been held back before).
             (_, CompletedMerge r, MergeMidLevel) ->
-              assertST $ tieringRunSizeToLevel r `elem` [ln-1, ln, ln+1]
+              assertST $ runToLevelNumber MergePolicyTiering conf r `elem` [ln-1, ln, ln+1]
 
             -- An ongoing merge for tiering should have 4 incoming runs of
             -- the right size for the level below, and at most 1 run held back
@@ -426,7 +425,7 @@ invariant (LSMContent _ levels ul) = do
             -- the level below).
             (_, OngoingMerge _ rs _, _) -> do
               assertST $ length rs == 4 || length rs == 5
-              assertST $ all (\r -> tieringRunSizeToLevel r == ln-1) rs
+              assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r == ln-1) rs
 
 -- We don't make many assumptions apart from what the types already enforce.
 -- In particular, there are no invariants on the progress of the merges,
@@ -524,6 +523,199 @@ assert p x = Exc.assert p (const x callStack)
 
 assertST :: HasCallStack => Bool -> ST s ()
 assertST p = assert p $ return ()
+
+-------------------------------------------------------------------------------
+-- Run sizes
+--
+
+-- | Compute the maximum size of a run for a given level.
+--
+-- The size of a tiering run at each level is allowed to be
+-- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^level@.
+--
+-- >>> levelNumberToMaxRunSize MergePolicyTiering (LSMConfig 2) <$> [0, 1, 2, 3, 4]
+-- [0,2,8,32,128]
+--
+-- The @size@ of a levelling run at each level is allowed to be
+-- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^(level+1)@. A
+-- levelling run can take take up a whole level, so the maximum size of a run is
+-- @sizeRatio@ tmes larger than the maximum size of a tiering run on the same
+-- level.
+--
+-- >>> levelNumberToMaxRunSize MergePolicyLevelling (LSMConfig 2) <$> [0, 1, 2, 3, 4]
+-- [0,8,32,128,512]
+levelNumberToMaxRunSize :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int
+levelNumberToMaxRunSize = \case
+    MergePolicyTiering -> levelNumberToMaxRunSizeTiering
+    MergePolicyLevelling -> levelNumberToMaxRunSizeLevelling
+
+-- | See 'levelNumberToMaxRunSize'
+levelNumberToMaxRunSizeTiering :: HasCallStack => LSMConfig -> LevelNo -> Int
+levelNumberToMaxRunSizeTiering LSMConfig {configMaxWriteBufferSize = bufSize} ln
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = 0
+  | otherwise = fromIntegerChecked (toInteger bufSize * 4 ^ pred (toInteger ln))
+      -- Perform the computation with arbitrary precision using 'Integers', but
+      -- throw an error if the result does not fit into an 'Int'.
+
+-- | See 'levelNumberToMaxRunSize'
+levelNumberToMaxRunSizeLevelling :: HasCallStack => LSMConfig -> LevelNo -> Int
+levelNumberToMaxRunSizeLevelling conf ln
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = 0
+  | otherwise = levelNumberToMaxRunSizeTiering conf (succ ln)
+
+-- | See 'runSizeToLevelNumber'.
+runToLevelNumber :: HasCallStack => MergePolicy -> LSMConfig -> Run -> LevelNo
+runToLevelNumber mpl conf run = runSizeToLevelNumber mpl conf (runSize run)
+
+-- | Compute the appropriate level for the size of the given run.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeToLevelNumber MergePolicyTiering (LSMConfig 2) <$> [0,2,8,32,128]
+-- [0,1,2,3,4]
+--
+-- >>> runSizeToLevelNumber MergePolicyLevelling (LSMConfig 2) <$> [0,8,32,128,512]
+-- [0,1,2,3,4]
+runSizeToLevelNumber :: HasCallStack => MergePolicy -> LSMConfig -> Int -> LevelNo
+runSizeToLevelNumber = \case
+    MergePolicyTiering -> runSizeToLevelNumberTiering
+    MergePolicyLevelling -> runSizeToLevelNumberLevelling
+
+-- | See 'runSizeToLevelNumber'.
+runSizeToLevelNumberTiering :: HasCallStack => LSMConfig -> Int -> LevelNo
+runSizeToLevelNumberTiering conf n
+  | n < 0 = error "run size must be positive"
+  -- TODO: enumerating level numbers is potentially costly, but it does gives a
+  -- precise answer, where we'd otherwise have to deal with Double rounding
+  -- errors in computing @ln = logBase 4 (n / configMaxWriteBufferSize) + 1@
+  | otherwise = head $ -- the list is guaranteed to be non-empty
+      [ ln
+      | ln <- [0..]
+      , n <= levelNumberToMaxRunSizeTiering conf ln
+      ]
+
+-- | See 'runSizeToLevelNumber'.
+runSizeToLevelNumberLevelling :: HasCallStack => LSMConfig -> Int -> LevelNo
+runSizeToLevelNumberLevelling conf n
+  | n < 0 = error "run size must be positive"
+  -- TODO: enumerating level numbers is potentially costly, but it does gives a
+  -- precise answer, where we'd otherwise have to deal with Double rounding
+  -- errors in computing @ln = logBase 4 (n / configMaxWriteBufferSize)@
+  | otherwise = head $ -- the list is guaranteed to be non-empty
+      [ ln
+      | ln <- [0..]
+      , n <= levelNumberToMaxRunSizeLevelling conf ln
+      ]
+
+maxWriteBufferSize :: HasCallStack => LSMConfig -> Int
+maxWriteBufferSize conf = levelNumberToMaxRunSizeTiering conf 1 -- equal to configMaxWriteBufferSize
+
+{-# INLINABLE fromIntegerChecked #-}
+-- | Like 'fromInteger', but throws an error when @(x :: Integer) /= toInteger
+-- (fromInteger x :: b)@.
+fromIntegerChecked :: (HasCallStack, Integral a) => Integer -> a
+fromIntegerChecked x
+  | x'' == x
+  = x'
+  | otherwise
+  = error $ printf "fromIntegerChecked: conversion failed, %s /= %s" (show x) (show x'')
+  where
+    x' = fromInteger x
+    x'' = toInteger x'
+
+-- | See 'runSizeFitsInLevel'.
+_runFitsInLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Run -> Bool
+_runFitsInLevel mpl conf ln r = runSizeFitsInLevel mpl conf ln (runSize r)
+
+-- | Check wheter a run of the given size fits in the given level.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeFitsInLevel MergePolicyTiering (LSMConfig 2) 3 <$> [8,9,16,32,33]
+-- [False,True,True,True,False]
+--
+-- >>> runSizeFitsInLevel MergePolicyLevelling (LSMConfig 2) 2 <$> [8,9,16,32,33]
+-- [False,True,True,True,False]
+runSizeFitsInLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
+runSizeFitsInLevel mpl conf ln n
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = n == 0
+  | otherwise =
+         levelNumberToMaxRunSize mpl conf (pred ln) < n
+      && n <= levelNumberToMaxRunSize mpl conf ln
+
+-- | See 'runSizeTooSmallForLevel'.
+runTooSmallForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Run -> Bool
+runTooSmallForLevel mpl conf ln r = runSizeTooSmallForLevel mpl conf ln (runSize r)
+
+-- | Check wheter a run of the given size is too small for the given level.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeTooSmallForLevel MergePolicyTiering (LSMConfig 2) 3 <$> [8,9]
+-- [True,False]
+--
+-- >>> runSizeTooSmallForLevel MergePolicyLevelling (LSMConfig 2) 2 <$> [8,9]
+-- [True,False]
+runSizeTooSmallForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
+runSizeTooSmallForLevel mpl conf ln n
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = False
+  | otherwise = case mpl of
+      MergePolicyTiering ->
+        n <= levelNumberToMaxRunSize MergePolicyTiering conf (pred ln)
+      MergePolicyLevelling ->
+        n <= levelNumberToMaxRunSize MergePolicyLevelling conf (pred ln)
+
+-- | See 'runSizeTooLargeForLevel'.
+runTooLargeForLevel :: HasCallStack =>MergePolicy -> LSMConfig -> LevelNo -> Run -> Bool
+runTooLargeForLevel mpl conf ln r = runSizeTooLargeForLevel mpl conf ln (runSize r)
+
+-- | Check wheter a run of the given size is too large for the given level.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeTooLargeForLevel MergePolicyTiering (LSMConfig 2) 2 <$> [8,9]
+-- [False,True]
+--
+-- >>> runSizeTooLargeForLevel MergePolicyLevelling (LSMConfig 2) 1 <$> [8,9]
+-- [False,True]
+runSizeTooLargeForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
+runSizeTooLargeForLevel mpl conf ln n
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = not (n == 0)
+  | otherwise = case mpl of
+      MergePolicyTiering ->
+        n > levelNumberToMaxRunSize MergePolicyTiering conf ln
+      MergePolicyLevelling ->
+        n > levelNumberToMaxRunSize MergePolicyLevelling conf ln
+
+-------------------------------------------------------------------------------
+-- Level capacity
+--
+
+levelIsFull :: MergePolicy -> LSMConfig -> LevelNo -> [Run] -> [Run] -> Bool
+levelIsFull mpl conf ln incoming resident = case mpl of
+    MergePolicyTiering -> levelIsFullTiering conf ln incoming resident
+    MergePolicyLevelling ->
+      assert (length resident == 1) $
+      levelIsFullLevelling conf ln incoming (head resident)
+
+-- | Only based on run count, not their sizes.
+levelIsFullTiering :: LSMConfig -> LevelNo -> [Run] -> [Run] -> Bool
+levelIsFullTiering _conf _ln _incoming resident = length resident >= 4
+
+-- | The level is only considered full once the resident run is /too large/
+-- for the level.
+levelIsFullLevelling :: LSMConfig -> LevelNo -> [Run] -> Run -> Bool
+levelIsFullLevelling conf ln _incoming resident =
+    runTooLargeForLevel MergePolicyLevelling conf ln resident
 
 -------------------------------------------------------------------------------
 -- Merging credits
@@ -742,10 +934,22 @@ suppliedCreditMergingRun (MergingRun _ d ref) =
 --
 
 new :: ST s (LSM s)
-new = do
-  c   <- newSTRef 0
-  lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
-  return (LSMHandle c lsm)
+new = newWith conf
+  where
+    conf = LSMConfig {
+        -- 4 was the default before the write buffer size was the hard-coded,
+        -- default max write buffer size before it was made to be configurable
+        configMaxWriteBufferSize = 4
+      }
+
+newWith :: LSMConfig -> ST s (LSM s)
+newWith conf
+  | configMaxWriteBufferSize conf <= 0 =
+      error "newWith: configMaxWriteBufferSize should be positive"
+  | otherwise = do
+      c   <- newSTRef 0
+      lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
+      return (LSMHandle c conf lsm)
 
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
 inserts tr lsm kvbs = updates tr lsm [ (k, Insert v b) | (k, v, b) <- kvbs ]
@@ -775,28 +979,28 @@ updates :: Tracer (ST s) Event -> LSM s -> [(Key, Op)] -> ST s ()
 updates tr lsm = mapM_ (uncurry (update tr lsm))
 
 update :: Tracer (ST s) Event -> LSM s -> Key -> Op -> ST s ()
-update tr (LSMHandle scr lsmr) k op = do
+update tr (LSMHandle scr conf lsmr) k op = do
     sc <- readSTRef scr
     content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels (NominalCredit 1) ls
-    invariant content
+    invariant conf content
     let wb' = Map.insertWith combine k op wb
-    if bufferSize wb' >= maxBufferSize
+    if bufferSize wb' >= maxWriteBufferSize conf
       then do
-        ls' <- increment tr sc (bufferToRun wb') ls unionLevel
+        ls' <- increment tr sc conf (bufferToRun wb') ls unionLevel
         let content' = LSMContent Map.empty ls' unionLevel
-        invariant content'
+        invariant conf content'
         writeSTRef lsmr content'
       else
         writeSTRef lsmr (LSMContent wb' ls unionLevel)
 
 supplyMergeCredits :: LSM s -> NominalCredit -> ST s ()
-supplyMergeCredits (LSMHandle scr lsmr) credits = do
+supplyMergeCredits (LSMHandle scr conf lsmr) credits = do
     content@(LSMContent _ ls _) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels credits ls
-    invariant content
+    invariant conf content
 
 data LookupResult v b =
     NotFound
@@ -804,22 +1008,22 @@ data LookupResult v b =
   deriving stock (Eq, Show)
 
 lookups :: LSM s -> [Key] -> ST s [LookupResult Value Blob]
-lookups (LSMHandle _ lsmr) ks = do
+lookups (LSMHandle _ _conf lsmr) ks = do
     LSMContent wb ls ul <- readSTRef lsmr
     runs <- concat <$> flattenLevels ls
     traverse (doLookup wb runs ul) ks
 
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
-lookup (LSMHandle _ lsmr) k = do
+lookup (LSMHandle _ _conf lsmr) k = do
     LSMContent wb ls ul <- readSTRef lsmr
     runs <- concat <$> flattenLevels ls
     doLookup wb runs ul k
 
 duplicate :: LSM s -> ST s (LSM s)
-duplicate (LSMHandle _scr lsmr) = do
+duplicate (LSMHandle _scr conf lsmr) = do
     scr'  <- newSTRef 0
     lsmr' <- newSTRef =<< readSTRef lsmr
-    return (LSMHandle scr' lsmr')
+    return (LSMHandle scr' conf lsmr')
     -- it's that simple here, because we share all the pure value and all the
     -- STRefs and there's no ref counting to be done
 
@@ -832,8 +1036,12 @@ duplicate (LSMHandle _scr lsmr) = do
 -- The more merge work remains, the more expensive are lookups on the table.
 unions :: [LSM s] -> ST s (LSM s)
 unions lsms = do
-    trees <- forM lsms $ \(LSMHandle _ lsmr) ->
-      contentToMergingTree =<< readSTRef lsmr
+    (confs, trees) <- fmap unzip $ forM lsms $ \(LSMHandle _ conf lsmr) ->
+      (conf,) <$> (contentToMergingTree =<< readSTRef lsmr)
+    -- Check that the configurations are equal
+    conf <- case confs of
+      []       -> error "unions: 0 tables"
+      conf : _ -> assert (all (conf==) confs) $ pure conf
     -- TODO: if only one table is non-empty, we don't have to create a Union,
     -- we can just duplicate the table.
     unionLevel <- newPendingUnionMerge (catMaybes trees) >>= \case
@@ -843,7 +1051,7 @@ unions lsms = do
         Union tree <$> newSTRef debt
     lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
     c    <- newSTRef 0
-    return (LSMHandle c lsmr)
+    return (LSMHandle c conf lsmr)
 
 -- | The /current/ upper bound on the number of 'UnionCredits' that have to be
 -- supplied before a 'union' is completed.
@@ -859,7 +1067,7 @@ newtype UnionDebt = UnionDebt Debt
 -- | Return the current union debt. This debt can be reduced until it is paid
 -- off using 'supplyUnionCredits'.
 remainingUnionDebt :: LSM s -> ST s UnionDebt
-remainingUnionDebt (LSMHandle _ lsmr) = do
+remainingUnionDebt (LSMHandle _ _conf lsmr) = do
     LSMContent _ _ ul <- readSTRef lsmr
     UnionDebt <$> case ul of
       NoUnion      -> return 0
@@ -885,7 +1093,7 @@ newtype UnionCredits = UnionCredits Credit
 -- a union has finished. In particular, if the returned number of credits is
 -- non-negative, then the union is finished.
 supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
-supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
+supplyUnionCredits (LSMHandle scr conf lsmr) (UnionCredits credits)
   | credits <= 0 = return (UnionCredits 0)
   | otherwise = do
     content@(LSMContent _ _ ul) <- readSTRef lsmr
@@ -899,7 +1107,7 @@ supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
         debt' <- checkedUnionDebt tree debtRef
         when (debt' > 0) $
           assertST $ c' == 0  -- should have spent these credits
-        invariant content
+        invariant conf content
         return c'
 
 -- TODO: At some point the completed merging tree should to moved into the
@@ -1162,8 +1370,10 @@ depositNominalCredit (NominalDebt nominalDebt)
 --
 
 increment :: forall s. Tracer (ST s) Event
-          -> Counter -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
-increment tr sc run0 ls0 ul = do
+          -> Counter
+          -> LSMConfig
+          -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
+increment tr sc conf run0 ls0 ul = do
     go 1 [run0] ls0
   where
     mergeTypeFor :: Levels s -> LevelMergeType
@@ -1173,7 +1383,7 @@ increment tr sc run0 ls0 ul = do
     go !ln incoming [] = do
         let mergePolicy = mergePolicyForLevel ln [] ul
         traceWith tr' AddLevelEvent
-        ir <- newLevelMerge tr' ln mergePolicy (mergeTypeFor []) incoming
+        ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeFor []) incoming
         return (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
@@ -1195,23 +1405,23 @@ increment tr sc run0 ls0 ul = do
 
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
-        MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
+        MergePolicyTiering | runTooSmallForLevel MergePolicyTiering conf ln r -> do
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
           return (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
-        MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+        MergePolicyTiering | levelIsFullTiering conf ln incoming resident  -> do
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
           return (Level ir' [] : ls')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) incoming
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering (mergeTypeFor ls) incoming
           traceWith tr' (AddRunEvent (length resident))
           return (Level ir' resident : ls)
 
@@ -1219,16 +1429,16 @@ increment tr sc run0 ls0 ul = do
         -- run is too large for this level, we promote the run to the next
         -- level and start merging the incoming runs into this (otherwise
         -- empty) level .
-        MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
+        MergePolicyLevelling | levelIsFullLevelling conf ln incoming r -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
           return (Level ir' [] : ls')
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' ln MergePolicyLevelling (mergeTypeFor ls)
+          ir' <- newLevelMerge tr' conf ln MergePolicyLevelling (mergeTypeFor ls)
                           (incoming ++ [r])
           return (Level ir' [] : [])
 
@@ -1236,10 +1446,11 @@ increment tr sc run0 ls0 ul = do
         tr' = contramap (EventAt sc ln) tr
 
 newLevelMerge :: Tracer (ST s) EventDetail
+              -> LSMConfig
               -> Int -> MergePolicy -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
-newLevelMerge _ _ _ _ [r] = return (Single r)
-newLevelMerge tr level mergePolicy mergeType rs = do
+newLevelMerge _ _ _ _ _ [r] = return (Single r)
+newLevelMerge tr conf level mergePolicy mergeType rs = do
     assertST (length rs `elem` [4, 5])
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
     assertST (totalDebt physicalDebt <= maxPhysicalDebt)
@@ -1255,7 +1466,7 @@ newLevelMerge tr level mergePolicy mergeType rs = do
     -- The nominal debt equals the minimum of credits we will supply before we
     -- expect the merge to complete. This is the same as the number of updates
     -- in a run that gets moved to this level.
-    nominalDebt = NominalDebt (tieringRunSize level)
+    nominalDebt = NominalDebt (levelNumberToMaxRunSize MergePolicyTiering conf level)
 
     -- The physical debt is the number of actual merge steps we will need to
     -- perform before the merge is complete. This is always the sum of the
@@ -1269,18 +1480,9 @@ newLevelMerge tr level mergePolicy mergeType rs = do
     -- includes the single run in the current level.
     maxPhysicalDebt =
       case mergePolicy of
-        MergePolicyLevelling -> 4 * tieringRunSize (level-1)
-                                  + levellingRunSize level
-        MergePolicyTiering   -> length rs * tieringRunSize (level-1)
-
--- | Only based on run count, not their sizes.
-tieringLevelIsFull :: Int -> [Run] -> [Run] -> Bool
-tieringLevelIsFull _ln _incoming resident = length resident >= 4
-
--- | The level is only considered full once the resident run is /too large/ for
--- the level.
-levellingLevelIsFull :: Int -> [Run] -> Run -> Bool
-levellingLevelIsFull ln _incoming resident = levellingRunSizeToLevel resident > ln
+        MergePolicyLevelling -> 4 * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
+                                  + levelNumberToMaxRunSize MergePolicyLevelling conf level
+        MergePolicyTiering   -> length rs * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
 
 -------------------------------------------------------------------------------
 -- MergingTree abstraction
@@ -1523,7 +1725,7 @@ data MTree r = MLeaf r
   deriving stock (Eq, Foldable, Functor, Show)
 
 allLevels :: LSM s -> ST s (Buffer, [[Run]], Maybe (MTree Run))
-allLevels (LSMHandle _ lsmr) = do
+allLevels (LSMHandle _ _conf lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     rs <- flattenLevels ls
     tree <- case ul of
@@ -1593,7 +1795,7 @@ type LevelRepresentation =
      [Run])
 
 dumpRepresentation :: LSM s -> ST s Representation
-dumpRepresentation (LSMHandle _ lsmr) = do
+dumpRepresentation (LSMHandle _ _conf lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     levels <- mapM dumpLevel ls
     tree <- case ul of

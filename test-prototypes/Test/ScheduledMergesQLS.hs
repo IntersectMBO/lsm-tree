@@ -126,7 +126,7 @@ modelDump mlsm model@Model {mlsms} =
 
 instance StateModel (Lockstep Model) where
   data Action (Lockstep Model) a where
-    ANew    :: Action (Lockstep Model) (LSM RealWorld)
+    ANew    :: LSMConfig -> Action (Lockstep Model) (LSM RealWorld)
 
     AInsert :: ModelVar Model (LSM RealWorld)
             -> Either (ModelVar Model Key) Key -- to refer to a prior key
@@ -194,7 +194,7 @@ instance InLockstep Model where
   observeModel (MLookup x) = OId x
   observeModel (MDump   x) = OId x
 
-  usedVars  ANew               = []
+  usedVars  ANew{}             = []
   usedVars (AInsert v evk _ _) = SomeGVar v
                                : case evk of Left vk -> [SomeGVar vk]; _ -> []
   usedVars (ADelete v evk)     = SomeGVar v
@@ -212,7 +212,11 @@ instance InLockstep Model where
 
   arbitraryWithVars ctx model =
     case findVars ctx (Proxy :: Proxy (LSM RealWorld)) of
-      []   -> return (Some ANew)
+      []   ->
+        -- Generate a write buffer size in the range [3,5] most of the time,
+        -- sometimes in the range [1,10] to hit edge cases. 4 was the hard-coded
+        -- default before it was made configurable.
+        fmap Some $ ANew <$> (LSMConfig <$> frequency [(10, choose (1,10)), (90, choose (3,5))])
       vars ->
         let kvars = findVars ctx (Proxy :: Proxy Key)
             existingKey = Left <$> elements kvars
@@ -291,6 +295,14 @@ instance InLockstep Model where
                   ADump <$> elements vars)
           ]
 
+  shrinkWithVars _ctx _model (ANew conf) =
+         [ Some $ ANew conf { configMaxWriteBufferSize = mwbs' }
+         | mwbs' <- shrink mwbs
+         , mwbs' >= 1, mwbs' <= 10
+         ]
+    where
+      LSMConfig mwbs = conf
+
   shrinkWithVars _ctx _model (AInsert var (Right k) v b) =
     [ Some $ AInsert var (Right k') v' b' | (k', v', b') <- shrink (k, v, b) ]
 
@@ -327,7 +339,7 @@ deriving newtype instance Arbitrary UnionCredits
 instance RunLockstep Model IO where
   observeReal _ action result =
     case (action, result) of
-      (ANew,           _) -> ORef
+      (ANew{},         _) -> ORef
       (AInsert{},      x) -> OId x
       (ADelete{},      x) -> OId x
       (AMupsert{},     x) -> OId x
@@ -337,7 +349,7 @@ instance RunLockstep Model IO where
       (ASupplyUnion{}, x) -> OId x
       (ADump{},        x) -> OId x
 
-  showRealResponse _ ANew           = Nothing
+  showRealResponse _ ANew{}         = Nothing
   showRealResponse _ AInsert{}      = Just Dict
   showRealResponse _ ADelete{}      = Just Dict
   showRealResponse _ AMupsert{}     = Just Dict
@@ -362,7 +374,7 @@ runActionIO :: Action (Lockstep Model) a
 runActionIO action lookUp =
   stToIO $
   case action of
-    ANew                -> new
+    ANew conf           -> newWith conf
     AInsert var evk v b -> insert tr (lookUpVar var) k v b >> return k
       where k = either lookUpVar id evk
     ADelete var evk     -> delete tr (lookUpVar var) k >> return ()
@@ -388,7 +400,7 @@ runModel :: Action (Lockstep Model) a
          -> (ModelValue Model a, Model)
 runModel action ctx m =
   case action of
-    ANew -> (MLSM mlsm, m')
+    ANew{} -> (MLSM mlsm, m')
       where (mlsm, m') = modelNew m
 
     AInsert var evk v b -> (MInsert k, m')
