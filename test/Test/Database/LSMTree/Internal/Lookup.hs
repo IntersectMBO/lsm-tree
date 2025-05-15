@@ -150,8 +150,8 @@ prop_bloomQueriesModel dats =
 bloomQueriesModel :: [Set SerialisedKey] -> [SerialisedKey] -> [(RunIx, KeyIx)]
 bloomQueriesModel blooms ks = [
       (rix, kix)
-    | (rix, b) <- rs'
-    , (kix, k) <- ks'
+    | (kix, k) <- ks'
+    , (rix, b) <- rs'
     , Set.member k b
     ]
   where
@@ -218,8 +218,8 @@ prepLookupsModel ::
   -> ([(RunIx, KeyIx)], [PageSpan])
 prepLookupsModel rs ks = unzip
     [ ((rix, kix), pspan)
-    | (rix, (b, c)) <- zip [0..] rs
-    , (kix, k) <- zip [0..] ks
+    | (kix, k) <- zip [0..] ks
+    , (rix, (b, c)) <- zip [0..] rs
     , Bloom.elem k b
     , let pspan = Index.search k c
     ]
