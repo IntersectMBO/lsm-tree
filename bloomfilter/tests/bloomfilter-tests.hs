@@ -156,7 +156,17 @@ prop_calc_size_fpr_fpr proxy (FPR fpr) (NumEntries numEntries) =
                         (fromIntegral (B.sizeHashes bsize))
    ~~~ fpr
   where
-    (~~~) = withinTolerance 1e-6
+    (~~~) = withinTolerance tolerance
+    -- At small filter sizes (corresponding to high FPRs), we get significant
+    -- reductions in accuracy due to rounding the number of bits to an integer.
+    -- So we use greater tolerances for bigger FPRs.
+    -- Contrast with prop_calc_policy_fpr which does not do rounding to an
+    -- integer number of bits (it uses Double for bits per key), and thus can
+    -- use a very small tolerance.
+    tolerance | fpr <= 0.01 = 1e-6
+              | fpr <= 0.05 = 1e-5
+              | fpr <= 0.5  = 1e-4
+              | otherwise   = 1e-3
 
 -- | Compare @sizeForBits@ against @falsePositiveRate@ with some tolerance for deviations
 prop_calc_size_fpr_bits :: BloomFilter bloom => Proxy bloom
