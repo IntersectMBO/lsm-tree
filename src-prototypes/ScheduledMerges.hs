@@ -84,6 +84,11 @@ module ScheduledMerges (
     evalInvariant,
     treeInvariant,
     mergeDebtInvariant,
+
+    -- * Run sizes
+    levelNumberToMaxRunSize,
+    runSizeToLevelNumber,
+    maxWriteBufferSize
   ) where
 
 import           Prelude hiding (lookup)
@@ -101,6 +106,8 @@ import           Control.Monad.ST
 import qualified Control.Monad.Trans.Except as E
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           GHC.Stack (HasCallStack, callStack)
+
+import           Text.Printf (printf)
 
 import qualified Test.QuickCheck as QC
 
@@ -128,6 +135,10 @@ data LSMContent s =
       (UnionLevel s)  -- ^ a potential last level
 
 type Levels s = [Level s]
+
+-- | The number of the level. The write buffer lives at level 0, and all other
+-- levels are numbered starting from 1.
+type LevelNo = Int
 
 -- | A level is a sequence of resident runs at this level, prefixed by an
 -- incoming run, which is usually multiple runs that are being merged. Once
@@ -533,6 +544,108 @@ assert p x = Exc.assert p (const x callStack)
 
 assertST :: HasCallStack => Bool -> ST s ()
 assertST p = assert p $ return ()
+
+-------------------------------------------------------------------------------
+-- Run sizes
+--
+
+-- | Compute the maximum size of a run for a given level.
+--
+-- The size of a tiering run at each level is allowed to be
+-- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^level@.
+--
+-- >>> levelNumberToMaxRunSize MergePolicyTiering (LSMConfig 2) <$> [0, 1, 2, 3, 4]
+-- [0,2,8,32,128]
+--
+-- The @size@ of a levelling run at each level is allowed to be
+-- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^(level+1)@. A
+-- levelling run can take take up a whole level, so the maximum size of a run is
+-- @sizeRatio@ tmes larger than the maximum size of a tiering run on the same
+-- level.
+--
+-- >>> levelNumberToMaxRunSize MergePolicyLevelling (LSMConfig 2) <$> [0, 1, 2, 3, 4]
+-- [0,8,32,128,512]
+levelNumberToMaxRunSize :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int
+levelNumberToMaxRunSize = \case
+    MergePolicyTiering -> levelNumberToMaxRunSizeTiering
+    MergePolicyLevelling -> levelNumberToMaxRunSizeLevelling
+
+-- | See 'levelNumberToMaxRunSize'
+levelNumberToMaxRunSizeTiering :: HasCallStack => LSMConfig -> LevelNo -> Int
+levelNumberToMaxRunSizeTiering LSMConfig {configMaxWriteBufferSize = bufSize} ln
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = 0
+  | otherwise = fromIntegerChecked (toInteger bufSize * 4 ^ pred (toInteger ln))
+      -- Perform the computation with arbitrary precision using 'Integers', but
+      -- throw an error if the result does not fit into an 'Int'.
+
+-- | See 'levelNumberToMaxRunSize'
+levelNumberToMaxRunSizeLevelling :: HasCallStack => LSMConfig -> LevelNo -> Int
+levelNumberToMaxRunSizeLevelling conf ln
+  | ln < 0 = error "level number must be non-negative"
+  | ln == 0 = 0
+  | otherwise = levelNumberToMaxRunSizeTiering conf (succ ln)
+
+-- | See 'runSizeToLevelNumber'.
+_runToLevelNumber :: HasCallStack => MergePolicy -> LSMConfig -> Run -> LevelNo
+_runToLevelNumber mpl conf run = runSizeToLevelNumber mpl conf (runSize run)
+
+-- | Compute the appropriate level for the size of the given run.
+--
+-- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
+-- sizes at each level.
+--
+-- >>> runSizeToLevelNumber MergePolicyTiering (LSMConfig 2) <$> [0,2,8,32,128]
+-- [0,1,2,3,4]
+--
+-- >>> runSizeToLevelNumber MergePolicyLevelling (LSMConfig 2) <$> [0,8,32,128,512]
+-- [0,1,2,3,4]
+runSizeToLevelNumber :: HasCallStack => MergePolicy -> LSMConfig -> Int -> LevelNo
+runSizeToLevelNumber = \case
+    MergePolicyTiering -> runSizeToLevelNumberTiering
+    MergePolicyLevelling -> runSizeToLevelNumberLevelling
+
+-- | See 'runSizeToLevelNumber'.
+runSizeToLevelNumberTiering :: HasCallStack => LSMConfig -> Int -> LevelNo
+runSizeToLevelNumberTiering conf n
+  | n < 0 = error "run size must be positive"
+  -- TODO: enumerating level numbers is potentially costly, but it does gives a
+  -- precise answer, where we'd otherwise have to deal with Double rounding
+  -- errors in computing @ln = logBase 4 (n / configMaxWriteBufferSize) + 1@
+  | otherwise = head $ -- the list is guaranteed to be non-empty
+      [ ln
+      | ln <- [0..]
+      , n <= levelNumberToMaxRunSizeTiering conf ln
+      ]
+
+-- | See 'runSizeToLevelNumber'.
+runSizeToLevelNumberLevelling :: HasCallStack => LSMConfig -> Int -> LevelNo
+runSizeToLevelNumberLevelling conf n
+  | n < 0 = error "run size must be positive"
+  -- TODO: enumerating level numbers is potentially costly, but it does gives a
+  -- precise answer, where we'd otherwise have to deal with Double rounding
+  -- errors in computing @ln = logBase 4 (n / configMaxWriteBufferSize)@
+  | otherwise = head $ -- the list is guaranteed to be non-empty
+      [ ln
+      | ln <- [0..]
+      , n <= levelNumberToMaxRunSizeLevelling conf ln
+      ]
+
+maxWriteBufferSize :: HasCallStack => LSMConfig -> Int
+maxWriteBufferSize conf = levelNumberToMaxRunSizeTiering conf 1 -- equal to configMaxWriteBufferSize
+
+{-# INLINABLE fromIntegerChecked #-}
+-- | Like 'fromInteger', but throws an error when @(x :: Integer) /= toInteger
+-- (fromInteger x :: b)@.
+fromIntegerChecked :: (HasCallStack, Integral a) => Integer -> a
+fromIntegerChecked x
+  | x'' == x
+  = x'
+  | otherwise
+  = error $ printf "fromIntegerChecked: conversion failed, %s /= %s" (show x) (show x'')
+  where
+    x' = fromInteger x
+    x'' = toInteger x'
 
 -------------------------------------------------------------------------------
 -- Merging credits
