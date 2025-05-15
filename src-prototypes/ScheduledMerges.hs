@@ -27,8 +27,10 @@
 module ScheduledMerges (
     -- * Main API
     LSM,
+    LSMConfig (..),
     Key (K), Value (V), resolveValue, Blob (B),
     new,
+    newWith,
     LookupResult (..),
     lookup, lookups,
     Op,
@@ -103,7 +105,14 @@ import           GHC.Stack (HasCallStack, callStack)
 import qualified Test.QuickCheck as QC
 
 data LSM s  = LSMHandle !(STRef s Counter)
+                        !LSMConfig
                         !(STRef s (LSMContent s))
+
+-- | Configuration options for individual LSM tables.
+data LSMConfig = LSMConfig {
+      configMaxWriteBufferSize :: !Int
+    }
+  deriving stock (Show, Eq)
 
 -- | A simple count of LSM operations to allow logging the operation
 -- number in each event. This enables relating merge events to the
@@ -316,8 +325,8 @@ mergeTypeForLevel _  _       = MergeMidLevel
 -- | Note that the invariants rely on the fact that levelling is only used on
 -- the last level.
 --
-invariant :: forall s. LSMContent s -> ST s ()
-invariant (LSMContent _ levels ul) = do
+invariant :: forall s. LSMConfig -> LSMContent s -> ST s ()
+invariant _conf (LSMContent _ levels ul) = do
     levelsInvariant 1 levels
     case ul of
       NoUnion      -> return ()
@@ -742,10 +751,22 @@ suppliedCreditMergingRun (MergingRun _ d ref) =
 --
 
 new :: ST s (LSM s)
-new = do
-  c   <- newSTRef 0
-  lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
-  return (LSMHandle c lsm)
+new = newWith conf
+  where
+    conf = LSMConfig {
+        -- 4 was the default before the write buffer size was the hard-coded,
+        -- default max write buffer size before it was made to be configurable
+        configMaxWriteBufferSize = 4
+      }
+
+newWith :: LSMConfig -> ST s (LSM s)
+newWith conf
+  | configMaxWriteBufferSize conf <= 0 =
+      error "newWith: configMaxWriteBufferSize should be positive"
+  | otherwise = do
+      c   <- newSTRef 0
+      lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
+      return (LSMHandle c conf lsm)
 
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
 inserts tr lsm kvbs = updates tr lsm [ (k, Insert v b) | (k, v, b) <- kvbs ]
@@ -775,28 +796,28 @@ updates :: Tracer (ST s) Event -> LSM s -> [(Key, Op)] -> ST s ()
 updates tr lsm = mapM_ (uncurry (update tr lsm))
 
 update :: Tracer (ST s) Event -> LSM s -> Key -> Op -> ST s ()
-update tr (LSMHandle scr lsmr) k op = do
+update tr (LSMHandle scr conf lsmr) k op = do
     sc <- readSTRef scr
     content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels (NominalCredit 1) ls
-    invariant content
+    invariant conf content
     let wb' = Map.insertWith combine k op wb
     if bufferSize wb' >= maxBufferSize
       then do
-        ls' <- increment tr sc (bufferToRun wb') ls unionLevel
+        ls' <- increment tr sc conf (bufferToRun wb') ls unionLevel
         let content' = LSMContent Map.empty ls' unionLevel
-        invariant content'
+        invariant conf content'
         writeSTRef lsmr content'
       else
         writeSTRef lsmr (LSMContent wb' ls unionLevel)
 
 supplyMergeCredits :: LSM s -> NominalCredit -> ST s ()
-supplyMergeCredits (LSMHandle scr lsmr) credits = do
+supplyMergeCredits (LSMHandle scr conf lsmr) credits = do
     content@(LSMContent _ ls _) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels credits ls
-    invariant content
+    invariant conf content
 
 data LookupResult v b =
     NotFound
@@ -804,22 +825,22 @@ data LookupResult v b =
   deriving stock (Eq, Show)
 
 lookups :: LSM s -> [Key] -> ST s [LookupResult Value Blob]
-lookups (LSMHandle _ lsmr) ks = do
+lookups (LSMHandle _ _conf lsmr) ks = do
     LSMContent wb ls ul <- readSTRef lsmr
     runs <- concat <$> flattenLevels ls
     traverse (doLookup wb runs ul) ks
 
 lookup :: LSM s -> Key -> ST s (LookupResult Value Blob)
-lookup (LSMHandle _ lsmr) k = do
+lookup (LSMHandle _ _conf lsmr) k = do
     LSMContent wb ls ul <- readSTRef lsmr
     runs <- concat <$> flattenLevels ls
     doLookup wb runs ul k
 
 duplicate :: LSM s -> ST s (LSM s)
-duplicate (LSMHandle _scr lsmr) = do
+duplicate (LSMHandle _scr conf lsmr) = do
     scr'  <- newSTRef 0
     lsmr' <- newSTRef =<< readSTRef lsmr
-    return (LSMHandle scr' lsmr')
+    return (LSMHandle scr' conf lsmr')
     -- it's that simple here, because we share all the pure value and all the
     -- STRefs and there's no ref counting to be done
 
@@ -832,8 +853,12 @@ duplicate (LSMHandle _scr lsmr) = do
 -- The more merge work remains, the more expensive are lookups on the table.
 unions :: [LSM s] -> ST s (LSM s)
 unions lsms = do
-    trees <- forM lsms $ \(LSMHandle _ lsmr) ->
-      contentToMergingTree =<< readSTRef lsmr
+    (confs, trees) <- fmap unzip $ forM lsms $ \(LSMHandle _ conf lsmr) ->
+      (conf,) <$> (contentToMergingTree =<< readSTRef lsmr)
+    -- Check that the configurations are equal
+    conf <- case confs of
+      []       -> error "unions: 0 tables"
+      conf : _ -> assert (all (conf==) confs) $ pure conf
     -- TODO: if only one table is non-empty, we don't have to create a Union,
     -- we can just duplicate the table.
     unionLevel <- newPendingUnionMerge (catMaybes trees) >>= \case
@@ -843,7 +868,7 @@ unions lsms = do
         Union tree <$> newSTRef debt
     lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
     c    <- newSTRef 0
-    return (LSMHandle c lsmr)
+    return (LSMHandle c conf lsmr)
 
 -- | The /current/ upper bound on the number of 'UnionCredits' that have to be
 -- supplied before a 'union' is completed.
@@ -859,7 +884,7 @@ newtype UnionDebt = UnionDebt Debt
 -- | Return the current union debt. This debt can be reduced until it is paid
 -- off using 'supplyUnionCredits'.
 remainingUnionDebt :: LSM s -> ST s UnionDebt
-remainingUnionDebt (LSMHandle _ lsmr) = do
+remainingUnionDebt (LSMHandle _ _conf lsmr) = do
     LSMContent _ _ ul <- readSTRef lsmr
     UnionDebt <$> case ul of
       NoUnion      -> return 0
@@ -885,7 +910,7 @@ newtype UnionCredits = UnionCredits Credit
 -- a union has finished. In particular, if the returned number of credits is
 -- non-negative, then the union is finished.
 supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
-supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
+supplyUnionCredits (LSMHandle scr conf lsmr) (UnionCredits credits)
   | credits <= 0 = return (UnionCredits 0)
   | otherwise = do
     content@(LSMContent _ _ ul) <- readSTRef lsmr
@@ -899,7 +924,7 @@ supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
         debt' <- checkedUnionDebt tree debtRef
         when (debt' > 0) $
           assertST $ c' == 0  -- should have spent these credits
-        invariant content
+        invariant conf content
         return c'
 
 -- TODO: At some point the completed merging tree should to moved into the
@@ -1162,8 +1187,10 @@ depositNominalCredit (NominalDebt nominalDebt)
 --
 
 increment :: forall s. Tracer (ST s) Event
-          -> Counter -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
-increment tr sc run0 ls0 ul = do
+          -> Counter
+          -> LSMConfig
+          -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
+increment tr sc conf run0 ls0 ul = do
     go 1 [run0] ls0
   where
     mergeTypeFor :: Levels s -> LevelMergeType
@@ -1173,7 +1200,7 @@ increment tr sc run0 ls0 ul = do
     go !ln incoming [] = do
         let mergePolicy = mergePolicyForLevel ln [] ul
         traceWith tr' AddLevelEvent
-        ir <- newLevelMerge tr' ln mergePolicy (mergeTypeFor []) incoming
+        ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeFor []) incoming
         return (Level ir [] : [])
       where
         tr' = contramap (EventAt sc ln) tr
@@ -1196,7 +1223,7 @@ increment tr sc run0 ls0 ul = do
         -- If r is still too small for this level then keep it and merge again
         -- with the incoming runs.
         MergePolicyTiering | tieringRunSizeToLevel r < ln -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering (mergeTypeFor ls) (incoming ++ [r])
           return (Level ir' rs : ls)
 
         -- This tiering level is now full. We take the completed merged run
@@ -1204,14 +1231,14 @@ increment tr sc run0 ls0 ul = do
         -- as a bundle and move them down to the level below. We start a merge
         -- for the new incoming runs. This level is otherwise empty.
         MergePolicyTiering | tieringLevelIsFull ln incoming resident -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) resident ls
           return (Level ir' [] : ls')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         MergePolicyTiering -> do
-          ir' <- newLevelMerge tr' ln MergePolicyTiering (mergeTypeFor ls) incoming
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering (mergeTypeFor ls) incoming
           traceWith tr' (AddRunEvent (length resident))
           return (Level ir' resident : ls)
 
@@ -1221,14 +1248,14 @@ increment tr sc run0 ls0 ul = do
         -- empty) level .
         MergePolicyLevelling | levellingLevelIsFull ln incoming r -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' ln MergePolicyTiering MergeMidLevel incoming
+          ir' <- newLevelMerge tr' conf ln MergePolicyTiering MergeMidLevel incoming
           ls' <- go (ln+1) [r] []
           return (Level ir' [] : ls')
 
         -- Otherwise we start merging the incoming runs into the run.
         MergePolicyLevelling -> do
           assert (null rs && null ls) $ return ()
-          ir' <- newLevelMerge tr' ln MergePolicyLevelling (mergeTypeFor ls)
+          ir' <- newLevelMerge tr' conf ln MergePolicyLevelling (mergeTypeFor ls)
                           (incoming ++ [r])
           return (Level ir' [] : [])
 
@@ -1236,10 +1263,11 @@ increment tr sc run0 ls0 ul = do
         tr' = contramap (EventAt sc ln) tr
 
 newLevelMerge :: Tracer (ST s) EventDetail
+              -> LSMConfig
               -> Int -> MergePolicy -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
-newLevelMerge _ _ _ _ [r] = return (Single r)
-newLevelMerge tr level mergePolicy mergeType rs = do
+newLevelMerge _ _ _ _ _ [r] = return (Single r)
+newLevelMerge tr _conf level mergePolicy mergeType rs = do
     assertST (length rs `elem` [4, 5])
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
     assertST (totalDebt physicalDebt <= maxPhysicalDebt)
@@ -1523,7 +1551,7 @@ data MTree r = MLeaf r
   deriving stock (Eq, Foldable, Functor, Show)
 
 allLevels :: LSM s -> ST s (Buffer, [[Run]], Maybe (MTree Run))
-allLevels (LSMHandle _ lsmr) = do
+allLevels (LSMHandle _ _conf lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     rs <- flattenLevels ls
     tree <- case ul of
@@ -1593,7 +1621,7 @@ type LevelRepresentation =
      [Run])
 
 dumpRepresentation :: LSM s -> ST s Representation
-dumpRepresentation (LSMHandle _ lsmr) = do
+dumpRepresentation (LSMHandle _ _conf lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     levels <- mapM dumpLevel ls
     tree <- case ul of
