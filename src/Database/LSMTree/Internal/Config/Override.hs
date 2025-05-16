@@ -48,10 +48,13 @@ import           Database.LSMTree.Internal.Snapshot
   Override disk cache policy
 -------------------------------------------------------------------------------}
 
--- | Override the 'DiskCachePolicy'
+{- |
+The 'OverrideDiskCachePolicy' can be used to override the 'DiskCachePolicy'
+when opening a table from a snapshot.
+-}
 data OverrideDiskCachePolicy =
-    OverrideDiskCachePolicy DiskCachePolicy
-  | NoOverrideDiskCachePolicy
+    NoOverrideDiskCachePolicy
+  | OverrideDiskCachePolicy DiskCachePolicy
   deriving stock (Show, Eq)
 
 -- | Override the disk cache policy that is stored in snapshot metadata.
