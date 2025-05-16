@@ -18,6 +18,9 @@ module Database.LSMTree.Simple (
     -- ** Concurrency #concurrency#
     -- $concurrency
 
+    -- ** ACID properties #acid#
+    -- $acid
+
     -- ** Sharing #sharing#
     -- $sharing
 
@@ -304,6 +307,43 @@ Session handles may be used concurrently from multiple Haskell threads,
 but concurrent use of read and write operations may introduce races.
 Specifically, it is a race to use `listSnapshots` and `deleteSnapshots`
 with the same session handle concurrently.
+-}
+
+--------------------------------------------------------------------------------
+-- ACID properties
+--------------------------------------------------------------------------------
+
+{- $acid
+This text copies liberally from https://en.wikipedia.org/wiki/ACID and related wiki pages.
+
+Atomicity, consistency, isolation, and durability (ACID) are important
+properties of database transactions.
+They guarantee data validity despite errors, power failures, and other mishaps.
+A /transaction/ is a sequence of database operations that satisfy the ACID properties.
+
+@lsm-tree@ does not support transactions in the typical sense that many relational databases do,
+where transactions can be built from smaller components/actions,
+e.g., reads and writes of individual cells.
+Instead, the public API only exposes functions that individually form a transaction;
+there are no smaller building blocks.
+An example of such a transaction is 'updates'.
+
+An @lsm-tree@ transaction still perform multiple database actions /internally/,
+but transactions themselves are not composable into larger transactions,
+so it should be expected that table contents can change between transactions in a concurrent setting.
+A consistent view of a table can be created,
+so that independent transactions have access to their own version of the database state (see [concurrency](#g:concurreny)).
+
+All @lsm-tree@ transactions are designed for atomicity, consistency, and isolation (ACI),
+assuming that users of the library perform proper [resource management](#g:resource-management).
+Durability is only guaranteed when saving a [snapshot](#g:snapshots),
+which is the only method of stopping and restarting tables.
+
+We currently cannot guarantee consistency in the presence of synchronous and asynchronous exceptions,
+eventhough major strides were made to make it so.
+The safest course of action when an internal exception is encountered is to stop and restart:
+close the session along with all its tables and cursors, reopen the session,
+and load a previous saved table snapshot.
 -}
 
 --------------------------------------------------------------------------------

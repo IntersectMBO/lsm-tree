@@ -252,7 +252,7 @@ import           System.FS.IO (HandleIO, ioHasFS)
 
 {- $usage_notes
 This section focuses on the differences between the full API as defined in this module and the simple API as defined in "Database.LSMTree.Simple".
-It assumes that the reader is familiar with [Usage Notes for the simple API]("Database.LSMTree.Simple#g:usage_notes"), which discusses crucial topics such as [Resource Management]("Database.LSMTree.Simple#g:resource_management"), [Concurrency]("Database.LSMTree.Simple#g:concurrency"), and [Sharing]("Database.LSMTree.Simple#g:sharing").
+It assumes that the reader is familiar with [Usage Notes for the simple API]("Database.LSMTree.Simple#g:usage_notes"), which discusses crucial topics such as [Resource Management]("Database.LSMTree.Simple#g:resource_management"), [Concurrency]("Database.LSMTree.Simple#g:concurrency"), [ACID properties]("Database.LSMTree.Simple#g:acid"), and [Sharing]("Database.LSMTree.Simple#g:sharing").
 -}
 
 {- $real_and_simulated_io
