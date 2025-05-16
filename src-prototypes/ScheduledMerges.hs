@@ -1,5 +1,8 @@
 {-# LANGUAGE PatternSynonyms #-}
 
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
+
 -- | A prototype of an LSM with explicitly scheduled incremental merges.
 --
 -- The scheduled incremental merges is about ensuring that the merging

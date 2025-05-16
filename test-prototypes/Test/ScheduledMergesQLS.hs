@@ -1,8 +1,9 @@
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
-module ScheduledMergesTestQLS (tests) where
+module Test.ScheduledMergesQLS (tests) where
 
 import           Control.Monad.ST
 import           Control.Tracer (Tracer, nullTracer)
@@ -25,8 +26,9 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
-tests =
-    testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
+tests = testGroup "Test.ScheduledMergesQLS" [
+      testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
+    ]
 
 -- TODO: add tagging, e.g. how often ASupplyUnion makes progress or completes a
 -- union merge.
