@@ -10,7 +10,7 @@ packages:
 tests: True
 benchmarks: True
 
--- this prevents occurence of Hackage bloomfilter anywhere in the install plan
+-- this prevents occurrence of Hackage bloomfilter anywhere in the install plan
 -- that is overconstraining, as we'd only need to make sure lsm-tree
 -- doesn't depend on Hackage bloomfilter.
 -- Luckily, bloomfilter is not commonly used package, so this is good enough.
@@ -35,3 +35,22 @@ source-repository-package
   subdir:
     fs-api
     fs-sim
+
+
+-- Unfortunately the @Chart-diagrams@ package builds fragily across GHC versions.
+-- Some manual hand-holding is required to ensure a successful build on all
+-- supported GHC versions. The two troublesome versions are GHC 9.2 & 9.12.
+--
+-- For Chart-diagrams "backend" package compatibility with ghc-9.2
+if impl(ghc <= 9.2.42)
+  constraints:
+    data-default-class >= 0.2.0.0,
+    SVGFonts >= 1.8.1
+
+-- For Chart-diagrams "backend" package compatibility with ghc-9.12
+if impl(ghc >= 9.12.0)
+  allow-newer:
+    diagrams-lib:base,
+    diagrams-postscript:base,
+    diagrams-svg:base,
+    svg-builder:base,

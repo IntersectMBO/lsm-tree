@@ -51,17 +51,20 @@ import           System.IO
 import           System.IO.Unsafe (unsafePerformIO)
 import           System.Mem (performMajorGC)
 import           System.Random
+import           Text.Read (readMaybe)
 
 main :: IO ()
 main = do
   hSetBuffering stdout NoBuffering
   args <- getArgs
+  let exitAction = do
+        putStrLn "Wrong usage, pass in [True] or [False] for the caching flag."
+        exitFailure
   case args of
-    [arg] | let cache = read arg ->
-      benchmarks (if cache then Run.CacheRunData else Run.NoCacheRunData)
-    _     -> do
-      putStrLn "Wrong usage, pass in [True] or [False] for the caching flag."
-      exitFailure
+    [arg] | let result = readMaybe arg -> case result of
+      Just cache -> benchmarks (if cache then Run.CacheRunData else Run.NoCacheRunData)
+      Nothing -> exitAction
+    _ -> exitAction
 
 -- | The number of entries in the smallest LSM runs is @2^benchmarkSizeBase@.
 --
