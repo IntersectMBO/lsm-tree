@@ -34,7 +34,7 @@ import           Data.Primitive.PrimArray
 import           Data.Word (Word64, Word8)
 
 import           GHC.Exts (Int (I#), prefetchByteArray0#,
-                     prefetchMutableByteArray3#)
+                     prefetchMutableByteArray0#)
 import           GHC.ST (ST (ST))
 
 -- | An array of blocks of bits.
@@ -83,6 +83,9 @@ prefetchIndex (BitArray (PrimArray ba#)) (BlockIx blockIx) =
 
     assert (i >= 0 && i < sizeofByteArray (ByteArray ba#) - 63) $
 
+    -- In prefetchByteArray0, the 0 refers to a "non temporal" load, which is
+    -- a hint that the value will be used soon, and then not used again (soon).
+    -- So the caches can evict the value as soon as they like.
     ST (\s -> case prefetchByteArray0# ba# i# s of
                 s' -> (# s', () #))
 
@@ -133,8 +136,10 @@ unsafeSet (MBitArray arr) blockIx blockBitIx = do
 {-# INLINE prefetchSet #-}
 prefetchSet :: MBitArray s -> BlockIx -> ST s ()
 prefetchSet (MBitArray (MutablePrimArray mba#)) (BlockIx blockIx) = do
-    -- For setting, we will do several writes to the same cache line, so
-    -- read it into all 3 levels of cache.
+    -- For setting, we will do several writes to the same cache line, but all
+    -- immediately after each other, after which we will not need the value in
+    -- the cache again (for a long time). So as with prefetchIndex we want to
+    -- disturbe the caches the least, and so we use prefetchMutableByteArray0.
     let !(I# i#) = fromIntegral blockIx `shiftL` 6
     -- blockIx * 64 to go from block index to the byte offset of the beginning
     -- of the block. This offset is in bytes, not words.
@@ -144,7 +149,10 @@ prefetchSet (MBitArray (MutablePrimArray mba#)) (BlockIx blockIx) = do
     assert (let i = I# i# in i >= 0 && i < sz-63) $ return ()
 #endif
 
-    ST (\s -> case prefetchMutableByteArray3# mba# i# s of
+    -- In prefetchMutableByteArray0, the 0 refers to a "non temporal" load,
+    -- which is a hint that the value will be used soon, and then not used
+    -- again (soon). So the caches can evict the value as soon as they like.
+    ST (\s -> case prefetchMutableByteArray0# mba# i# s of
                 s' -> (# s', () #))
 
 freeze :: MBitArray s -> ST s BitArray

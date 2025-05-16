@@ -36,7 +36,8 @@ import           Control.Monad.ST.Strict
 import           Control.RefCount
 
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
-import           Database.LSMTree.Internal.BloomFilter (Bloom)
+import           Database.LSMTree.Internal.BloomFilter (Bloom, RunIxKeyIx (..),
+                     bloomQueries)
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (search)
@@ -53,14 +54,6 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import           System.FS.API (BufferOffset (..), Handle)
 import           System.FS.BlockIO.API
-
-#ifdef BLOOM_QUERY_FAST
-import           Database.LSMTree.Internal.BloomFilterQuery2 (RunIxKeyIx (..),
-                     bloomQueries)
-#else
-import           Database.LSMTree.Internal.BloomFilterQuery1 (RunIxKeyIx (..),
-                     bloomQueries)
-#endif
 
 -- | Prepare disk lookups by doing bloom filter queries, index searches and
 -- creating 'IOOp's. The result is a vector of 'IOOp's and a vector of indexes,
