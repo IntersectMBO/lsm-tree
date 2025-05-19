@@ -262,11 +262,11 @@ instance Arbitrary FencePointerIndexType where
 instance Arbitrary DiskCachePolicy where
   arbitrary = oneof [
         pure DiskCacheAll
-      , DiskCacheLevelsAtOrBelow <$> arbitrary
+      , DiskCacheLevelOneTo <$> arbitrary
       , pure DiskCacheNone
       ]
-  shrink (DiskCacheLevelsAtOrBelow x) = DiskCacheLevelsAtOrBelow <$> shrink x
-  shrink _                            = []
+  shrink (DiskCacheLevelOneTo x) = DiskCacheLevelOneTo <$> shrink x
+  shrink _                       = []
 
 instance Arbitrary MergeSchedule where
   arbitrary = elements [OneShot, Incremental]

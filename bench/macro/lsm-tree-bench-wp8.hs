@@ -208,7 +208,7 @@ globalOptsP :: O.Parser GlobalOpts
 globalOptsP = pure GlobalOpts
     <*> O.option O.str (O.long "bench-dir" <> O.value "_bench_wp8" <> O.showDefault <> O.help "Benchmark directory to put files in")
     <*> O.option O.auto (O.long "initial-size" <> O.value 100_000_000 <> O.showDefault <> O.help "Initial LSM tree size")
-    <*> O.option O.auto (O.long "disk-cache-policy" <> O.value LSM.DiskCacheAll <> O.showDefault <> O.help "Disk cache policy [DiskCacheAll | DiskCacheLevelsAtOrBelow Int | DiskCacheNone]")
+    <*> O.option O.auto (O.long "disk-cache-policy" <> O.value LSM.DiskCacheAll <> O.showDefault <> O.help "Disk cache policy [DiskCacheAll | DiskCacheLevelOneTo Int | DiskCacheNone]")
     <*> O.flag False True (O.long "trace" <> O.help "Enable trace messages (disabled by default)")
 
 cmdP :: O.Parser Cmd

@@ -317,7 +317,7 @@ enumerateDiskCachePolicy :: [(ComponentAnnotation, DiskCachePolicy)]
 enumerateDiskCachePolicy =
   [ ("D0", DiskCacheAll)
   , ("D1", DiskCacheNone)
-  , ("D2", DiskCacheLevelsAtOrBelow 1)
+  , ("D2", DiskCacheLevelOneTo 1)
   ]
 
 enumerateRunNumbers :: RunNumber

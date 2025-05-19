@@ -265,13 +265,13 @@ data DiskCachePolicy =
        -- has a good spatial or temporal locality.
        DiskCacheAll
 
-       -- | Use the OS page cache to cache data in all LSMT levels at or below
+       -- | Use the OS page cache to cache data in all LSMT levels from 0 to
        -- a given level number. For example, use 1 to cache the first level.
        -- (The write buffer is considered to be level 0.)
        --
        -- Use this policy if the expected access pattern for the table
        -- has good temporal locality for recently inserted keys.
-     | DiskCacheLevelsAtOrBelow !Int
+     | DiskCacheLevelOneTo !Int
 
        --TODO: Add a policy based on size in bytes rather than internal details
        -- like levels. An easy use policy would be to say: "cache the first 10
@@ -286,9 +286,9 @@ data DiskCachePolicy =
   deriving stock (Show, Eq)
 
 instance NFData DiskCachePolicy where
-  rnf DiskCacheAll                 = ()
-  rnf (DiskCacheLevelsAtOrBelow l) = rnf l
-  rnf DiskCacheNone                = ()
+  rnf DiskCacheAll            = ()
+  rnf (DiskCacheLevelOneTo l) = rnf l
+  rnf DiskCacheNone           = ()
 
 -- | Interpret the 'DiskCachePolicy' for a level: should we cache data in runs
 -- at this level.
@@ -296,9 +296,9 @@ instance NFData DiskCachePolicy where
 diskCachePolicyForLevel :: DiskCachePolicy -> RunLevelNo -> RunDataCaching
 diskCachePolicyForLevel policy levelNo =
   case policy of
-    DiskCacheAll  -> CacheRunData
-    DiskCacheNone -> NoCacheRunData
-    DiskCacheLevelsAtOrBelow n ->
+    DiskCacheAll          -> CacheRunData
+    DiskCacheNone         -> NoCacheRunData
+    DiskCacheLevelOneTo n ->
       case levelNo of
         RegularLevel l | l <= LevelNo n -> CacheRunData
                        | otherwise      -> NoCacheRunData
