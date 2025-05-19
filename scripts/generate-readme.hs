@@ -7,7 +7,7 @@ build-depends:
     , pandoc       ^>=3.6.4
     , text          >=2.1
 -}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where

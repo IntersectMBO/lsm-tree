@@ -104,28 +104,28 @@ The documentation provides two measures of complexity:
 The complexities are described in terms of the following variables and
 constants:
 
-- The variable *n* refers to the number of *physical* table entries. A
+- The variable $`n`$ refers to the number of *physical* table entries. A
   *physical* table entry is any key–operation pair, e.g., `Insert k v`
   or `Delete k`, whereas a *logical* table entry is determined by all
-  physical entries with the same key. If the variable *n* is used to
+  physical entries with the same key. If the variable $`n`$ is used to
   describe the complexity of an operation that involves multiple tables,
   it refers to the sum of all table entries.
 
-- The variable *o* refers to the number of open tables and cursors in
+- The variable $`o`$ refers to the number of open tables and cursors in
   the session.
 
-- The variable *s* refers to the number of snapshots in the session.
+- The variable $`s`$ refers to the number of snapshots in the session.
 
-- The variable *b* usually refers to the size of a batch of
+- The variable $`b`$ usually refers to the size of a batch of
   inputs/outputs. Its precise meaning is explained for each occurrence.
 
-- The constant *B* refers to the size of the write buffer, which is a
+- The constant $`B`$ refers to the size of the write buffer, which is a
   configuration parameter.
 
-- The constant *T* refers to the size ratio of the table, which is a
+- The constant $`T`$ refers to the size ratio of the table, which is a
   configuration parameter.
 
-- The constant *P* refers to the the average number of key–value pairs
+- The constant $`P`$ refers to the the average number of key–value pairs
   that fit in a page of memory.
 
 #### Disk I/O cost of operations <span id="performance_time" class="anchor"></span>
@@ -273,7 +273,7 @@ schedule is listed as N/A.
 </tbody>
 </table>
 
-(\*The variable *b* refers to the number of entries retrieved by the
+(\*The variable $`b`$ refers to the number of entries retrieved by the
 range lookup.)
 
 TODO: Document the average-case behaviour of lookups.
@@ -281,14 +281,14 @@ TODO: Document the average-case behaviour of lookups.
 #### In-memory size of tables <span id="performance_size" class="anchor"></span>
 
 The in-memory size of an LSM-tree is described in terms of the variable
-*n*, which refers to the number of *physical* database entries. A
+$`n`$, which refers to the number of *physical* database entries. A
 *physical* database entry is any key–operation pair, e.g., `Insert k v`
 or `Delete k`, whereas a *logical* database entry is determined by all
 physical entries with the same key.
 
-The worst-case in-memory size of an LSM-tree is *O*(*n*).
+The worst-case in-memory size of an LSM-tree is $`O(n)`$.
 
-- The worst-case in-memory size of the write buffer is *O*(*B*).
+- The worst-case in-memory size of the write buffer is $`O(B)`$.
 
   The maximum size of the write buffer on the write buffer allocation
   strategy, which is determined by the `confWriteBufferAlloc` field of
@@ -299,7 +299,7 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   The maximum size of the write buffer is the maximum number of entries
   multiplied by the average size of a key–operation pair.
 
-- The worst-case in-memory size of the Bloom filters is *O*(*n*).
+- The worst-case in-memory size of the Bloom filters is $`O(n)`$.
 
   The total in-memory size of all Bloom filters is the number of bits
   per physical entry multiplied by the number of physical entries. The
@@ -318,15 +318,15 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   The false-positive rate scales exponentially with the number of bits
   per entry:
 
-  | False-positive rate | Bits per entry |
-  |---------------------|----------------|
-  | 1 in 10             |  ≈ 4.77        |
-  | 1 in 100            |  ≈ 9.85        |
-  | 1 in 1, 000         |  ≈ 15.79       |
-  | 1 in 10, 000        |  ≈ 22.58       |
-  | 1 in 100, 000       |  ≈ 30.22       |
+  | False-positive rate       | Bits per entry     |
+  |---------------------------|--------------------|
+  | $`1\text{ in }10`$        | $`\approx  4.77 `$ |
+  | $`1\text{ in }100`$       | $`\approx  9.85 `$ |
+  | $`1\text{ in }1{,}000`$   | $`\approx 15.79 `$ |
+  | $`1\text{ in }10{,}000`$  | $`\approx 22.58 `$ |
+  | $`1\text{ in }100{,}000`$ | $`\approx 30.22 `$ |
 
-- The worst-case in-memory size of the indexes is *O*(*n*).
+- The worst-case in-memory size of the indexes is $`O(n)`$.
 
   The total in-memory size of all indexes depends on the index type,
   which is determined by the `confFencePointerIndex` field of
@@ -346,7 +346,7 @@ The worst-case in-memory size of an LSM-tree is *O*(*n*).
   a negligible amount of memory for tie breakers. The total in-memory
   size of all indexes is approximately 66 bits per memory page.
 
-The total size of an LSM-tree must not exceed 2<sup>41</sup> physical
+The total size of an LSM-tree must not exceed $`2^{41}`$ physical
 entries. Violation of this condition *is* checked and will throw a
 `TableTooLargeError`.
 
