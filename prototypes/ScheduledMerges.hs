@@ -138,7 +138,7 @@ data IncomingRun s = Merging !MergePolicy
 -- to have stronger invariants, depending on the origin.
 data SingleRunOrigin = -- | Either a flushed write buffer or last level run.
                        --
-                       -- TODO distinguish there two cases? One only happens in
+                       -- TODO: distinguish these two cases? One only happens in
                        -- first, the other in last level.
                        Regular
                        -- | A former union level that was completed (merged down
@@ -953,26 +953,6 @@ supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
         invariant content
         return c'
 
--- TODO: At some point the completed merging tree should to moved into the
--- regular levels, so it can be merged with other runs and last level merges can
--- happen again to drop deletes. Also, lookups then don't need to handle the
--- merging tree any more. There are two possible strategies:
---
--- 1. As soon as the merging tree completes, move the resulting run to the
---    regular levels. However, its size does generally not fit the last level,
---    which requires relaxing 'invariant' and adjusting 'increment'.
---
---    If the run is much larger than the resident and incoming runs of the last
---    level, it should also not be included into a merge yet, as that merge
---    would be expensive, but offer very little potential for compaction (the
---    run from the merging tree is already compacted after all). So it needs to
---    be bumped to the next level instead.
---
--- 2. Initially leave the completed run in the union level. Then every time a
---    new last level merge is created in 'increment', check if there is a
---    completed run in the union level with a size that fits the new merge. If
---    yes, move it over.
-
 -- | Like 'remainingDebtMergingTree', but additionally asserts that the debt
 -- never increases.
 checkedUnionDebt :: MergingTree s -> STRef s Debt -> ST s Debt
@@ -1212,6 +1192,23 @@ depositNominalCredit (NominalDebt nominalDebt)
 -- Updates
 --
 
+-- TODO: rewrite comment below
+--
+-- At some point the completed merging tree should to moved into the
+-- regular levels, so it can be merged with other runs and last level merges can
+-- happen again to drop deletes. Also, lookups then don't need to handle the
+-- merging tree any more. There are two possible strategies:
+--
+-- 1. As soon as the merging tree completes, move the resulting run to the
+--    regular levels. However, its size does generally not fit the last level,
+--    which requires relaxing 'invariant' and adjusting 'increment'.
+--
+--    If the run is much larger than the resident and incoming runs of the last
+--    level, it should also not be included into a merge yet, as that merge
+--    would be expensive, but offer very little potential for compaction (the
+--    run from the merging tree is already compacted after all). So it needs to
+--    be bumped to the next level instead.
+
 -- | At some point, we want to merge the union level with the regular levels.
 -- We achieve this by moving it into a new last regular level once it is both
 -- completed (merged down to a single run) and fits into such a new level.
@@ -1229,22 +1226,26 @@ migrateUnionLevel _ _ ls NoUnion = do
 migrateUnionLevel _tr _sc ls ul@(Union t _) =
     -- TODO: tracing
     getCompletedMergingTree t <&> \case
-      Just r
-        | null r ->
-          -- If the union level is empty, we can just drop it.
-          (ls, NoUnion)
-        | levellingRunSizeToLevel r <= length ls + 1 ->
-          -- If it fits into a hypothetical new last level, put it there.
-          --
-          -- TODO: In some cases it seems desirable to even add it to the
-          -- existing last regular level (so it becomes part of a merge
-          -- sooner), but that would lead to additional merging work that was
-          -- not accounted for. We'd need to be careful to ensure the merge
-          -- completes in time, without doing a lot of work in a short time.
-          (ls ++ [Level (Single MigratedUnion r) []], NoUnion)
-      _ ->
-        -- Otherwise, just leave it for now.
+      Nothing ->
+        -- Still in progress, leave it.
         (ls, ul)
+      Just r | null r ->
+        -- If the union level is empty, we can just drop it.
+        (ls, NoUnion)
+      Just r ->
+        -- Move it into a new last level. This can exceed the run size for
+        -- that level. If that's the case, we won't immediately create new
+        -- last level merges with it, but just push it down the levels over
+        -- time, until it fits in and becomes part of a new last level merge.
+        --
+        -- This is as if TODO
+        --
+        -- TODO: In some cases it seems desirable to even add it to the
+        -- existing last regular level (so it becomes part of a merge
+        -- sooner), but that would lead to additional merging work that was
+        -- not accounted for. We'd need to be careful to ensure the merge
+        -- completes in time, without doing a lot of work in a short time.
+        (ls ++ [Level (Single MigratedUnion r) []], NoUnion)
 
 increment :: forall s. Tracer (ST s) Event
           -> Counter -> Run -> Levels s -> UnionLevel s
