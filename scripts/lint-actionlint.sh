@@ -18,4 +18,4 @@ fi
 # Run actionlint:
 echo "Lint GitHub Actions workflows..."
 # shellcheck disable=SC2086
-git ls-files --exclude-standard --no-deleted --deduplicate '.github/workflows/*.yml' '.github/workflows/*.yaml' | xargs -L50 ${actionlint}
+git ls-files --exclude-standard --no-deleted --deduplicate '.github/actions/*/action.yml' '.github/workflows/*.yml' | xargs -L50 ${actionlint}
