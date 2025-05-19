@@ -460,7 +460,7 @@ instance Encode DiskCachePolicy where
   encode DiskCacheAll =
          encodeListLen 1
       <> encodeWord 0
-  encode (DiskCacheLevelsAtOrBelow x) =
+  encode (DiskCacheLevelOneTo x) =
          encodeListLen 2
       <> encodeWord 1
       <> encodeInt x
@@ -474,7 +474,7 @@ instance DecodeVersioned DiskCachePolicy where
       tag <- decodeWord
       case (n, tag) of
         (1, 0) -> pure DiskCacheAll
-        (2, 1) -> DiskCacheLevelsAtOrBelow <$> decodeInt
+        (2, 1) -> DiskCacheLevelOneTo <$> decodeInt
         (1, 2) -> pure DiskCacheNone
         _ -> fail ("[DiskCachePolicy] Unexpected combination of list length and tag: " <> show (n, tag))
 
