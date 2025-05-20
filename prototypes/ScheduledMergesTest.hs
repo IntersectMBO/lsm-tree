@@ -24,7 +24,8 @@ tests :: TestTree
 tests = testGroup "Unit and property tests"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
-    , testProperty "prop_union" prop_union
+    , testProperty "prop_union_supply_all" prop_union_supply_all
+    , testProperty "prop_union_merge_into_levels" prop_union_merge_into_levels
     , testGroup "T"
         [ localOption (QuickCheckTests 1000) $  -- super quick, run more
             testProperty "Arbitrary satisfies invariant" prop_arbitrarySatisfiesInvariant
@@ -176,28 +177,70 @@ test_merge_again_with_incoming =
 -- properties
 --
 
+-- TODO: also generate nested unions?
+
 -- | Supplying enough credits for the remaining debt completes the union merge.
-prop_union :: [[(LSM.Key, LSM.Op)]] -> Property
-prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
+prop_union_supply_all :: [[(LSM.Key, LSM.Op)]] -> Property
+prop_union_supply_all kopss = length (filter (not . null) kopss) > 1 QC.==>
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
         ts <- traverse (mkTable tr) kopss
         t <- LSM.unions ts
 
         debt@(UnionDebt x) <- LSM.remainingUnionDebt t
-        _ <- LSM.supplyUnionCredits t (UnionCredits x)
+        leftovers <- LSM.supplyUnionCredits t (UnionCredits x)
         debt' <- LSM.remainingUnionDebt t
 
         rep <- dumpRepresentation t
         return $ QC.counterexample (show (debt, debt')) $ QC.conjoin
-          [ debt =/= UnionDebt 0
-          , debt' === UnionDebt 0
+          [ QC.counterexample "debt before" $ debt =/= UnionDebt 0
+          , QC.counterexample "debt after" $ debt' === UnionDebt 0
+          , QC.counterexample "leftovers" $ leftovers >= 0
           , hasUnionWith isCompleted rep
           ]
   where
     isCompleted = \case
         MLeaf{} -> True
         MNode{} -> False
+
+-- | The union level will get merged into the last regular level once the union
+-- merge is completed and sufficient new entries have been inserted.
+prop_union_merge_into_levels :: [[(LSM.Key, LSM.Op)]] -> Property
+prop_union_merge_into_levels kopss = length (filter (not . null) kopss) > 1 QC.==>
+    QC.forAll arbitrary $ \firstPay ->
+    QC.ioProperty $ runWithTracer $ \tr ->
+      stToIO $ do
+        ts <- traverse (mkTable tr) kopss
+        t <- LSM.unions ts
+
+        -- pay off the union
+        let payOffDebt = do
+              UnionDebt d <- LSM.remainingUnionDebt t
+              _ <- LSM.supplyUnionCredits t (UnionCredits d)
+              return ()
+
+        -- insert as many new entries as there are in the completed
+        -- union level, so it fits into the last level
+        let fillTable = do
+              unionRunSize <- length <$> LSM.logicalValue t
+              LSM.inserts tr t
+                [(K k, V 0, Nothing) | k <- [1 .. unionRunSize]]
+
+        -- we can do these in any order
+        if firstPay
+          then payOffDebt >> fillTable
+          else fillTable >> payOffDebt
+
+        -- then flush the write buffer
+        LSM.inserts tr t
+          [(K k, V 0, Nothing) | k <- [1 .. maxBufferSize]]
+
+        (_, _, mtree) <- representationShape <$> dumpRepresentation t
+
+        -- the union level is gone
+        return $ QC.conjoin
+          [ mtree === Nothing
+          ]
 
 mkTable :: Tracer (ST s) Event -> [(LSM.Key, LSM.Op)] -> ST s (LSM s)
 mkTable tr ks = do
