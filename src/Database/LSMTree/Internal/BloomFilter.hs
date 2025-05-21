@@ -37,7 +37,6 @@ import           Control.Monad.ST (ST, runST)
 import           System.FS.API
 
 import           Data.BloomFilter.Blocked (Bloom)
-import qualified Data.BloomFilter.Blocked as BF
 import qualified Data.BloomFilter.Blocked as Bloom
 import           Database.LSMTree.Internal.ByteString (byteArrayToByteString)
 import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
@@ -212,19 +211,19 @@ lengthFiltersArray = V.length
 -- | By writing out the version in host endianness, we also indicate endianness.
 -- During deserialisation, we would discover an endianness mismatch.
 --
--- We base our version number on the 'BF.formatVersion' from the @bloomfilter@
+-- We base our version number on the 'Bloom.formatVersion' from the @bloomfilter@
 -- library, plus our own version here. This accounts both for changes in the
 -- format code here, and changes in the library.
 --
 bloomFilterVersion :: Word32
-bloomFilterVersion = 1 + fromIntegral BF.formatVersion
+bloomFilterVersion = 1 + fromIntegral Bloom.formatVersion
 
-bloomFilterToLBS :: BF.Bloom a -> LBS.ByteString
+bloomFilterToLBS :: Bloom a -> LBS.ByteString
 bloomFilterToLBS bf =
-    let (size, ba, off, len) = BF.serialise bf
+    let (size, ba, off, len) = Bloom.serialise bf
      in header size <> byteArrayToLBS ba off len
   where
-    header BF.BloomSize { sizeBits, sizeHashes } =
+    header Bloom.BloomSize { sizeBits, sizeHashes } =
         -- creates a single 16 byte chunk
         B.toLazyByteStringWith (B.safeStrategy 16 B.smallChunkSize) mempty $
              B.word32Host bloomFilterVersion
@@ -241,14 +240,14 @@ bloomFilterToLBS bf =
 {-# SPECIALISE bloomFilterFromFile ::
      HasFS IO h
   -> Handle h
-  -> IO (BF.Bloom a) #-}
--- | Read a 'BF.Bloom' from a file.
+  -> IO (Bloom a) #-}
+-- | Read a 'Bloom' from a file.
 --
 bloomFilterFromFile ::
      (PrimMonad m, MonadCatch m)
   => HasFS m h
   -> Handle h  -- ^ The open file, in read mode
-  -> m (BF.Bloom a)
+  -> m (Bloom a)
 bloomFilterFromFile hfs h = do
     header <- rethrowEOFError "Doesn't contain a header" $
               hGetByteArrayExactly hfs h 16
@@ -270,10 +269,10 @@ bloomFilterFromFile hfs h = do
 
     -- read the filter data from the file directly into the bloom filter
     bloom <-
-      BF.deserialise
-        BF.BloomSize {
-          BF.sizeBits   = fromIntegral nbits,
-          BF.sizeHashes = fromIntegral nhashes
+      Bloom.deserialise
+        Bloom.BloomSize {
+          Bloom.sizeBits   = fromIntegral nbits,
+          Bloom.sizeHashes = fromIntegral nhashes
         }
         (\buf off len ->
             rethrowEOFError "bloom filter file too short" $

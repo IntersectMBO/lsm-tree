@@ -23,7 +23,7 @@ import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding ((.&.))
 
-import qualified Data.BloomFilter.Blocked as BF
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Database.LSMTree.Internal.BloomFilter
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
@@ -50,9 +50,9 @@ roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
       Left  err -> counterexample (displayException err) $ property False
       Right rhs -> lhs === rhs
   where
-    sz  = BF.BloomSize { sizeBits   = limitBits bits,
+    sz  = Bloom.BloomSize { sizeBits   = limitBits bits,
                          sizeHashes = hfN }
-    lhs = BF.create sz (\b -> mapM_ (BF.insert b) ws)
+    lhs = Bloom.create sz (\b -> mapM_ (Bloom.insert b) ws)
     bs  = LBS.toStrict (bloomFilterToLBS lhs)
 
 limitBits :: Int -> Int
@@ -67,7 +67,7 @@ prop_total_deserialisation bs =
 
 -- | Write the bytestring to a file in the mock file system and then use
 -- 'bloomFilterFromFile'.
-bloomFilterFromBS :: BS.ByteString -> Either IOSim.Failure (BF.Bloom a)
+bloomFilterFromBS :: BS.ByteString -> Either IOSim.Failure (Bloom a)
 bloomFilterFromBS bs =
     IOSim.runSim $ do
       hfs <- FSSim.simHasFS' MockFS.empty
@@ -115,8 +115,9 @@ prop_bloomQueries :: FPR
                   -> [Small Word64]
                   -> Property
 prop_bloomQueries (FPR fpr) filters keys =
-    let filters' :: [BF.Bloom SerialisedKey]
-        filters' = map (BF.fromList (BF.policyForFPR fpr) . map (\(Small k) -> serialiseKey k))
+    let filters' :: [Bloom SerialisedKey]
+        filters' = map (Bloom.fromList (Bloom.policyForFPR fpr)
+                        . map (\(Small k) -> serialiseKey k))
                        filters
 
         keys' :: [SerialisedKey]
@@ -127,12 +128,12 @@ prop_bloomQueries (FPR fpr) filters keys =
           [ (f_i, k_i)
           | (k, k_i) <- zip keys' [0..]
           , (f, f_i) <- zip filters' [0..]
-          , BF.elem k f
+          , Bloom.elem k f
           ]
 
         filterSets = map (Set.fromList . map (\(Small k) -> serialiseKey k)) filters
         referenceCmp =
-          [ (BF.elem k f, k `Set.member` f')
+          [ (Bloom.elem k f, k `Set.member` f')
           | (f, f') <- zip filters' filterSets
           , k       <- keys'
           ]
@@ -143,7 +144,7 @@ prop_bloomQueries (FPR fpr) filters keys =
         distribution   = truePositives ++ falsePositives
                       ++ trueNegatives ++ falseNegatives
 
-    -- To get coverage of BF.bloomQueries array resizing we want some
+    -- To get coverage of bloomQueries array resizing we want some
     -- cases with high FPRs.
      in tabulate "FPR" [show (round (fpr * 10) * 10 :: Int) ++ "%"] $
         coverTable "FPR" [("100%", 5)] $
