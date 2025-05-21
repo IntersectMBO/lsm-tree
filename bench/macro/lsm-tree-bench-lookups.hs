@@ -3,6 +3,7 @@
 module Main ( main ) where
 
 import           Control.DeepSeq
+import           Control.Exception (bracket)
 import           Control.Monad
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Primitive
@@ -198,7 +199,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
                 (x1 + x2, y1 + y2)
     _bprepLookups <-
       benchmark "benchPrepLookups"
-                "Calculate batches of keys, and prepare lookups for each batch. This is roughly doing the same amount of work as benchIndexSearches. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches."
+                "Calculate batches of keys, and prepare lookups for each batch. This is roughly doing the same amount of work as benchBloomQueries and benchIndexSearches. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches."
                 (benchPrepLookups arenaManager blooms indexes handles keyRng0) benchmarkNumLookups
                 bgenKeyBatches
     _blookupsIO <-
@@ -206,10 +207,10 @@ benchmarks !caching = withFS $ \hfs hbio -> do
                 "Calculate batches of keys, and perform disk lookups for each batch. This is roughly doing the same as benchPrepLookups, but also performing the disk I/O and resolving values. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches."
                 (\n -> do
                     let wb_unused = WB.empty
-                    wbblobs_unused <- WBB.new hfs (FS.mkFsPath [])
-                    benchLookupsIO hbio arenaManager benchmarkResolveSerialisedValue
-                                   wb_unused wbblobs_unused runs blooms indexes handles
-                                   keyRng0 n)
+                    bracket (WBB.new hfs (FS.mkFsPath ["wbblobs_unused"])) releaseRef $ \wbblobs_unused ->
+                      benchLookupsIO hbio arenaManager benchmarkResolveSerialisedValue
+                                     wb_unused wbblobs_unused runs blooms indexes handles
+                                     keyRng0 n)
                 benchmarkNumLookups
                 bgenKeyBatches
     --TODO: consider adding benchmarks that also use the write buffer
