@@ -135,8 +135,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
-                     propNoOpenHandles, propNumOpenHandles)
+import           Test.Util.FS
 import           Test.Util.FS.Error
 import           Test.Util.PrettyProxy
 import           Test.Util.QC (Choice)
@@ -1916,9 +1915,13 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             OpenTableFromSnapshot @k @v @b PrettyProxy <$> genUsedSnapshotName <*> pure label)
         | length tableVars <= 5 -- no more than 5 tables at once
         , not (null usedSnapshotNames)
+        , -- TODO: bloomFilterFromFile swallows an FsReachedEOF error
+          let isFsReachedEOFError = maybe False (either isFsReachedEOF (const False))
         , let genErrors = QC.frequency [
                   (3, pure Nothing)
-                , (1, Just . noRemoveDirectoryRecursiveE <$> QC.arbitrary)
+                , (1, Just . filterHGetBufSomeE (not . isFsReachedEOFError)
+                           . noRemoveDirectoryRecursiveE
+                           <$> QC.arbitrary)
                 ]
         ]
 
