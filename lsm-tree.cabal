@@ -878,41 +878,43 @@ test-suite map-range-test
 
 library prototypes
   import:          language, warnings, wno-x-partial
-  hs-source-dirs:  prototypes
+  hs-source-dirs:  src-prototypes
   exposed-modules:
     FormatPage
     ScheduledMerges
-    ScheduledMergesTest
-    ScheduledMergesTestQLS
+
+  build-depends:
+    , base           <5
+    , binary
+    , bytestring
+    , containers
+    , contra-tracer
+    , QuickCheck
+    , transformers
+
+test-suite prototypes-test
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test-prototypes
+  main-is:        Main.hs
+  other-modules:
+    Test.FormatPage
+    Test.ScheduledMerges
+    Test.ScheduledMergesQLS
 
   build-depends:
     , base                 <5
-    , binary
     , bytestring
     , constraints
     , containers
     , contra-tracer
+    , lsm-tree:prototypes
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-lockstep
     , tasty
     , tasty-hunit
     , tasty-quickcheck
-    , transformers
-
-  ghc-options:
-    -Wno-incomplete-uni-patterns -Wno-partial-fields
-    -Wno-missing-export-lists
-
-test-suite lsm-prototypes-tests
-  import:         language, warnings, wno-x-partial
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        lsm-prototypes-tests.hs
-  build-depends:
-    , base
-    , lsm-tree:prototypes
-    , tasty
 
 library control
   import:          language, warnings
