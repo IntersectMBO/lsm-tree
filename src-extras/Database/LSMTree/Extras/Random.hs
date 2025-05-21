@@ -10,12 +10,15 @@ module Database.LSMTree.Extras.Random (
   , withReplacement
     -- * Sampling from multiple distributions
   , frequency
+    -- * Shuffling
+  , shuffle
     -- * Generators for specific data types
   , randomByteStringR
   ) where
 
 import qualified Data.ByteString as BS
-import           Data.List (unfoldr)
+import           Data.List (sortBy, unfoldr)
+import           Data.Ord (comparing)
 import qualified Data.Set as Set
 import qualified System.Random as R
 import           System.Random (StdGen, Uniform, uniform, uniformR)
@@ -92,6 +95,18 @@ frequency xs0 g
     | n <= k    = x g'
     | otherwise = pick (n-k) xs
   pick _ _  = error "frequency: pick used with empty list"
+
+{-------------------------------------------------------------------------------
+  Shuffling
+-------------------------------------------------------------------------------}
+
+-- | Create a random permutation of a list.
+--
+-- Based on the implementation in @QuickCheck@.
+shuffle :: [a] -> StdGen -> [a]
+shuffle xs g =
+    let ns = R.randoms @Int g
+    in  map snd (sortBy (comparing fst) (zip ns xs))
 
 {-------------------------------------------------------------------------------
   Generators for specific data types
