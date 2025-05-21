@@ -100,7 +100,7 @@ submitIO hasFS ioctx ioops = do
           IOOpRead{}  -> "IOOpRead"
           IOOpWrite{} -> "IOOpWrite"
 
-ioopConv :: IOOp RealWorld HandleIO -> IO (I.IOOp IO)
+ioopConv :: IOOp RealWorld HandleIO -> IO (I.IOOp RealWorld)
 ioopConv (IOOpRead h off buf bufOff c) = handleFd h >>= \fd ->
     pure (I.IOOpRead  fd off buf (unBufferOffset bufOff) c)
 ioopConv (IOOpWrite h off buf bufOff c) = handleFd h >>= \fd ->

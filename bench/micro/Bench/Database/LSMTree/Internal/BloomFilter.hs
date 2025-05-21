@@ -20,8 +20,7 @@ import           Database.LSMTree.Extras.Random
 import           Database.LSMTree.Extras.UTxO (UTxOKey)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
-import           System.Random
-import           Test.QuickCheck (generate, shuffle)
+import           System.Random as R
 
 -- See 'utxoNumPages'.
 benchmarks :: Benchmark
@@ -54,12 +53,14 @@ elemEnv ::
   -> Int    -- ^ Number of negative lookups
   -> IO (Bloom SerialisedKey, [SerialisedKey])
 elemEnv fpr nbloom nelemsPositive nelemsNegative = do
-    stdgen  <- newStdGen
-    stdgen' <- newStdGen
+    let g = mkStdGen 100
+        (g1, g') = R.splitGen g
+        (g2, g3) = R.splitGen g'
+
     let (xs, ys1) = splitAt nbloom
-                  $ uniformWithoutReplacement    @UTxOKey stdgen  (nbloom + nelemsNegative)
-        ys2       = sampleUniformWithReplacement @UTxOKey stdgen' nelemsPositive xs
-    zs <- generate $ shuffle (ys1 ++ ys2)
+                  $ uniformWithoutReplacement    @UTxOKey g1  (nbloom + nelemsNegative)
+        ys2       = sampleUniformWithReplacement @UTxOKey g2 nelemsPositive xs
+        zs        = shuffle (ys1 ++ ys2) g3
     pure ( Bloom.fromList (Bloom.policyForFPR fpr) (fmap serialiseKey xs)
          , fmap serialiseKey zs
          )

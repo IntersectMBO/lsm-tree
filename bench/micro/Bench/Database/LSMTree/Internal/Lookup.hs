@@ -16,7 +16,8 @@ import           Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import           Database.LSMTree.Extras.Orphans ()
 import           Database.LSMTree.Extras.Random (frequency, randomByteStringR,
-                     sampleUniformWithReplacement, uniformWithoutReplacement)
+                     sampleUniformWithReplacement, shuffle,
+                     uniformWithoutReplacement)
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Arena (ArenaManager, closeArena,
                      newArena, newArenaManager, withArena)
@@ -45,42 +46,41 @@ import qualified System.FS.BlockIO.IO as FS
 import qualified System.FS.IO as FS
 import           System.IO.Temp
 import           System.Random as R
-import           Test.QuickCheck (generate, shuffle)
 
 -- | TODO: add a separate micro-benchmark that includes multi-pages.
 benchmarks :: Benchmark
 benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
       benchLookups Config {
-          name         = "2_000_000 entries, 256 positive lookups"
-        , nentries     = 2_000_000
-        , npos         = 256
-        , nneg         = 0
-        , ioctxps      = Nothing
-        , caching      = Run.CacheRunData
-        }
-    , benchLookups Config {
-          name = "2_000_000 entries, 256 negative lookups"
+          name     = "2_000_000 entries, 256 positive lookups"
         , nentries = 2_000_000
-        , npos = 0
-        , nneg = 256
-        , ioctxps = Nothing
-        , caching      = Run.CacheRunData
+        , npos     = 256
+        , nneg     = 0
+        , ioctxps  = Nothing
+        , caching  = Run.CacheRunData
         }
     , benchLookups Config {
-          name         = "2_000_000 entries, 256 positive lookups, NoCache"
-        , nentries     = 2_000_000
-        , npos         = 256
-        , nneg         = 0
-        , ioctxps      = Nothing
-        , caching      = Run.NoCacheRunData
+          name     = "2_000_000 entries, 256 negative lookups"
+        , nentries = 2_000_000
+        , npos     = 0
+        , nneg     = 256
+        , ioctxps  = Nothing
+        , caching  = Run.CacheRunData
         }
     , benchLookups Config {
-          name         = "2_000_000 entries, 256 negative lookups, NoCache"
-        , nentries     = 2_000_000
-        , npos         = 0
-        , nneg         = 256
-        , ioctxps      = Nothing
-        , caching      = Run.NoCacheRunData
+          name     = "2_000_000 entries, 256 positive lookups, NoCache"
+        , nentries = 2_000_000
+        , npos     = 256
+        , nneg     = 0
+        , ioctxps  = Nothing
+        , caching  = Run.NoCacheRunData
+        }
+    , benchLookups Config {
+          name     = "2_000_000 entries, 256 negative lookups, NoCache"
+        , nentries = 2_000_000
+        , npos     = 0
+        , nneg     = 256
+        , ioctxps  = Nothing
+        , caching  = Run.NoCacheRunData
         }
     ]
 
@@ -112,8 +112,6 @@ benchLookups conf@Config{name} =
             -- ones for each run of the benchmark. We manually evaluate the
             -- result to WHNF since it is unboxed vector.
           , bench "Submit IOOps" $
-              -- TODO: here arena is destroyed too soon
-              -- but it should be fine for non-debug code
               perRunEnv (withArena arenaManager $ \arena -> stToIO $ prepLookups arena blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
                 !_ioress <- FS.submitIO hasBlockIO ioops
                 pure ()
@@ -152,7 +150,6 @@ benchLookups conf@Config{name} =
     withEnv = envWithCleanup
                 (lookupsInBatchesEnv conf)
                 lookupsInBatchesCleanup
-    -- TODO: pick a better value resolve function
     resolveV = \v1 _v2 -> v1
 
 {-------------------------------------------------------------------------------
@@ -243,23 +240,23 @@ lookupsEnv ::
         , V.Vector SerialisedKey
         )
 lookupsEnv g nentries npos nneg = do
-    let  (g1, g') = R.splitGen g
-         (g2, g3) = R.splitGen g'
+    let  (g1, g')  = R.splitGen g
+         (g2, g'') = R.splitGen g'
+         (g3, g4)  = R.splitGen g''
     let (keys, negLookups) = splitAt nentries
                            $ uniformWithoutReplacement @UTxOKey g1 (nentries + nneg)
         posLookups         = sampleUniformWithReplacement g2 npos keys
     let values = take nentries $ List.unfoldr (Just . randomEntry) g3
         entries = Map.fromList $ zip keys values
-    lookups <- generate $ shuffle (negLookups ++ posLookups)
 
-    let entries' = Map.mapKeys serialiseKey
+    let lookups = shuffle (negLookups ++ posLookups) g4
+        entries' = Map.mapKeys serialiseKey
               $ Map.map (bimap serialiseValue serialiseBlob) entries
         lookups' = V.fromList $ fmap serialiseKey lookups
     assertEqual (Map.size entries') (nentries) $ pure ()
     assertEqual (length lookups') (npos + nneg) $ pure ()
     pure (entries', lookups')
 
--- TODO: tweak distribution
 randomEntry :: StdGen -> (Entry UTxOValue ByteString, StdGen)
 randomEntry g = frequency [
       (20, \g' -> let (!v, !g'') = uniform g' in (Insert v, g''))
