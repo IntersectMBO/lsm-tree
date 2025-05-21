@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
 import           Control.DeepSeq (deepseq)
@@ -25,17 +23,10 @@ import           Test.QuickCheck.Instances ()
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding ((.&.))
 
-import qualified Data.BloomFilter.Blocked as BF
+import qualified Data.BloomFilter.Blocked as Bloom
 import           Database.LSMTree.Internal.BloomFilter
-import qualified Database.LSMTree.Internal.BloomFilterQuery1 as Bloom1
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
-
-#ifdef BLOOM_QUERY_FAST
-import qualified Database.LSMTree.Internal.BloomFilterQuery2 as Bloom2
-import           Test.QuickCheck.Classes (primLaws)
-import           Test.Util.QC
-#endif
 
 --TODO: add a golden test for the BloomFilter format vs the 'formatVersion'
 -- to ensure we don't change the format without conciously bumping the version.
@@ -49,12 +40,7 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
     , testProperty "total-deserialisation-whitebox" $ withMaxSuccess 10000 $
         prop_total_deserialisation_whitebox
     , testProperty "bloomQueries (bulk)" $
-        prop_bloomQueries1
-#ifdef BLOOM_QUERY_FAST
-    , testClassLaws "CandidateProbe" (primLaws (Proxy :: Proxy Bloom2.CandidateProbe))
-    , testProperty "bloomQueries (bulk, prefetching)" $
-        prop_bloomQueries2
-#endif
+        prop_bloomQueries
     ]
 
 roundtrip_prop :: Positive (Small Int) -> Positive Int ->  [Word64] -> Property
@@ -64,9 +50,9 @@ roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
       Left  err -> counterexample (displayException err) $ property False
       Right rhs -> lhs === rhs
   where
-    sz  = BF.BloomSize { sizeBits   = limitBits bits,
+    sz  = Bloom.BloomSize { sizeBits   = limitBits bits,
                          sizeHashes = hfN }
-    lhs = BF.create sz (\b -> mapM_ (BF.insert b) ws)
+    lhs = Bloom.create sz (\b -> mapM_ (Bloom.insert b) ws)
     bs  = LBS.toStrict (bloomFilterToLBS lhs)
 
 limitBits :: Int -> Int
@@ -81,7 +67,7 @@ prop_total_deserialisation bs =
 
 -- | Write the bytestring to a file in the mock file system and then use
 -- 'bloomFilterFromFile'.
-bloomFilterFromBS :: BS.ByteString -> Either IOSim.Failure (BF.Bloom a)
+bloomFilterFromBS :: BS.ByteString -> Either IOSim.Failure (Bloom a)
 bloomFilterFromBS bs =
     IOSim.runSim $ do
       hfs <- FSSim.simHasFS' MockFS.empty
@@ -124,13 +110,14 @@ instance Arbitrary FPR where
       [ (1, pure 0.999)
       , (9, (fmap (/2) genDouble) `suchThat` \fpr -> fpr > 0) ]
 
-prop_bloomQueries1 :: FPR
-                   -> [[Small Word64]]
-                   -> [Small Word64]
-                   -> Property
-prop_bloomQueries1 (FPR fpr) filters keys =
-    let filters' :: [BF.Bloom SerialisedKey]
-        filters' = map (BF.fromList (BF.policyForFPR fpr) . map (\(Small k) -> serialiseKey k))
+prop_bloomQueries :: FPR
+                  -> [[Small Word64]]
+                  -> [Small Word64]
+                  -> Property
+prop_bloomQueries (FPR fpr) filters keys =
+    let filters' :: [Bloom SerialisedKey]
+        filters' = map (Bloom.fromList (Bloom.policyForFPR fpr)
+                        . map (\(Small k) -> serialiseKey k))
                        filters
 
         keys' :: [SerialisedKey]
@@ -139,14 +126,14 @@ prop_bloomQueries1 (FPR fpr) filters keys =
         referenceResults :: [(Int, Int)]
         referenceResults =
           [ (f_i, k_i)
-          | (f, f_i) <- zip filters' [0..]
-          , (k, k_i) <- zip keys' [0..]
-          , BF.elem k f
+          | (k, k_i) <- zip keys' [0..]
+          , (f, f_i) <- zip filters' [0..]
+          , Bloom.elem k f
           ]
 
         filterSets = map (Set.fromList . map (\(Small k) -> serialiseKey k)) filters
         referenceCmp =
-          [ (BF.elem k f, k `Set.member` f')
+          [ (Bloom.elem k f, k `Set.member` f')
           | (f, f') <- zip filters' filterSets
           , k       <- keys'
           ]
@@ -157,51 +144,13 @@ prop_bloomQueries1 (FPR fpr) filters keys =
         distribution   = truePositives ++ falsePositives
                       ++ trueNegatives ++ falseNegatives
 
-    -- To get coverage of Bloom1.bloomQueries array resizing we want some
+    -- To get coverage of bloomQueries array resizing we want some
     -- cases with high FPRs.
      in tabulate "FPR" [show (round (fpr * 10) * 10 :: Int) ++ "%"] $
         coverTable "FPR" [("100%", 5)] $
         tabulate "distribution of true/false positives/negatives" distribution $
         referenceResults
        ===
-        map (\(Bloom1.RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (Bloom1.bloomQueries (V.fromList filters')
-                                            (V.fromList keys')))
-
-#ifdef BLOOM_QUERY_FAST
-prop_bloomQueries2 :: FPR
-                   -> [[Small Word64]]
-                   -> [Small Word64]
-                   -> Property
-prop_bloomQueries2 (FPR fpr) filters keys =
-    let filters' :: [BF.Bloom SerialisedKey]
-        filters' = map (BF.fromList (BF.policyForFPR fpr) .
-                        map (\(Small k) -> serialiseKey k)) filters
-
-        keys' :: [SerialisedKey]
-        keys' = map (\(Small k) -> serialiseKey k) keys
-
-        referenceResults :: [(Int, Int)]
-        referenceResults =
-          [ (f_i, k_i)
-          | (f, f_i) <- zip filters' [0..]
-          , (k, k_i) <- zip keys' [0..]
-          , BF.elem k f
-          ]
-
-    -- To get coverage of Bloom2.bloomQueries array resizing we want some
-    -- cases with high FPRs.
-     in tabulate "FPR" [show (round (fpr * 10) * 10 :: Int) ++ "%"] $
-        coverTable "FPR" [("100%", 5)] $
-
-        referenceResults
-       ===
-        map (\(Bloom2.RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (Bloom2.bloomQueries (V.fromList filters')
-                                            (V.fromList keys')))
-
-instance Arbitrary Bloom2.CandidateProbe where
-  arbitrary = Bloom2.MkCandidateProbe <$> arbitrary <*> arbitrary
-
-deriving stock instance Eq Bloom2.CandidateProbe
-#endif
+        map (\(RunIxKeyIx rix kix) -> (rix, kix))
+            (VP.toList (bloomQueries (V.fromList filters')
+                                     (V.fromList keys')))

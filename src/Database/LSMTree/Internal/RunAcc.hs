@@ -162,10 +162,11 @@ addSmallKeyOp ::
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan
   -> ST s (Maybe (RawPage, Maybe Chunk))
-addSmallKeyOp racc@RunAcc{..} k e =
+addSmallKeyOp racc@RunAcc{entryCount , mpageacc} k e =
   assert (PageAcc.entryWouldFitInPage k e) $ do
     modifyPrimVar entryCount (+1)
-    Bloom.insert mbloom k
+    -- We do not use Bloom.insert here. We accumulate keys (in the mpageacc)
+    -- and add them all to the mbloom in a batch in flushPageIfNonEmpty.
 
     pageBoundaryNeeded <-
         -- Try adding the key/op to the page accumulator to see if it fits. If
@@ -208,9 +209,11 @@ addLargeKeyOp ::
   -> SerialisedKey
   -> Entry SerialisedValue BlobSpan -- ^ the full value, not just a prefix
   -> ST s ([RawPage], [RawOverflowPage], [Chunk])
-addLargeKeyOp racc@RunAcc{..} k e =
+addLargeKeyOp racc@RunAcc{entryCount, mindex, mbloom} k e =
   assert (not (PageAcc.entryWouldFitInPage k e)) $ do
     modifyPrimVar entryCount (+1)
+    -- Large key/op pairs don't get added to the mpageacc, and thus bypass the
+    -- bulk bloom insert in flushPageIfNonEmpty, so we add them directly here.
     Bloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
@@ -259,12 +262,15 @@ addLargeSerialisedKeyOp ::
                        -- key\/op /without/ a 'BlobSpan'.
   -> [RawOverflowPage] -- ^ The overflow pages for this key\/op
   -> ST s ([RawPage], [RawOverflowPage], [Chunk])
-addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
+addLargeSerialisedKeyOp racc@RunAcc{entryCount, mindex, mbloom}
+                        k page overflowPages =
   assert (RawPage.rawPageNumKeys page == 1) $
   assert (RawPage.rawPageHasBlobSpanAt page 0 == 0) $
   assert (RawPage.rawPageOverflowPages page > 0) $
   assert (RawPage.rawPageOverflowPages page == length overflowPages) $ do
     modifyPrimVar entryCount (+1)
+    -- Large key/op pairs don't get added to the mpageacc, and thus bypass the
+    -- bulk bloom insert in flushPageIfNonEmpty, so we add them directly here.
     Bloom.insert mbloom k
 
     -- If the existing page accumulator is non-empty, we flush it, since the
@@ -282,10 +288,12 @@ addLargeSerialisedKeyOp racc@RunAcc{..} k page overflowPages =
 -- Returns @Nothing@ if the page accumulator was empty.
 --
 flushPageIfNonEmpty :: RunAcc s -> ST s (Maybe (RawPage, Maybe Chunk))
-flushPageIfNonEmpty RunAcc{mpageacc, mindex} = do
+flushPageIfNonEmpty RunAcc{mpageacc, mindex, mbloom} = do
     nkeys <- PageAcc.keysCountPageAcc mpageacc
     if nkeys > 0
       then do
+        bloomInserts mbloom mpageacc nkeys
+
         -- Grab the min and max keys, and add the page to the index.
         minKey <- PageAcc.indexKeyPageAcc mpageacc 0
         maxKey <- PageAcc.indexKeyPageAcc mpageacc (nkeys-1)
@@ -297,6 +305,14 @@ flushPageIfNonEmpty RunAcc{mpageacc, mindex} = do
         return (Just (page, mchunk))
 
       else pure Nothing
+
+-- An instance of insertMany specialised to SerialisedKey and indexKeyPageAcc.
+-- This is a performance-sensitive function. It is marked NOINLINE so we can
+-- easily inspect the core and check all the specialisations worked as expected.
+{-# NOINLINE bloomInserts #-}
+bloomInserts :: MBloom s SerialisedKey -> PageAcc s -> Int -> ST s ()
+bloomInserts !mbloom !mpageacc !nkeys =
+    Bloom.insertMany mbloom (PageAcc.indexKeyPageAcc mpageacc) nkeys
 
 -- | Internal helper for 'addLargeKeyOp' and 'addLargeSerialisedKeyOp'.
 -- Combine the result of 'flushPageIfNonEmpty' with extra pages and index
