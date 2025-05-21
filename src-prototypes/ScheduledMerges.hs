@@ -16,8 +16,8 @@
 -- Finally, it demonstrates a design for table unions, including a
 -- representation for in-progress merging trees.
 --
--- The merging policy that this prototype uses is power 4 \"lazy levelling\".
--- Power 4 means each level is 4 times bigger than the previous level.
+-- The merging policy that this prototype uses is \"lazy levelling\".
+-- Each level is T times bigger than the previous level.
 -- Lazy levelling means we use tiering for every level except the last level
 -- which uses levelling. Though note that the first level always uses tiering,
 -- even if the first level is also the last level. This is to simplify flushing
@@ -123,6 +123,8 @@ data LSM s  = LSMHandle !(STRef s Counter)
 -- | Configuration options for individual LSM tables.
 data LSMConfig = LSMConfig {
       configMaxWriteBufferSize :: !Int
+      -- | Also known as the parameter @T@
+    , configSizeRatio          :: !Int
     }
   deriving stock (Show, Eq)
 
@@ -316,7 +318,7 @@ mergeTypeForLevel _  _       = MergeMidLevel
 -- the last level.
 --
 invariant :: forall s. LSMConfig -> LSMContent s -> ST s ()
-invariant conf (LSMContent _ levels ul) = do
+invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
     levelsInvariant 1 levels
     case ul of
       NoUnion      -> return ()
@@ -335,7 +337,7 @@ invariant conf (LSMContent _ levels ul) = do
           assertST $ mt == mergeTypeForLevel ls ul
           readSTRef ref
 
-      assertST $ length rs <= 3
+      assertST $ length rs <= configSizeRatio - 1
       expectedRunLengths ln rs ls
       expectedMergingRunLengths ln ir mrs ls
 
@@ -353,12 +355,12 @@ invariant conf (LSMContent _ levels ul) = do
         -- 'IncomingRun', using 'Single'. Thus there are no other resident runs.
         MergePolicyLevelling -> assertST $ null rs
         -- Runs in tiering levels usually fit that size, but they can be one
-        -- larger, if a run has been held back (creating a 5-way merge).
+        -- larger, if a run has been held back (creating a (T+1)-way merge).
         MergePolicyTiering   -> assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r `elem` [ln, ln+1]) rs
         -- (This is actually still not really true, but will hold in practice.
         -- In the pathological case, all runs passed to the next level can be
-        -- factor (5/4) too large, and there the same holding back can lead to
-        -- factor (6/4) etc., until at level 12 a run is two levels too large.
+        -- factor ((T+1)/T) too large, and there the same holding back can lead to
+        -- factor ((T+2)/T) etc., until at level 12 a run is two levels too large.
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
@@ -381,17 +383,17 @@ invariant conf (LSMContent _ levels ul) = do
             (_, CompletedMerge r) ->
               assertST $ runToLevelNumber MergePolicyLevelling conf r <= ln+1
 
-            -- An ongoing merge for levelling should have 4 incoming runs of
+            -- An ongoing merge for levelling should have T incoming runs of
             -- the right size for the level below (or slightly larger due to
             -- holding back underfull runs), and 1 run from this level,
             -- but the run from this level can be of almost any size for the
             -- same reasons as above. Although if this is the first merge for
-            -- a new level, it'll have only 4 runs.
+            -- a new level, it'll have only T runs.
             (_, OngoingMerge _ rs _) -> do
-              assertST $ length rs `elem` [4, 5]
+              assertST $ length rs `elem` [configSizeRatio, configSizeRatio + 1]
               assertST $ all (\r -> runSize r > 0) rs  -- don't merge empty runs
-              let incoming = take 4 rs
-              let resident = drop 4 rs
+              let incoming = take configSizeRatio rs
+              let resident = drop configSizeRatio rs
               assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r `elem` [ln-1, ln]) incoming
               assertST $ all (\r -> runToLevelNumber MergePolicyLevelling conf r <= ln+1) resident
 
@@ -419,12 +421,12 @@ invariant conf (LSMContent _ levels ul) = do
             (_, CompletedMerge r, MergeMidLevel) ->
               assertST $ runToLevelNumber MergePolicyTiering conf r `elem` [ln-1, ln, ln+1]
 
-            -- An ongoing merge for tiering should have 4 incoming runs of
+            -- An ongoing merge for tiering should have T incoming runs of
             -- the right size for the level below, and at most 1 run held back
             -- due to being too small (which would thus also be of the size of
             -- the level below).
             (_, OngoingMerge _ rs _, _) -> do
-              assertST $ length rs == 4 || length rs == 5
+              assertST $ length rs == configSizeRatio || length rs == configSizeRatio + 1
               assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r == ln-1) rs
 
 -- We don't make many assumptions apart from what the types already enforce.
@@ -533,16 +535,16 @@ assertST p = assert p $ return ()
 -- The size of a tiering run at each level is allowed to be
 -- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^level@.
 --
--- >>> levelNumberToMaxRunSize MergePolicyTiering (LSMConfig 2) <$> [0, 1, 2, 3, 4]
+-- >>> levelNumberToMaxRunSize MergePolicyTiering (LSMConfig 2 4) <$> [0, 1, 2, 3, 4]
 -- [0,2,8,32,128]
 --
 -- The @size@ of a levelling run at each level is allowed to be
--- @bufferSize*sizeRatio^(level-1) < size <= bufferSize*sizeRatio^(level+1)@. A
+-- @bufferSize*sizeRatio^level < size <= bufferSize*sizeRatio^(level+1)@. A
 -- levelling run can take take up a whole level, so the maximum size of a run is
 -- @sizeRatio@ tmes larger than the maximum size of a tiering run on the same
 -- level.
 --
--- >>> levelNumberToMaxRunSize MergePolicyLevelling (LSMConfig 2) <$> [0, 1, 2, 3, 4]
+-- >>> levelNumberToMaxRunSize MergePolicyLevelling (LSMConfig 2 4) <$> [0, 1, 2, 3, 4]
 -- [0,8,32,128,512]
 levelNumberToMaxRunSize :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int
 levelNumberToMaxRunSize = \case
@@ -551,10 +553,12 @@ levelNumberToMaxRunSize = \case
 
 -- | See 'levelNumberToMaxRunSize'
 levelNumberToMaxRunSizeTiering :: HasCallStack => LSMConfig -> LevelNo -> Int
-levelNumberToMaxRunSizeTiering LSMConfig {configMaxWriteBufferSize = bufSize} ln
+levelNumberToMaxRunSizeTiering
+  LSMConfig {configMaxWriteBufferSize = bufSize, configSizeRatio = sizeRatio}
+  ln
   | ln < 0 = error "level number must be non-negative"
   | ln == 0 = 0
-  | otherwise = fromIntegerChecked (toInteger bufSize * 4 ^ pred (toInteger ln))
+  | otherwise = fromIntegerChecked (toInteger bufSize * toInteger sizeRatio ^ pred (toInteger ln))
       -- Perform the computation with arbitrary precision using 'Integers', but
       -- throw an error if the result does not fit into an 'Int'.
 
@@ -574,10 +578,10 @@ runToLevelNumber mpl conf run = runSizeToLevelNumber mpl conf (runSize run)
 -- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
 -- sizes at each level.
 --
--- >>> runSizeToLevelNumber MergePolicyTiering (LSMConfig 2) <$> [0,2,8,32,128]
+-- >>> runSizeToLevelNumber MergePolicyTiering (LSMConfig 2 4) <$> [0,2,8,32,128]
 -- [0,1,2,3,4]
 --
--- >>> runSizeToLevelNumber MergePolicyLevelling (LSMConfig 2) <$> [0,8,32,128,512]
+-- >>> runSizeToLevelNumber MergePolicyLevelling (LSMConfig 2 4) <$> [0,8,32,128,512]
 -- [0,1,2,3,4]
 runSizeToLevelNumber :: HasCallStack => MergePolicy -> LSMConfig -> Int -> LevelNo
 runSizeToLevelNumber = \case
@@ -590,7 +594,7 @@ runSizeToLevelNumberTiering conf n
   | n < 0 = error "run size must be positive"
   -- TODO: enumerating level numbers is potentially costly, but it does gives a
   -- precise answer, where we'd otherwise have to deal with Double rounding
-  -- errors in computing @ln = logBase 4 (n / configMaxWriteBufferSize) + 1@
+  -- errors in computing @ln = logBase configSizeRatio (n / configMaxWriteBufferSize) + 1@
   | otherwise = head $ -- the list is guaranteed to be non-empty
       [ ln
       | ln <- [0..]
@@ -603,7 +607,7 @@ runSizeToLevelNumberLevelling conf n
   | n < 0 = error "run size must be positive"
   -- TODO: enumerating level numbers is potentially costly, but it does gives a
   -- precise answer, where we'd otherwise have to deal with Double rounding
-  -- errors in computing @ln = logBase 4 (n / configMaxWriteBufferSize)@
+  -- errors in computing @ln = logBase configSizeRatio (n / configMaxWriteBufferSize)@
   | otherwise = head $ -- the list is guaranteed to be non-empty
       [ ln
       | ln <- [0..]
@@ -635,10 +639,10 @@ _runFitsInLevel mpl conf ln r = runSizeFitsInLevel mpl conf ln (runSize r)
 -- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
 -- sizes at each level.
 --
--- >>> runSizeFitsInLevel MergePolicyTiering (LSMConfig 2) 3 <$> [8,9,16,32,33]
+-- >>> runSizeFitsInLevel MergePolicyTiering (LSMConfig 2 4) 3 <$> [8,9,16,32,33]
 -- [False,True,True,True,False]
 --
--- >>> runSizeFitsInLevel MergePolicyLevelling (LSMConfig 2) 2 <$> [8,9,16,32,33]
+-- >>> runSizeFitsInLevel MergePolicyLevelling (LSMConfig 2 4) 2 <$> [8,9,16,32,33]
 -- [False,True,True,True,False]
 runSizeFitsInLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
 runSizeFitsInLevel mpl conf ln n
@@ -657,10 +661,10 @@ runTooSmallForLevel mpl conf ln r = runSizeTooSmallForLevel mpl conf ln (runSize
 -- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
 -- sizes at each level.
 --
--- >>> runSizeTooSmallForLevel MergePolicyTiering (LSMConfig 2) 3 <$> [8,9]
+-- >>> runSizeTooSmallForLevel MergePolicyTiering (LSMConfig 2 4) 3 <$> [8,9]
 -- [True,False]
 --
--- >>> runSizeTooSmallForLevel MergePolicyLevelling (LSMConfig 2) 2 <$> [8,9]
+-- >>> runSizeTooSmallForLevel MergePolicyLevelling (LSMConfig 2 4) 2 <$> [8,9]
 -- [True,False]
 runSizeTooSmallForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
 runSizeTooSmallForLevel mpl conf ln n
@@ -681,10 +685,10 @@ runTooLargeForLevel mpl conf ln r = runSizeTooLargeForLevel mpl conf ln (runSize
 -- See 'levelNumberToMaxRunSize' for the bounds on (tiering or levelling) run
 -- sizes at each level.
 --
--- >>> runSizeTooLargeForLevel MergePolicyTiering (LSMConfig 2) 2 <$> [8,9]
+-- >>> runSizeTooLargeForLevel MergePolicyTiering (LSMConfig 2 4) 2 <$> [8,9]
 -- [False,True]
 --
--- >>> runSizeTooLargeForLevel MergePolicyLevelling (LSMConfig 2) 1 <$> [8,9]
+-- >>> runSizeTooLargeForLevel MergePolicyLevelling (LSMConfig 2 4) 1 <$> [8,9]
 -- [False,True]
 runSizeTooLargeForLevel :: HasCallStack => MergePolicy -> LSMConfig -> LevelNo -> Int -> Bool
 runSizeTooLargeForLevel mpl conf ln n
@@ -709,7 +713,8 @@ levelIsFull mpl conf ln incoming resident = case mpl of
 
 -- | Only based on run count, not their sizes.
 levelIsFullTiering :: LSMConfig -> LevelNo -> [Run] -> [Run] -> Bool
-levelIsFullTiering _conf _ln _incoming resident = length resident >= 4
+levelIsFullTiering LSMConfig{..} _ln _incoming resident =
+    length resident >= configSizeRatio
 
 -- | The level is only considered full once the resident run is /too large/
 -- for the level.
@@ -936,16 +941,19 @@ suppliedCreditMergingRun (MergingRun _ d ref) =
 new :: ST s (LSM s)
 new = newWith conf
   where
+    -- 4 was the default for both the max write buffer size and size ratio
+    -- before they were made configurable
     conf = LSMConfig {
-        -- 4 was the default before the write buffer size was the hard-coded,
-        -- default max write buffer size before it was made to be configurable
         configMaxWriteBufferSize = 4
+      , configSizeRatio = 4
       }
 
 newWith :: LSMConfig -> ST s (LSM s)
 newWith conf
   | configMaxWriteBufferSize conf <= 0 =
       error "newWith: configMaxWriteBufferSize should be positive"
+  | configSizeRatio conf <= 1 =
+      error "newWith: configSizeRatio should be larger than 1"
   | otherwise = do
       c   <- newSTRef 0
       lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
@@ -1450,8 +1458,8 @@ newLevelMerge :: Tracer (ST s) EventDetail
               -> Int -> MergePolicy -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
 newLevelMerge _ _ _ _ _ [r] = return (Single r)
-newLevelMerge tr conf level mergePolicy mergeType rs = do
-    assertST (length rs `elem` [4, 5])
+newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
+    assertST (length rs `elem` [configSizeRatio, configSizeRatio + 1])
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
     assertST (totalDebt physicalDebt <= maxPhysicalDebt)
     traceWith tr MergeStartedEvent {
@@ -1480,9 +1488,11 @@ newLevelMerge tr conf level mergePolicy mergeType rs = do
     -- includes the single run in the current level.
     maxPhysicalDebt =
       case mergePolicy of
-        MergePolicyLevelling -> 4 * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
-                                  + levelNumberToMaxRunSize MergePolicyLevelling conf level
-        MergePolicyTiering   -> length rs * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
+        MergePolicyLevelling ->
+          configSizeRatio * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
+            + levelNumberToMaxRunSize MergePolicyLevelling conf level
+        MergePolicyTiering   ->
+          length rs * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
 
 -------------------------------------------------------------------------------
 -- MergingTree abstraction

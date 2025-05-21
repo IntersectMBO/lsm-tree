@@ -69,14 +69,21 @@ newtype Config = Config LSMConfig
 instance Arbitrary Config where
   arbitrary = Config <$> do
       bufSize <- (getSmall <$> arbitrary) `suchThat` (>0)
+      sizeRatio <- (getSmall <$> arbitrary) `suchThat` (>1)
       pure $ LSMConfig {
           configMaxWriteBufferSize = bufSize
+        , configSizeRatio = sizeRatio
         }
-  shrink (Config LSMConfig{..}) =
-      [ Config LSMConfig{configMaxWriteBufferSize = bufSize'}
+  shrink (Config conf@LSMConfig{..}) =
+      [ Config conf{configMaxWriteBufferSize = bufSize'}
       | bufSize' <- shrink configMaxWriteBufferSize
       , bufSize' > 0
       ]
+   ++ [ Config conf{configSizeRatio = sizeRatio'}
+      | sizeRatio' <- shrink configSizeRatio
+      , sizeRatio' > 1
+      ]
+
 
 newtype LevelNo = LevelNo Int
   deriving stock (Show, Eq, Ord)
@@ -93,16 +100,16 @@ newtype LevelNo = LevelNo Int
 levelNumberInvariant :: MergePolicyForLevel -> Config -> LevelNo -> Bool
 levelNumberInvariant
   (MergePolicyForLevel mpl)
-  (Config LSMConfig{configMaxWriteBufferSize})
+  (Config LSMConfig{configMaxWriteBufferSize, configSizeRatio})
   (LevelNo ln)
   | ln < 0 = False
   | ln == 0 = True
   | otherwise = case mpl of
       MergePolicyTiering ->
-        toInteger configMaxWriteBufferSize * (4 ^ toInteger (pred ln))
+        toInteger configMaxWriteBufferSize * (toInteger configSizeRatio ^ toInteger (pred ln))
           <= toInteger (maxBound :: Int)
       MergePolicyLevelling ->
-        toInteger configMaxWriteBufferSize * (4 ^ toInteger ln)
+        toInteger configMaxWriteBufferSize * (toInteger configSizeRatio ^ toInteger ln)
           <= toInteger (maxBound :: Int)
 
 newtype RunSize = RunSize Int
