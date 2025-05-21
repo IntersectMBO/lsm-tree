@@ -3,7 +3,7 @@
 export LC_ALL=C.UTF-8
 
 # Check for stylish-haskell
-stylish_haskell_required_version="0.14.6.0"
+stylish_haskell_required_version="0.15.1.0"
 stylish_haskell="$(which stylish-haskell)"
 if [ "${stylish_haskell}" = "" ]; then
     echo "Requires stylish-haskell version ${stylish_haskell_required_version}; no version found"
