@@ -38,6 +38,8 @@ module Test.Util.FS (
   , noHCloseE
   , noRemoveFileE
   , noRemoveDirectoryRecursiveE
+  , filterHGetBufSomeE
+  , isFsReachedEOF
     -- * Arbitrary
   , FsPathComponent (..)
   , fsPathComponentFsPath
@@ -480,6 +482,15 @@ noRemoveFileE errs = errs { removeFileE = Stream.empty }
 
 noRemoveDirectoryRecursiveE :: Errors -> Errors
 noRemoveDirectoryRecursiveE errs = errs { removeDirectoryRecursiveE = Stream.empty }
+
+filterHGetBufSomeE :: (Maybe (Either FsErrorType Partial) -> Bool) -> Errors -> Errors
+filterHGetBufSomeE p e = e {
+      hGetBufSomeE = Stream.filter p (hGetBufSomeE e)
+    }
+
+isFsReachedEOF :: FsErrorType -> Bool
+isFsReachedEOF FsReachedEOF = True
+isFsReachedEOF _            = False
 
 {-------------------------------------------------------------------------------
   Arbitrary

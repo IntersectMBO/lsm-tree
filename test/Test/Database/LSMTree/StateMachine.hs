@@ -67,12 +67,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
 import           Data.Either (partitionEithers)
 import           Data.Kind (Type)
-#if MIN_VERSION_base(4,20,0)
-import           Data.List (nub)
-#else
-import           Data.List (foldl', nub)
-                 -- foldl' is included in the Prelude from base 4.20 onwards
-#endif
+import qualified Data.List as List
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -135,8 +130,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaul
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep.Run
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.FS (approximateEqStream, noRemoveDirectoryRecursiveE,
-                     propNoOpenHandles, propNumOpenHandles)
+import           Test.Util.FS
 import           Test.Util.FS.Error
 import           Test.Util.PrettyProxy
 import           Test.Util.QC (Choice)
@@ -1916,9 +1910,13 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
             OpenTableFromSnapshot @k @v @b PrettyProxy <$> genUsedSnapshotName <*> pure label)
         | length tableVars <= 5 -- no more than 5 tables at once
         , not (null usedSnapshotNames)
+        , -- TODO: bloomFilterFromFile swallows an FsReachedEOF error
+          let isFsReachedEOFError = maybe False (either isFsReachedEOF (const False))
         , let genErrors = QC.frequency [
                   (3, pure Nothing)
-                , (1, Just . noRemoveDirectoryRecursiveE <$> QC.arbitrary)
+                , (1, Just . filterHGetBufSomeE (not . isFsReachedEOFError)
+                           . noRemoveDirectoryRecursiveE
+                           <$> QC.arbitrary)
                 ]
         ]
 
@@ -2500,7 +2498,8 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                              -> Model.Table k v b -> Stats -> Stats
     insertParentTableDerived ptblVars tbl stats =
       let uptblIds :: [Model.TableID] -- the set of ultimate parent table ids
-          uptblIds = nub [ uptblId
+          uptblIds = List.nub [
+                           uptblId
                          | ptblVar <- ptblVars
                            -- immediate and ultimate parent table id:
                          , let iptblId = getTableId (lookUp ptblVar)
@@ -2555,9 +2554,10 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         updateLastActionLog :: GVar Op (WrapTable h IO k v b) -> Stats
         updateLastActionLog tableVar =
           stats {
-            dupTableActionLog = foldl' (flip (Map.alter extendLog))
-                                       (dupTableActionLog stats)
-                                       (parentTable stats Map.! thid)
+            dupTableActionLog = List.foldl'
+                                  (flip (Map.alter extendLog))
+                                  (dupTableActionLog stats)
+                                  (parentTable stats Map.! thid)
           }
           where
             thid = getTableId (lookUp tableVar)

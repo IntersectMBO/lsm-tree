@@ -34,6 +34,7 @@ import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as QLS
 import           Test.QuickCheck.StateModel.Variables
 import           Test.Tasty (TestTree, testGroup, withResource)
 import qualified Test.Tasty.QuickCheck as QC
+import           Test.Util.FS
 import           Test.Util.PrettyProxy
 
 tests :: TestTree
@@ -246,14 +247,10 @@ arbitraryErrors = do
     -- TODO: there is one case where an 'FsReachEOF' error is swallowed. Is that
     -- valid behaviour, or should we change it?
     filterErrors errs = errs {
-          hGetBufSomeE = Stream.filter (not . isFsReachedEOF) (hGetBufSomeE errs)
+          hGetBufSomeE = Stream.filter (not . isFsReachedEOFError) (hGetBufSomeE errs)
         }
 
-    isFsReachedEOF Nothing = False
-    isFsReachedEOF (Just (Left e)) = case e of
-        FsReachedEOF -> True
-        _            -> False
-    isFsReachedEOF (Just (Right _)) = False
+    isFsReachedEOFError = maybe False (either isFsReachedEOF (const False))
 
 -- | Shrink each error stream and all error stream elements.
 --

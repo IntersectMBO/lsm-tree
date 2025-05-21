@@ -22,7 +22,7 @@ import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.FS.Sim.Stream as Stream
 import           Test.Tasty
 import           Test.Tasty.QuickCheck as QC
-import           Test.Util.FS
+import           Test.Util.FS as FS
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.WriteBufferReader.FS" [
@@ -70,11 +70,7 @@ prop_fault_WriteBufferReader (NoCleanupErrors readErrors) rdata =
 
     -- TODO: fix, see the TODO on readDiskPage
     readErrors' = readErrors {
-          hGetBufSomeE = Stream.filter (not . isFsReachedEOF) (hGetBufSomeE readErrors)
+          hGetBufSomeE = Stream.filter (not . isFsReachedEOFError) (hGetBufSomeE readErrors)
         }
 
-    isFsReachedEOF Nothing = False
-    isFsReachedEOF (Just (Left e)) = case e of
-        FsReachedEOF -> True
-        _            -> False
-    isFsReachedEOF (Just (Right _)) = False
+    isFsReachedEOFError = maybe False (either isFsReachedEOF (const False))
