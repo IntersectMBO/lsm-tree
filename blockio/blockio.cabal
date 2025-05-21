@@ -82,9 +82,7 @@ library
   if os(linux)
     hs-source-dirs: src-linux
     other-modules:  System.FS.BlockIO.Internal
-    build-depends:
-      , blockio:fcntl-nocache
-      , unix                   ^>=2.8
+    build-depends:  unix ^>=2.8.7
 
     if !flag(serialblockio)
       other-modules: System.FS.BlockIO.Async
@@ -92,10 +90,7 @@ library
 
   elif os(osx)
     hs-source-dirs: src-macos
-    build-depends:
-      , blockio:fcntl-nocache
-      , unix                   ^>=2.8
-
+    build-depends:  unix ^>=2.8.7
     other-modules:  System.FS.BlockIO.Internal
 
   elif os(windows)
@@ -106,24 +101,11 @@ library
   if flag(serialblockio)
     cpp-options: -DSERIALBLOCKIO
 
-library fcntl-nocache
-  import:             language, warnings
-  visibility:         private
-  hs-source-dirs:     src-fcntl-nocache
-
-  if os(windows)
-    buildable: False
-
-  exposed-modules:    System.Posix.Fcntl.NoCache
-  build-depends:      base <5
-  build-tool-depends: hsc2hs:hsc2hs
-
 test-suite test
   import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: test
   main-is:        Main.hs
-  other-modules:  Test.System.Posix.Fcntl.NoCache
   build-depends:
     , async
     , base              <5
@@ -137,9 +119,6 @@ test-suite test
     , tasty-quickcheck
     , temporary
     , vector
-
-  if !os(windows)
-    build-depends: blockio:fcntl-nocache
 
   ghc-options:    -threaded
 
