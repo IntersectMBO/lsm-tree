@@ -190,7 +190,7 @@ instance NFData BloomFilterAlloc where
   rnf (AllocRequestFPR fpr) = rnf fpr
 
 defaultBloomFilterAlloc :: BloomFilterAlloc
-defaultBloomFilterAlloc = AllocFixed 10
+defaultBloomFilterAlloc = AllocRequestFPR 1e-3
 
 bloomFilterAllocForLevel :: TableConfig -> RunLevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel conf _levelNo =
