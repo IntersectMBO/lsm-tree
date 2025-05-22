@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP       #-}
 {-# LANGUAGE DataKinds #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
@@ -180,7 +181,9 @@ data TableTrace =
   | TraceRangeLookup (Range SerialisedKey)
     -- Updates
   | TraceUpdates Int
+#ifdef DEBUG_TRACES
   | TraceMerge (AtLevel MergeTrace)
+#endif
     -- Snapshot
   | TraceSnapshot SnapshotName
     -- Duplicate
@@ -189,6 +192,13 @@ data TableTrace =
   | TraceRemainingUnionDebt
   | TraceSupplyUnionCredits UnionCredits
   deriving stock Show
+
+contramapTraceMerge :: Monad m => Tracer m TableTrace -> Tracer m (AtLevel MergeTrace)
+#ifdef DEBUG_TRACES
+contramapTraceMerge t = TraceMerge `contramap` t
+#else
+contramapTraceMerge t = traceMaybe (const Nothing) t
+#endif
 
 data CursorTrace =
     TraceCreateCursor TableId
@@ -858,7 +868,7 @@ updates resolve es t = do
         (RW.unsafeAcquireWriteAccess (tableContent tEnv))
         (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv)) $ \reg -> do
           updatesWithInterleavedFlushes
-            (TraceMerge `contramap` tableTracer t)
+            (contramapTraceMerge $ tableTracer t)
             conf
             resolve
             hfs
