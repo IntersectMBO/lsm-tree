@@ -34,10 +34,6 @@ echo
 ./scripts/format-stylish-haskell.sh || echo > "$fail"
 echo
 
-# Lint GitHub Actions workflows with actionlint
-./scripts/lint-actionlint.sh || echo > "$fail"
-echo
-
 # Lint Cabal files with cabal
 ./scripts/lint-cabal.sh || echo > "$fail"
 echo

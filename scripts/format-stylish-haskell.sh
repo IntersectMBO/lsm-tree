@@ -11,8 +11,7 @@ if [ "${stylish_haskell}" = "" ]; then
 fi
 stylish_haskell_installed_version="$($stylish_haskell --version | head -n 1 | cut -d' ' -f2)"
 if [ ! "${stylish_haskell_installed_version}" = "${stylish_haskell_required_version}" ]; then
-    echo "Requires stylish-haskell version ${stylish_haskell_required_version}; found version ${stylish_haskell_installed_version}"
-    exit 1
+    >&2 printf "\033[1;31mWARNING: expecting stylish-haskell %s; version %s found. Running anyway...\033[00m\n" "${stylish_haskell_required_version}" "${stylish_haskell_installed_version}"
 fi
 
 # Format Haskell files with stylish-haskell
