@@ -384,7 +384,7 @@ newtype Session = Session (LSMT.Session IO)
 {- |
 Run an action with access to a session opened from a session directory.
 
-If there are no open tables or cursors when the session terminates, then this disk I\/O complexity of this operation is \(O(1)\).
+If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
 Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
 Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
 The following assumes all tables in the session have the same merge policy:
@@ -446,7 +446,7 @@ openSession dir = do
 {- |
 Close a session.
 
-If there are no open tables or cursors in the session, then this disk I\/O complexity of this operation is \(O(1)\).
+If there are no open tables or cursors in the session, then the disk I\/O complexity of this operation is \(O(1)\).
 Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
 Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the tables in the session.
 The following assumes all tables in the session have the same merge policy:
