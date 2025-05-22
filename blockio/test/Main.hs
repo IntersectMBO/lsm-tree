@@ -33,15 +33,12 @@ import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck (testProperty)
 
-import qualified Test.System.Posix.Fcntl.NoCache
-
 main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
 tests = testGroup "blockio:test" [
-      Test.System.Posix.Fcntl.NoCache.tests
-    , testCase "example_initClose" example_initClose
+      testCase "example_initClose" example_initClose
     , testCase "example_closeIsIdempotent" example_closeIsIdempotent
     , testProperty "prop_readWrite" prop_readWrite
     , testProperty "prop_submitToClosedCtx" prop_submitToClosedCtx

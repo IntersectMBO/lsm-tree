@@ -10,7 +10,7 @@ import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
-import qualified System.Posix.Fcntl.NoCache as Unix
+import qualified System.Posix.Fcntl as Unix
 import qualified System.Posix.Files as Unix
 import qualified System.Posix.Unistd as Unix
 
@@ -36,7 +36,7 @@ ioHasBlockIO hfs _params =
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
 hSetNoCache h b =
-  FS.withOpenHandle "hSetNoCache" (handleRaw h) (flip Unix.writeFcntlNoCache b)
+  FS.withOpenHandle "hSetNoCache" (handleRaw h) (flip Unix.fileSetCaching (not b))
 
 -- TODO: it is unclear if MacOS supports @posix_fadvise(2)@, and it's hard to
 -- check because there are no manual pages online. For now, it's just hardcoded
