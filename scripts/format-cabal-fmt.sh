@@ -11,8 +11,7 @@ if [ "${cabal_fmt}" = "" ]; then
 fi
 cabal_fmt_installed_version="$($cabal_fmt --version | head -n 1 | cut -d' ' -f2)"
 if [ ! "${cabal_fmt_installed_version}" = "${cabal_fmt_required_version}" ]; then
-    echo "Requires cabal-fmt version ${cabal_fmt_required_version}; found version ${cabal_fmt_installed_version}"
-    exit 1
+     >&2 printf "\033[1;31mWARNING: expecting cabal-fmt %s; version %s found. Running anyway...\033[00m\n" "${cabal_fmt_required_version}" "${cabal_fmt_installed_version}"
 fi
 
 # Format Cabal files with cabal-fmt
