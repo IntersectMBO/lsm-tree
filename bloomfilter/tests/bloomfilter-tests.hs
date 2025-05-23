@@ -172,15 +172,20 @@ prop_calc_size_fpr_fpr proxy (FPR fpr) (NumEntries numEntries) =
 -- | Compare @sizeForBits@ against @falsePositiveRate@ with some tolerance for deviations
 prop_calc_size_fpr_bits :: BloomFilter bloom => Proxy bloom
                         -> BitsPerEntry -> NumEntries -> Property
-prop_calc_size_fpr_bits proxy (BitsPerEntry c) (NumEntries numEntries) =
-  let policy = policyForBits proxy c
+prop_calc_size_fpr_bits proxy (BitsPerEntry bpe) (NumEntries numEntries) =
+  let policy = policyForBits proxy bpe
       bsize  = sizeForPolicy proxy policy numEntries
    in falsePositiveRate (fromIntegral (B.sizeBits bsize))
                         (fromIntegral numEntries)
                         (fromIntegral (B.sizeHashes bsize))
    ~~~ policyFPR proxy policy
   where
-    (~~~) = withinTolerance 1e-6
+    (~~~) = withinTolerance tolerance
+    tolerance | bpe >= 18   = 1e-7
+              | bpe >= 13   = 1e-6
+              | bpe >= 8    = 1e-5
+              | bpe >= 4    = 1e-4
+              | otherwise   = 1e-3
 
 -- reference implementations used for sanity checks
 
