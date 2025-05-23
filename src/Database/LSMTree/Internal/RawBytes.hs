@@ -69,6 +69,7 @@ import           Prelude hiding (drop, take)
 import           GHC.Exts
 import           GHC.Stack
 import           GHC.Word
+import           Text.Printf (printf)
 
 {- Note: [Export structure]
    ~~~~~~~~~~~~~~~~~~~~~~~
@@ -80,15 +81,30 @@ import           GHC.Word
   Raw bytes
 -------------------------------------------------------------------------------}
 
--- | Raw bytes with no alignment constraint (i.e. byte aligned), and no
--- guarantee of pinned or unpinned memory (i.e. could be either).
+{- |
+Raw bytes.
+
+This type imposes no alignment constraint and provides no guarantee of whether the memory is pinned or unpinned.
+-}
 newtype RawBytes = RawBytes (VP.Vector Word8)
-  deriving newtype (Show, NFData)
+  deriving newtype (NFData)
+
+-- TODO: Should we have a more well-behaved instance for 'Show'?
+--       For instance, an instance that prints the bytes as a hexadecimal string?
+deriving newtype instance Show RawBytes
+
+_showBytesAsHex :: RawBytes -> ShowS
+_showBytesAsHex (RawBytes bytes) = VP.foldr ((.) . showByte) id bytes
+  where
+    showByte :: Word8 -> ShowS
+    showByte = showString . printf "%02x"
 
 instance Eq RawBytes where
   bs1 == bs2 = compareBytes bs1 bs2 == EQ
 
--- | Lexicographical 'Ord' instance.
+{- |
+This instance uses lexicographic ordering.
+-}
 instance Ord RawBytes where
   compare = compareBytes
 
@@ -113,6 +129,11 @@ instance Hashable RawBytes where
 hash :: Word64 -> RawBytes -> Word64
 hash salt (RawBytes (VP.Vector off len ba)) = hashByteArray ba off len salt
 
+{- |
+@'fromList'@: \(O(n)\).
+
+@'toList'@: \(O(n)\).
+-}
 instance IsList RawBytes where
   type Item RawBytes = Word8
 
@@ -122,9 +143,13 @@ instance IsList RawBytes where
   toList :: RawBytes -> [Item RawBytes]
   toList = unpack
 
--- | Mostly to make test cases shorter to write.
+{- |
+@'fromString'@: \(O(n)\).
+
+__Warning:__ 'fromString' truncates multi-byte characters to octets. e.g. \"枯朶に烏のとまりけり秋の暮\" becomes \"�6k�nh~�Q��n�\".
+-}
 instance IsString RawBytes where
-    fromString = pack . map (fromIntegral . fromEnum)
+    fromString = fromByteString . fromString
 
 {-------------------------------------------------------------------------------
   Accessors
@@ -171,9 +196,19 @@ toWord64 x# = byteSwap64 (W64# x#)
   Construction
 -------------------------------------------------------------------------------}
 
+{- |
+@('<>')@: \(O(n)\).
+
+@'Data.Semigroup.sconcat'@: \(O(n)\).
+-}
 instance Semigroup RawBytes where
     (<>) = coerce (VP.++)
 
+{- |
+@'mempty'@: \(O(1)\).
+
+@'mconcat'@: \(O(n)\).
+-}
 instance Monoid RawBytes where
     mempty = coerce VP.empty
     mconcat = coerce VP.concat

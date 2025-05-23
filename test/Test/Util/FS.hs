@@ -264,7 +264,7 @@ assertNumOpenHandles fs m =
 --
 -- Equality is checked as follows:
 -- * Infinite streams are equal: any infinity is as good as another infinity
--- * Finite streams are are checked for pointwise equality on their elements.
+-- * Finite streams are checked for pointwise equality on their elements.
 -- * Other streams are trivially unequal: they do not have matching finiteness
 --
 -- This approximate equality satisfies the __Reflexivity__, __Symmetry__,
