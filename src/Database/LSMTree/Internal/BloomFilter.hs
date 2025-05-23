@@ -296,6 +296,11 @@ bloomFilterFromFile hfs h = do
                  ErrFileFormatInvalid
                    (fsErrorPath e) FormatBloomFilterFile msg)
 
+{-# SPECIALISE hGetByteArrayExactly ::
+     HasFS IO h
+  -> Handle h
+  -> Int
+  -> IO P.ByteArray #-}
 hGetByteArrayExactly ::
      (PrimMonad m, MonadThrow m)
   => HasFS m h
