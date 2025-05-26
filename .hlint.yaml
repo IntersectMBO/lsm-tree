@@ -77,6 +77,12 @@
 # Will suggest replacing "wibbleMany [myvar]" with "wibbleOne myvar"
 # - error: {lhs: "wibbleMany [x]", rhs: wibbleOne x}
 - error:
+    { note: Prefer pure to reduce Monad constraint
+    , lhs: return x
+    , rhs: pure x
+    }
+
+- error:
     name: "Use mkPrimVector"
     lhs: "Data.Vector.Primitive.Vector"
     rhs: "mkPrimVector"
