@@ -56,7 +56,7 @@ new initialBufferSize
         buffer <- Mutable.new initialBufferSize
         bufferRef <- newSTRef $! buffer
         lengthRef <- newPrimVar 0
-        return (GrowingVector bufferRef lengthRef)
+        pure (GrowingVector bufferRef lengthRef)
 
 {-|
     Appends a value a certain number of times to a vector. If a negative number
@@ -64,7 +64,7 @@ new initialBufferSize
 -}
 append :: forall s a . GrowingVector s a -> Int -> a -> ST s ()
 append _ pseudoCount _ | pseudoCount <= 0
-    = return ()
+    = pure ()
 append (GrowingVector bufferRef lengthRef) count val
     = do
           length <- readPrimVar lengthRef
@@ -125,7 +125,7 @@ readMaybeLast :: GrowingVector s a -> ST s (Maybe a)
 readMaybeLast (GrowingVector bufferRef lengthRef) = do
     length <- readPrimVar lengthRef
     if length == 0
-        then return Nothing
+        then pure Nothing
         else do
                  buffer <- readSTRef bufferRef
                  Just <$> Mutable.read buffer (pred length)

@@ -189,7 +189,7 @@ prop_union kopss = length (filter (not . null) kopss) > 1 QC.==>
         debt' <- LSM.remainingUnionDebt t
 
         rep <- dumpRepresentation t
-        return $ QC.counterexample (show (debt, debt')) $ QC.conjoin
+        pure $ QC.counterexample (show (debt, debt')) $ QC.conjoin
           [ debt =/= UnionDebt 0
           , debt' === UnionDebt 0
           , hasUnionWith isCompleted rep
@@ -203,7 +203,7 @@ mkTable :: Tracer (ST s) Event -> [(LSM.Key, LSM.Op)] -> ST s (LSM s)
 mkTable tr ks = do
     t <- LSM.new
     LSM.updates tr t ks
-    return t
+    pure t
 
 -------------------------------------------------------------------------------
 -- tests for MergingTree
@@ -217,7 +217,7 @@ prop_MergingTree t credits =
       stToIO $ do
         tree <- fromT t
         res <- go tree (QC.getInfiniteList credits)
-        return $
+        pure $
           res === Right ()
   where
     -- keep supplying until there is an error or the tree merge is completed
@@ -225,8 +225,8 @@ prop_MergingTree t credits =
     go tree (SmallCredit c : cs) = do
         c' <- LSM.supplyCreditsMergingTree c tree
         evalInvariant (treeInvariant tree) >>= \case
-          Left e   -> return (Left e)
-          Right () -> if c' > 0 then return (Right ())
+          Left e   -> pure (Left e)
+          Right () -> if c' > 0 then pure (Right ())
                                 else go tree cs
     go _ [] = error "infinite list is finite"
 
@@ -299,7 +299,7 @@ depthP (PMergingRun _) = 0
 fromT :: T -> ST s (MergingTree s)
 fromT t = do
     state <- case t of
-      TCompleted r -> return (CompletedTreeMerge r)
+      TCompleted r -> pure (CompletedTreeMerge r)
       TOngoing mr  -> OngoingTreeMerge <$> fromM mr
       TPendingLevel ps mt ->
         fmap PendingTreeMerge $
@@ -357,13 +357,13 @@ instance Arbitrary T where
             [ (1, do
                 -- pending level merge without child
                 preExisting <- QC.vector (n - 1)  -- 1 for constructor itself
-                return (TPendingLevel preExisting Nothing))
+                pure (TPendingLevel preExisting Nothing))
             , (1, do
                 -- pending level merge with child
                 numPreExisting <- QC.chooseInt (0, min 20 (n - 2))
                 preExisting <- QC.vector numPreExisting
                 tree <- go (n - numPreExisting - 1)
-                return (TPendingLevel preExisting (Just tree)))
+                pure (TPendingLevel preExisting (Just tree)))
             , (2, do
                 -- pending union merge
                 ns <- QC.shuffle =<< arbitraryPartition2 n
@@ -380,8 +380,8 @@ instance Arbitrary T where
       -- Split into smaller positive numbers.
       arbitraryPartition :: Int -> QC.Gen [Int]
       arbitraryPartition n
-            | n <  1 = return []
-            | n == 1 = return [1]
+            | n <  1 = pure []
+            | n == 1 = pure [1]
             | otherwise = do
               first <- QC.chooseInt (1, n)
               (first :) <$> arbitraryPartition (n - first)
@@ -507,10 +507,10 @@ prop_shrinkSatisfiesInvariant t =
 -- | Iterative shrinks, and how many alternatives were possible at each point.
 genShrinkTrace :: Arbitrary a => Int -> a -> QC.Gen [(Int, a)]
 genShrinkTrace !n x
-  | n <= 0 = return []
+  | n <= 0 = pure []
   | otherwise =
     case shrink x of
-      [] -> return []
+      [] -> pure []
       xs -> do
         -- like QC.elements, but we want access to the length
         let len = length xs

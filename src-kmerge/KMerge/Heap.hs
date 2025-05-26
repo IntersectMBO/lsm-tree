@@ -57,19 +57,18 @@ newMutableHeap xs = do
     -- Due to the required NonEmpty input type, there must be at least one element to read.
     x <- readSmallArray arr 0
     writeSmallArray arr 0 placeholder
-    return $! (MH sizeRef arr, x)
+    pure $! (MH sizeRef arr, x)
 
 -- | Replace the minimum-value, and immediately extract the new minimum value.
 replaceRoot :: forall a m. (PrimMonad m, Ord a) => MutableHeap (PrimState m) a -> a -> m a
 replaceRoot (MH sizeRef arr) val = do
     size <- readPrimVar sizeRef
     if size <= 1
-    then return val
+    then pure val
     else do
         writeSmallArray arr 0 val
         siftDown arr size val 0
-        x <- readSmallArray arr 0
-        return x
+        readSmallArray arr 0
 
 {-# SPECIALISE replaceRoot :: forall a.   Ord a => MutableHeap RealWorld a -> a -> IO          a #-}
 {-# SPECIALISE replaceRoot :: forall a s. Ord a => MutableHeap s         a -> a -> Strict.ST s a #-}
@@ -80,7 +79,7 @@ extract :: forall a m. (PrimMonad m, Ord a) => MutableHeap (PrimState m) a -> m 
 extract (MH sizeRef arr) = do
     size <- readPrimVar sizeRef
     if size <= 1
-    then return Nothing
+    then pure Nothing
     else do
         writePrimVar sizeRef $! size - 1
         val <- readSmallArray arr (size - 1)
@@ -88,7 +87,7 @@ extract (MH sizeRef arr) = do
         siftDown arr size val 0
         x <- readSmallArray arr 0
         writeSmallArray arr (size - 1) placeholder
-        return $! Just x
+        pure $! Just x
 
 {-# SPECIALISE extract :: forall a.   Ord a => MutableHeap RealWorld a -> IO          (Maybe a) #-}
 {-# SPECIALISE extract :: forall a s. Ord a => MutableHeap s         a -> Strict.ST s (Maybe a) #-}
@@ -102,7 +101,7 @@ siftUp :: forall a m. (PrimMonad m, Ord a) => SmallMutableArray (PrimState m) a 
 siftUp !arr !x = loop where
     loop !idx
         | idx <= 0
-        = return ()
+        = pure ()
 
         | otherwise
         = do
@@ -128,7 +127,7 @@ siftDown !arr !size !x = loop where
             if x <= l
             then do
                 if x <= r
-                then return ()
+                then pure ()
                 else do
                     -- r < x <= l; swap x and r
                     writeSmallArray arr rgt x
@@ -152,14 +151,14 @@ siftDown !arr !size !x = loop where
         = do
             l <- readSmallArray arr lft
             if x <= l
-            then return ()
+            then pure ()
             else do
                 writeSmallArray arr idx l
                 writeSmallArray arr lft x
                 -- there is no need to loop further, lft was the last value.
 
         | otherwise
-        = return ()
+        = pure ()
       where
         !lft = doubleOf idx + 1
         !rgt = doubleOf idx + 2

@@ -169,7 +169,7 @@ writeBlob hfs blobOffset blobHandle blob = do
     let SerialisedBlob rb = blob
     let lbs = BSL.fromStrict $ RB.toByteString rb
     writeToHandle hfs (unForBlob blobHandle) lbs
-    return (BlobSpan offset (fromIntegral size))
+    pure (BlobSpan offset (fromIntegral size))
 
 {-# SPECIALISE copyBlob ::
      HasFS IO h

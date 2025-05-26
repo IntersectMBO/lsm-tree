@@ -88,7 +88,7 @@ feedBaler blocks (Baler buffer remnantSizeRef) = do
         then do
                  unsafeCopyBlocks (Mutable.drop remnantSize buffer)
                  writePrimVar remnantSizeRef totalSize
-                 return Nothing
+                 pure Nothing
         else do
                  protoChunk <- Mutable.unsafeNew totalSize
                  Mutable.unsafeCopy (Mutable.take remnantSize protoChunk)
@@ -96,7 +96,7 @@ feedBaler blocks (Baler buffer remnantSizeRef) = do
                  unsafeCopyBlocks (Mutable.drop remnantSize protoChunk)
                  writePrimVar remnantSizeRef 0
                  chunk <- Chunk <$> unsafeFreeze protoChunk
-                 return (Just chunk)
+                 pure (Just chunk)
     where
 
     unsafeCopyBlocks :: MVector s Word8 -> ST s ()
@@ -122,7 +122,7 @@ unsafeEndBaler :: forall s . Baler s -> ST s (Maybe Chunk)
 unsafeEndBaler (Baler buffer remnantSizeRef) = do
     remnantSize <- readPrimVar remnantSizeRef
     if remnantSize == 0
-        then return Nothing
+        then pure Nothing
         else do
                  let
 
@@ -130,4 +130,4 @@ unsafeEndBaler (Baler buffer remnantSizeRef) = do
                      !protoChunk = Mutable.take remnantSize buffer
 
                  chunk <- Chunk <$> unsafeFreeze protoChunk
-                 return (Just chunk)
+                 pure (Just chunk)

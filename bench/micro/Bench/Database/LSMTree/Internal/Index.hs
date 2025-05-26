@@ -37,13 +37,13 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Index" $
         = bgroup (indexTypeName ++ " index") $
           [
               -- Search
-              env (return $ searchIndex indexType 10000) $ \ index ->
-              env (return $ searchKeys 1000)             $ \ keys  ->
+              env (pure $ searchIndex indexType 10000) $ \ index ->
+              env (pure $ searchKeys 1000)             $ \ keys  ->
               bench "Search" $
               searchBenchmarkable index keys,
 
               -- Incremental construction
-              env (return $ incrementalConstructionAppends 10000) $ \ appends ->
+              env (pure $ incrementalConstructionAppends 10000) $ \ appends ->
               bench "Incremental construction" $
               incrementalConstructionBenchmarkable indexType appends
           ]

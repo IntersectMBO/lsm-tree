@@ -182,7 +182,7 @@ new hfs hbio runParams mergeType mergeResolve targetPaths runs = do
       let numEntries = V.foldMap' Run.size runs
       mergeBuilder <- Builder.new hfs hbio runParams targetPaths numEntries
       mergeState <- newMutVar $! Merging
-      return Merge {
+      pure Merge {
           mergeIsLastLevel = isLastLevel mergeType
         , mergeIsUnion = isUnion mergeType
         , mergeHasFS = hfs
@@ -339,7 +339,7 @@ doStepsLevel m@Merge {..} requestedSteps = go 0
   where
     go !n
       | n >= requestedSteps =
-          return (n, MergeInProgress)
+          pure (n, MergeInProgress)
       | otherwise = do
           (key, entry, hasMore) <- Readers.pop mergeResolve mergeReaders
           case hasMore of
@@ -411,7 +411,7 @@ doStepsUnion m@Merge {..} requestedSteps = go 0
   where
     go !n
       | n >= requestedSteps =
-          return (n, MergeInProgress)
+          pure (n, MergeInProgress)
       | otherwise = do
           (key, entry, hasMore) <- Readers.pop mergeResolve mergeReaders
           handleEntry (n + 1) key entry hasMore

@@ -97,7 +97,7 @@ new :: NumBlocks -> ST s (MBitArray s)
 new (NumBlocks numBlocks) = do
     mba@(MutableByteArray mba#) <- newAlignedPinnedByteArray numBytes 64
     setByteArray mba 0 numBytes (0 :: Word8)
-    return (MBitArray (MutablePrimArray mba#))
+    pure (MBitArray (MutablePrimArray mba#))
   where
     !numBytes = numBlocks * 64
 
@@ -126,7 +126,7 @@ unsafeSet :: MBitArray s -> BlockIx -> BitIx -> ST s ()
 unsafeSet (MBitArray arr) blockIx blockBitIx = do
 #ifdef NO_IGNORE_ASSERTS
     sz <- getSizeofMutablePrimArray arr
-    assert (wordIx >= 0 && wordIx < sz) $ return ()
+    assert (wordIx >= 0 && wordIx < sz) $ pure ()
 #endif
     w <- readPrimArray arr wordIx
     writePrimArray arr wordIx (unsafeSetBit w wordBitIx)
@@ -146,7 +146,7 @@ prefetchSet (MBitArray (MutablePrimArray mba#)) (BlockIx blockIx) = do
 
 #ifdef NO_IGNORE_ASSERTS
     sz <- getSizeofMutableByteArray (MutableByteArray mba#)
-    assert (let i = I# i# in i >= 0 && i < sz-63) $ return ()
+    assert (let i = I# i# in i >= 0 && i < sz-63) $ pure ()
 #endif
 
     -- In prefetchMutableByteArray0, the 0 refers to a "non temporal" load,

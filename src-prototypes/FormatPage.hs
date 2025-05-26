@@ -435,7 +435,7 @@ deserialisePage dpgsz p =
                 sizeKeys sizeValues
 
       assert (offsetKeyOffsets == offKeyOffsets pageSizesOffsets) $
-        return PageIntermediate {
+        pure PageIntermediate {
           pageNumKeys      = fromIntegral pageNumKeys,
           pageNumBlobs     = fromIntegral pageNumBlobs,
           pageDiskPageSize = dpgsz,
@@ -705,7 +705,7 @@ genPageContentOverfull dpgsz genkey genval =
       kop <- genPageContentSingleSmall genkey genval
       case pageSizeAddElem kop sz of
          -- include as the /first/ element, the one that will make it overfull:
-        Nothing  -> return (kop:kops) -- not reversed!
+        Nothing  -> pure (kop:kops) -- not reversed!
         Just sz' -> go (kop:kops) sz'
 
 genPageContentLargeSmallFits :: DiskPageSize

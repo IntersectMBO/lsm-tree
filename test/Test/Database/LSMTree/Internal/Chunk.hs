@@ -49,7 +49,7 @@ balingOutput minChunkSize food = runST $ do
     baler <- createBaler minChunkSize
     commonChunks <- mapM (flip feedBaler baler) food
     remnant <- unsafeEndBaler baler
-    return (commonChunks, remnant)
+    pure (commonChunks, remnant)
 
 {-|
     Supplies the output of a complete baler run for constructing a property.

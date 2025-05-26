@@ -101,7 +101,7 @@ makeRawPage ba off
         mba <- newAlignedPinnedByteArray 4096 8
         fillByteArray mba 0 4096 0
         copyByteArray mba 0 ba off (clamp 0 4096 (sizeofByteArray ba - off))
-        return mba
+        pure mba
   where
     page = RawPage (div2 off) ba
     clamp l u x = max l (min u x)

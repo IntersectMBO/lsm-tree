@@ -122,7 +122,7 @@ makeKey seed =
            case v of
              P.MutablePrimArray mba -> do
                _ <- P.resizeMutableByteArray (P.MutableByteArray mba) 34
-               return v
+               pure v
 
       of (P.PrimArray ba :: P.PrimArray Word64) ->
            byteArrayToSBS (P.ByteArray ba)
@@ -262,7 +262,7 @@ timed action = do
     printf "Running time:  %.03f sec\n" t
     printf "/proc/self/io after vs. before: %s\n" (ppShow p)
     printf "RTSStats after vs. before: %s\n" (ppShow s)
-    return (x, t, s, p)
+    pure (x, t, s, p)
 
 timed_ :: IO () -> IO (Double, RTSStatsDiff Triple, ProcIODiff)
 timed_ action = do
@@ -479,7 +479,7 @@ doDryRun' gopts opts = do
         let (batch1, batch2) = toOperations lookups inserts
         _ <- evaluate $ force (batch1, batch2)
 
-        return g'
+        pure g'
 
     when (check opts) $ do
         duplicates <- readIORef duplicateRef
@@ -589,7 +589,7 @@ doRun gopts opts = do
         checkvar <- newIORef $ pureReference
                                 (initialSize gopts) (batchSize opts)
                                 (batchCount opts) (seed opts)
-        let fcheck | not (check opts) = \_ _ -> return ()
+        let fcheck | not (check opts) = \_ _ -> pure ()
                    | otherwise = \b y -> do
               (x:xs) <- readIORef checkvar
               unless (x == y) $
@@ -642,7 +642,7 @@ sequentialIteration h output !initialSize !batchSize !tbl !b !g =
     _ <- timeLatency tref $ LSM.updates tbl is
 
     -- continue to the next batch
-    return g'
+    pure g'
 
 
 sequentialIterations :: LatencyHandle
@@ -674,7 +674,7 @@ sequentialIterationLO output !initialSize !batchSize !tbl !b !g = do
     output b (V.zip ls (fmap (fmap (const ())) results))
 
     -- continue to the next batch
-    return g'
+    pure g'
 
 sequentialIterationsLO :: (Int -> LookupResults -> IO ())
                        -> Int -> Int -> Int -> Word64
@@ -780,7 +780,7 @@ pipelinedIteration h output !initialSize !batchSize
           !delta' = Map.fromList (V.toList is)
       putMVar syncTblOut (tbl_n2, delta')
 
-    return tbl_n2
+    pure tbl_n2
   where
     applyUpdates :: Map K (LSM.Update V a)
                  -> V.Vector (K, LSM.LookupResult V b)
@@ -839,7 +839,7 @@ pipelinedIterations h output !initialSize !batchSize !batchCount !seed tbl_0 = d
     -- If run with +RTS -N2 then we'll put each thread on a separate core.
     withAsyncOn 0 threadA $ \ta ->
       withAsyncOn 1 threadB $ \tb ->
-        waitBoth ta tb >> return ()
+        waitBoth ta tb >> pure ()
 
 -------------------------------------------------------------------------------
 -- Testing
@@ -1020,7 +1020,7 @@ main = do
 forFoldM_ :: Monad m => s -> [a] -> (a -> s -> m s) -> m s
 forFoldM_ !s0 xs0 f = go s0 xs0
   where
-    go !s []     = return s
+    go !s []     = pure s
     go !s (x:xs) = do
       !s' <- f x s
       go s' xs

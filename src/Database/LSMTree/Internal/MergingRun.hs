@@ -303,7 +303,7 @@ snapshot (DeRef MergingRun {..}) = do
     (SpentCredits   spent,
      UnspentCredits unspent) <- atomicReadCredits mergeCreditsVar
     let supplied = spent + unspent
-    return (mergeDebt, supplied, state)
+    pure (mergeDebt, supplied, state)
 
 totalMergeDebt :: Ref (MergingRun t m h) -> MergeDebt
 totalMergeDebt (DeRef MergingRun {mergeDebt}) = mergeDebt
@@ -312,7 +312,7 @@ totalMergeDebt (DeRef MergingRun {mergeDebt}) = mergeDebt
 mergeType :: MonadMVar m => Ref (MergingRun t m h) -> m (Maybe t)
 mergeType (DeRef mr) = do
     s <- readMVar (mergeState mr)
-    return $ case s of
+    pure $ case s of
       CompletedMerge _ -> Nothing
       OngoingMerge _ m -> Just (Merge.mergeType m)
 
@@ -616,7 +616,7 @@ atomicModifyInt var f =
       let (!after, !result) = f before
       before' <- casInt var before after
       if before' == before
-        then return result
+        then pure result
         else casLoop before'
 
 -- | Credits supplied using a relative value or an absolute value.
@@ -769,7 +769,7 @@ remainingMergeDebt ::
 remainingMergeDebt (DeRef mr) = do
     readMVar (mergeState mr) >>= \case
       CompletedMerge r -> do
-        return (MergeDebt 0, Run.size r)
+        pure (MergeDebt 0, Run.size r)
       OngoingMerge _ _ -> do
         let MergeDebt totalDebt = mergeDebt mr
         let size = let MergeCredits n = totalDebt in NumEntries n
@@ -777,7 +777,7 @@ remainingMergeDebt (DeRef mr) = do
           atomicReadCredits (mergeCreditsVar mr)
         let debt = totalDebt - (spent + unspent)
         assert (debt >= 0) $ pure ()
-        return (MergeDebt debt, size)
+        pure (MergeDebt debt, size)
 
 {-# INLINE supplyChecked #-}
 -- | Helper function to assert common invariants for functions that supply
@@ -800,7 +800,7 @@ supplyChecked _query supply x credits = do
     -- the debt was reduced sufficiently (amount of credits spent)
     assertM $ debt' <= let MergeDebt d = debt
                        in MergeDebt (d - (credits - leftovers))
-    return leftovers
+    pure leftovers
 #else
     supply x credits
 #endif
@@ -933,7 +933,7 @@ supplyCredits (DeRef MergingRun {
             assert   (               0 <= suppliedCredits) $
               assert (suppliedCredits  <= suppliedCredits') $
               assert (suppliedCredits' <= mergeDebtAsCredits mergeDebt) $
-              return (suppliedCredits, suppliedCredits', leftoverCredits))
+              pure (suppliedCredits, suppliedCredits', leftoverCredits))
 
 {-# SPECIALISE performMergeSteps ::
      StrictMVar IO (MergingRunState t IO h)

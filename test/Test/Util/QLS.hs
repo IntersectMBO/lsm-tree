@@ -49,7 +49,7 @@ ioPropertyBracket init cleanup runner prop =
       st <- init
       a <- restore (runner prop st) `onException` cleanup st
       b <- cleanup st
-      return $ a QC..&&. b
+      pure $ a QC..&&. b
 
 monadicBracketIO :: forall st a b m.
      (Monad m, Testable a, Testable b)

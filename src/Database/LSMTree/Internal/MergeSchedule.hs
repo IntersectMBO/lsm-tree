@@ -157,7 +157,7 @@ duplicateTableContent reg (TableContent wb wbb levels cache ul) = do
     levels' <- duplicateLevels reg levels
     cache'  <- duplicateLevelsCache reg cache
     ul'     <- duplicateUnionLevel reg ul
-    return $! TableContent wb wbb' levels' cache' ul'
+    pure $! TableContent wb wbb' levels' cache' ul'
 
 {-# SPECIALISE releaseTableContent :: ActionRegistry IO -> TableContent IO h -> IO () #-}
 releaseTableContent ::
@@ -284,7 +284,7 @@ duplicateLevelsCache ::
 duplicateLevelsCache reg cache = do
     rs' <- forMStrict (cachedRuns cache) $ \r ->
              withRollback reg (dupRef r) releaseRef
-    return cache { cachedRuns = rs' }
+    pure cache { cachedRuns = rs' }
 
 {-# SPECIALISE releaseLevelsCache ::
      ActionRegistry IO
@@ -324,7 +324,7 @@ duplicateLevels reg levels =
       incomingRun'  <- withRollback reg (duplicateIncomingRun incomingRun) releaseIncomingRun
       residentRuns' <- forMStrict residentRuns $ \r ->
                          withRollback reg (dupRef r) releaseRef
-      return $! Level {
+      pure $! Level {
         incomingRun  = incomingRun',
         residentRuns = residentRuns'
       }
@@ -370,7 +370,7 @@ duplicateUnionLevel ::
   -> m (UnionLevel m h)
 duplicateUnionLevel reg ul =
     case ul of
-      NoUnion          -> return ul
+      NoUnion          -> pure ul
       Union tree cache -> Union <$> withRollback reg (dupRef tree) releaseRef
                                 <*> duplicateUnionCache reg cache
 
@@ -383,7 +383,7 @@ releaseUnionLevel ::
   => ActionRegistry m
   -> UnionLevel m h
   -> m ()
-releaseUnionLevel _   NoUnion            = return ()
+releaseUnionLevel _   NoUnion            = pure ()
 releaseUnionLevel reg (Union tree cache) = delayedCommit reg (releaseRef tree)
                                         >> releaseUnionCache reg cache
 
@@ -667,7 +667,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
         -- Make a new level
         let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty ul
         ir <- newMerge policyForLevel MR.MergeLastLevel ln rs
-        return $! V.singleton $ Level ir V.empty
+        pure $! V.singleton $ Level ir V.empty
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
         r <- expectCompletedMerge ln ir
         case mergePolicyForLevel confMergePolicy ln ls ul of
@@ -749,7 +749,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
             traceWith tr $ AtLevel ln $
               TraceCompletedMerge (Run.size r) (Run.runFsPathsNumber r)
 
-      return ir
+      pure ir
 
 {-# SPECIALISE newIncomingRunAtLevel ::
      Tracer IO (AtLevel MergeTrace)

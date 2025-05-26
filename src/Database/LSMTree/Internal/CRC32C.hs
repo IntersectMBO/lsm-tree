@@ -102,7 +102,7 @@ hGetSomeCRC32C :: Monad m
 hGetSomeCRC32C fs h n crc = do
     bs <- hGetSome fs h n
     let !crc' = updateCRC32C bs crc
-    return (bs, crc')
+    pure (bs, crc')
 
 
 -- | This function ensures that exactly the requested number of bytes is read.
@@ -123,7 +123,7 @@ hGetExactlyCRC32C :: MonadThrow m
 hGetExactlyCRC32C fs h n crc = do
     lbs <- hGetExactly fs h n
     let !crc' = BSL.foldlChunks (flip updateCRC32C) crc lbs
-    return (lbs, crc')
+    pure (lbs, crc')
 
 
 {-# SPECIALISE hPutSomeCRC32C :: HasFS IO h -> Handle h -> BS.ByteString -> CRC32C -> IO (Word64, CRC32C) #-}
@@ -135,7 +135,7 @@ hPutSomeCRC32C :: Monad m
 hPutSomeCRC32C fs h bs crc = do
     !n <- hPutSome fs h bs
     let !crc' = updateCRC32C (BS.take (fromIntegral n) bs) crc
-    return (n, crc')
+    pure (n, crc')
 
 
 -- | This function makes sure that the whole 'BS.ByteString' is written.
@@ -154,7 +154,7 @@ hPutAllCRC32C fs h = go 0
       let bs'      = BS.drop (fromIntegral n) bs
           written' = written + n
       if BS.null bs'
-        then return (written', crc')
+        then pure (written', crc')
         else go written' bs' crc'
 
 -- | This function makes sure that the whole /lazy/ 'BSL.ByteString' is written.
@@ -171,7 +171,7 @@ hPutAllChunksCRC32C fs h = \lbs crc ->
     putChunk :: Word64 -> CRC32C -> BS.ByteString -> m (Word64, CRC32C)
     putChunk !written !crc !bs = do
       (n, crc') <- hPutAllCRC32C fs h bs crc
-      return (written + n, crc')
+      pure (written + n, crc')
 
 {-# SPECIALISE readFileCRC32C :: HasFS IO h -> FsPath -> IO CRC32C #-}
 readFileCRC32C :: forall m h. MonadThrow m => HasFS m h -> FsPath -> m CRC32C
@@ -182,7 +182,7 @@ readFileCRC32C fs file =
     go !h !crc = do
       bs <- hGetSome fs h 65504  -- 2^16 - 4 words overhead
       if BS.null bs
-        then return crc
+        then pure crc
         else go h (updateCRC32C bs crc)
 
 newtype ChunkSize = ChunkSize ByteCount
@@ -243,7 +243,7 @@ hGetAllCRC32C' hfs h (ChunkSize !chunkSize) !crc0
     go !bs buf !crc = do
       !n <- hGetBufSome hfs h buf 0 chunkSize
       if n == 0
-        then return crc
+        then pure crc
         else do
           -- compute the update CRC value before reading the next bytes
           let !crc' = updateCRC32C (BS.take (fromIntegral n) bs) crc
@@ -328,7 +328,7 @@ writeChecksumsFile :: MonadThrow m
 writeChecksumsFile fs path checksums =
     withFile fs path (WriteMode MustBeNew) $ \h -> do
       _ <- hPutAll fs h (formatChecksumsFile checksums)
-      return ()
+      pure ()
 
 {-# SPECIALISE writeChecksumsFile' :: HasFS IO h -> Handle h -> ChecksumsFile -> IO () #-}
 writeChecksumsFile' :: MonadThrow m
@@ -354,7 +354,7 @@ parseChecksumFileLine str0 = do
     let str3 = BSC.drop 4 str2
     guard (BSC.length str3 == 8 && BSC.all isHexDigit str3)
     let !crc = fromIntegral (hexdigitsToInt str3)
-    return (ChecksumsFileName name, CRC32C crc)
+    pure (ChecksumsFileName name, CRC32C crc)
 
 isHexDigit :: Char -> Bool
 isHexDigit c = (c >= '0' && c <= '9')

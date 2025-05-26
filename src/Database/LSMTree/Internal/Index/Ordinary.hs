@@ -241,4 +241,4 @@ fromSBS shortByteString@(SBS unliftedByteArray)
                       !first = makeUnslicedKey (SerialisedKey' firstBytes)
 
                   others <- unslicedLastKeys othersBytes
-                  return (first : others)
+                  pure (first : others)

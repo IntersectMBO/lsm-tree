@@ -162,7 +162,7 @@ unfold bloomsize f k =
       where
         loop :: b -> ST s ()
         loop !j = case f j of
-                    Nothing      -> return ()
+                    Nothing      -> pure ()
                     Just (a, j') -> insert mb a >> loop j'
 
 -- | Create a Bloom filter, populating it from a sequence of values.
@@ -241,7 +241,7 @@ insertMany bloom key n =
               prepareProbes (i+1) (i_w+1)
 
           | n > 0     = insertProbe 0 0 i_w
-          | otherwise = return ()
+          | otherwise = pure ()
 
         -- Read from the read end of the buffer and do the inserts.
         insertProbe :: Int -> Int -> Int -> ST s ()
@@ -275,4 +275,4 @@ insertMany bloom key n =
                 i_w
 
           -- When the buffer is empty, we're done.
-          | otherwise = return ()
+          | otherwise = pure ()

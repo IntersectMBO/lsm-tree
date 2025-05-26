@@ -194,7 +194,7 @@ newPageAcc = do
     -- reset the memory, as it's not initialized
     let page = PageAcc {..}
     resetPageAccN page maxKeys
-    return page
+    pure page
 
 dummyKey :: SerialisedKey
 dummyKey = SerialisedKey mempty
@@ -237,7 +237,7 @@ pageAccAddElem ::
     -> ST s Bool   -- ^ 'True' if value was successfully added.
 pageAccAddElem PageAcc {..} k e
     -- quick short circuit: if the entry is bigger than page: no luck.
-    | sizeofEntry k e >= pageSize = return False
+    | sizeofEntry k e >= pageSize = pure False
     | otherwise = do
         n <- P.readPrimArray paDir keysCountIdx
         b <- P.readPrimArray paDir blobRefCountIdx
@@ -254,7 +254,7 @@ pageAccAddElem PageAcc {..} k e
 
         if s' > pageSize || -- check for size overflow
            n >= maxKeys     -- check for buffer overflow
-        then return False
+        then pure False
         else do
             -- key sizes
             ks <- P.readPrimArray paDir keysSizeIdx
@@ -271,7 +271,7 @@ pageAccAddElem PageAcc {..} k e
                     setBlobRef paBlobRefsMap n
                     P.writePrimArray paBlobRefs1 b w64
                     P.writePrimArray paBlobRefs2 b w32
-                _ -> return ()
+                _ -> pure ()
 
             -- operation
             setOperation paOpMap n (entryCrumb e)
@@ -280,7 +280,7 @@ pageAccAddElem PageAcc {..} k e
             VM.write paKeys n k
             VM.write paValues n $! entryValue e
 
-            return True
+            pure True
 
 setBlobRef :: P.MutablePrimArray s Word64 -> Int -> ST s ()
 setBlobRef arr i = do
@@ -306,7 +306,7 @@ serialisePageAcc :: PageAcc s -> ST s RawPage
 serialisePageAcc page@PageAcc {..} = do
     size <- P.readPrimArray paDir keysCountIdx
     case size of
-        0 -> return emptyRawPage
+        0 -> pure emptyRawPage
         _ -> serialisePageAccN size page
 
 -- | Serialise non-empty page.
@@ -385,7 +385,7 @@ serialisePageAccN size PageAcc {..} = do
     loop 0 ko0 vo0 kd0 vd0
 
     ba' <- P.unsafeFreezeByteArray ba
-    return (makeRawPage ba' 0)
+    pure (makeRawPage ba' 0)
 
 
 keysCountPageAcc :: PageAcc s -> ST s Int

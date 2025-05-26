@@ -44,7 +44,7 @@ readEntriesWhile :: forall h m res.
   -> m (V.Vector res, Readers.HasMore)
 readEntriesWhile resolve keyIsWanted fromEntry readers n =
     flip (V.unfoldrNM' n) Readers.HasMore $ \case
-      Readers.Drained -> return (Nothing, Readers.Drained)
+      Readers.Drained -> pure (Nothing, Readers.Drained)
       Readers.HasMore -> readEntryIfWanted
   where
     -- Produces a result unless the readers have been drained or 'keyIsWanted'
@@ -53,7 +53,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
     readEntryIfWanted = do
         key <- Readers.peekKey readers
         if keyIsWanted key then readEntry
-                           else return (Nothing, Readers.HasMore)
+                           else pure (Nothing, Readers.HasMore)
 
     readEntry :: m (Maybe res, Readers.HasMore)
     readEntry = do
@@ -75,7 +75,7 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
     dropRemaining :: SerialisedKey -> m Readers.HasMore
     dropRemaining key = do
         (_, hasMore) <- Readers.dropWhileKey resolve readers key
-        return hasMore
+        pure hasMore
 
     -- Resolve a 'Mupsert' value with the other entries of the same key.
     handleMupdate :: SerialisedKey
@@ -113,13 +113,13 @@ readEntriesWhile resolve keyIsWanted fromEntry readers n =
         case toResult key entry of
           Just !res ->
             -- Found one resolved value, done.
-            return (Just res, hasMore)
+            pure (Just res, hasMore)
           Nothing ->
             -- Resolved value was a Delete, which we don't want to include.
             -- So look for another one (unless there are no more entries!).
             case hasMore of
               Readers.HasMore -> readEntryIfWanted
-              Readers.Drained -> return (Nothing, Readers.Drained)
+              Readers.Drained -> pure (Nothing, Readers.Drained)
 
     toResult :: SerialisedKey
              -> Entry SerialisedValue (RawBlobRef m h)

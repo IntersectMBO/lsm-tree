@@ -55,7 +55,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Merge"
           FsSim.runSimErrorFS FsSim.empty FsSim.emptyErrors $ \_ fs -> do
             hbio <- FsSim.fromHasFS fs
             prop fs hbio
-        return $ res
+        pure $ res
             .&&. counterexample "open handles"
                    (FsSim.numOpenHandles mockFS === 0)
 
@@ -98,7 +98,7 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
         -- cleanup
         releaseRef lhs
 
-        return $ stats $
+        pure $ stats $
               counterexample "numEntries"
               (lhsSize === rhsSize)
           .&&. -- we can't just test bloom filter equality, their sizes may differ.
@@ -138,7 +138,7 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
       kopsFileContent <- FS.hGetAll fs runKOpsFile
       blobFileContent <- withRef runBlobFile $
                          FS.hGetAll fs . BlobFile.blobFileHandle
-      return ( runSize
+      pure ( runSize
              , runFilter
              , runIndex
              , runKOps
@@ -165,7 +165,7 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
 
       filesExist <- traverse (FS.doesFileExist fs) (pathsForRunFiles pathOut)
 
-      return $
+      pure $
         counterexample ("run files exist: " <> show filesExist) $
           isJust mergeToClose ==> all not filesExist
   where
@@ -174,15 +174,15 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
     makeInProgressMerge path runs =
       Merge.new fs hbio runParams mergeType resolveVal
                 path (V.fromList runs) >>= \case
-        Nothing -> return Nothing  -- not in progress
+        Nothing -> pure Nothing  -- not in progress
         Just merge -> do
           -- just do a few steps once, ideally not completing the merge
           Merge.steps merge stepSize >>= \case
             (_, Merge.MergeDone) -> do
               Merge.abort merge  -- run not needed
-              return Nothing  -- not in progress
+              pure Nothing  -- not in progress
             (_, Merge.MergeInProgress) ->
-              return (Just merge)
+              pure (Just merge)
 
 {-------------------------------------------------------------------------------
   Utilities

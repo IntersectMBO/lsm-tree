@@ -269,7 +269,7 @@ genMergingTreeDataOfSize ::
 genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
     tree <- genMergingTree n0
     assert (mergingTreeDataSize tree == n0) $
-      return tree
+      pure tree
   where
     genMergingTree n
       | n < 1
@@ -297,7 +297,7 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
         -- there must be at least one (last) input to the pending merge.
         lastPreExisting <- genPreExistingRun arbitrary
         let preExisting = initPreExisting ++ [lastPreExisting]
-        return (PendingLevelMergeData preExisting Nothing)
+        pure (PendingLevelMergeData preExisting Nothing)
 
     -- n >= 2
     genPendingLevelMergeWithChild n = do
@@ -306,7 +306,7 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
           -- there can't be a last level merge, child is last
           genPreExistingRun (pure MR.MergeMidLevel)
         tree <- genMergingTree (n - 1)
-        return (PendingLevelMergeData preExisting (Just tree))
+        pure (PendingLevelMergeData preExisting (Just tree))
 
     -- n >= 3, needs 1 constructor + 2 children
     genPendingUnionMerge n = do
@@ -347,8 +347,8 @@ arbitraryPartition2 n = assert (n >= 2) $ do
 -- Split into smaller positive numbers.
 arbitraryPartition :: Int -> QC.Gen [Int]
 arbitraryPartition n
-      | n <  1 = return []
-      | n == 1 = return [1]
+      | n <  1 = pure []
+      | n == 1 = pure [1]
       | otherwise = do
         first <- QC.chooseInt (1, n)
         (first :) <$> arbitraryPartition (n - first)

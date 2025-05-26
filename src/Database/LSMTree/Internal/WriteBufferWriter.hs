@@ -108,7 +108,7 @@ new hfs hbio fsPaths = do
   writerBlobOffset <- newPrimVar 0
   writerKOpsHandle <- ForKOps <$> makeHandle hfs (writeBufferKOpsPath fsPaths)
   writerBlobHandle <- ForBlob <$> makeHandle hfs (writeBufferBlobPath fsPaths)
-  return WriteBufferWriter
+  pure WriteBufferWriter
     { writerFsPaths    = fsPaths,
       writerHasFS      = hfs,
       writerHasBlockIO = hbio,
@@ -149,7 +149,7 @@ unsafeFinalise dropCaches WriteBufferWriter {..} = do
     dropCache writerHasBlockIO (unForBlob writerBlobHandle)
   closeHandle writerHasFS (unForKOps writerKOpsHandle)
   closeHandle writerHasFS (unForBlob writerBlobHandle)
-  return (writerHasFS, writerHasBlockIO, writerFsPaths)
+  pure (writerHasFS, writerHasBlockIO, writerFsPaths)
 
 
 {-# SPECIALISE
@@ -219,7 +219,7 @@ addLargeKeyOp pageAcc key op =
     let (page, overflowPages) = PageAcc.singletonPage key op
     -- Combine the results with anything we flushed before
     let !pages = selectPages mPagePre page
-    return (pages, overflowPages)
+    pure (pages, overflowPages)
 
 -- | Internal helper. See 'Database.LSMTree.Internal.RunAcc.flushPageIfNonEmpty'.
 flushPageIfNonEmpty :: PageAcc s -> ST s (Maybe RawPage)

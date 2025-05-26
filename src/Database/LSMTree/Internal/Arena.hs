@@ -43,7 +43,7 @@ data ArenaManager s = ArenaManager (MutVar s [Arena s])
 newArenaManager :: PrimMonad m => m (ArenaManager (PrimState m))
 newArenaManager = do
     m <- newMutVar []
-    return $ ArenaManager m
+    pure $ ArenaManager m
 
 -- | For use in bencmark environments
 instance NFData (ArenaManager s) where
@@ -77,7 +77,7 @@ newBlock :: PrimMonad m => m (Block (PrimState m))
 newBlock = do
     off <- newPrimVar 0
     mba <- newAlignedPinnedByteArray blockSize 4096
-    return (Block off mba)
+    pure (Block off mba)
 
 {-# INLINE withArena #-}
 withArena :: PrimMonad m => ArenaManager (PrimState m) -> (Arena (PrimState m) -> m a) -> m a
@@ -100,12 +100,12 @@ newArena (ArenaManager arenas) = do
         (x:xs) -> (xs, Just x)
 
     case marena of
-        Just arena -> return arena
+        Just arena -> pure arena
         Nothing -> do
             curr <- newBlock >>= newMVar
             free <- newMutVar []
             full <- newMutVar []
-            return Arena {..}
+            pure Arena {..}
 
 {-# SPECIALISE
     closeArena :: ArenaManager s -> Arena s -> ST s ()
@@ -130,7 +130,7 @@ closeArena (ArenaManager arenas) arena = do
   #-}
 scrambleArena :: PrimMonad m => Arena (PrimState m) -> m ()
 #ifndef NO_IGNORE_ASSERTS
-scrambleArena _ = return ()
+scrambleArena _ = pure ()
 #else
 scrambleArena Arena {..} = do
     readMVar curr >>= scrambleBlock
@@ -221,7 +221,7 @@ allocateFromArena' arena@Arena { .. } !size !alignment = do
         -- * release lock
         putMVar curr curr'
         -- * return data
-        return (off'', mba)
+        pure (off'', mba)
 
     else do
         -- doesn't fit into current block:
@@ -249,4 +249,4 @@ newBlockWithFree free = do
         x@(Block off _):xs -> do
             writePrimVar off 0
             writeMutVar free xs
-            return x
+            pure x

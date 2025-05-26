@@ -321,7 +321,7 @@ rethrowFsErrorIO hfs fp action = do
     res <- try action
     case res of
       Left err -> handleError err
-      Right a  -> return a
+      Right a  -> pure a
   where
     handleError :: HasCallStack => IOError -> IO a
     handleError ioErr =

@@ -223,11 +223,11 @@ newPendingLevelMerge prs mmt = do
 
     dupMaybeMergingTree :: Maybe (Ref (MergingTree m h))
                         -> m (Maybe (Ref (MergingTree m h)))
-    dupMaybeMergingTree Nothing   = return Nothing
+    dupMaybeMergingTree Nothing   = pure Nothing
     dupMaybeMergingTree (Just mt) = do
       isempty <- isStructurallyEmpty mt
       if isempty
-        then return Nothing
+        then pure Nothing
         else Just <$!> dupRef mt
 
 {-# SPECIALISE newPendingUnionMerge ::
@@ -259,7 +259,7 @@ newPendingUnionMerge mts = do
     mts'' <- V.mapM dupRef mts'
     case V.uncons mts'' of
       Just (mt, x) | V.null x
-        -> return mt
+        -> pure mt
       _ -> mkMergingTree (PendingTreeMerge (PendingUnionMerge mts''))
 
 {-# SPECIALISE isStructurallyEmpty :: Ref (MergingTree IO h) -> IO Bool #-}
@@ -326,7 +326,7 @@ remainingMergeDebt ::
   => Ref (MergingTree m h) -> m (MergeDebt, NumEntries)
 remainingMergeDebt (DeRef mt) = do
     readMVar (mergeState mt) >>= \case
-      CompletedTreeMerge r -> return (MergeDebt 0, Run.size r)
+      CompletedTreeMerge r -> pure (MergeDebt 0, Run.size r)
       OngoingTreeMerge mr  -> addDebtOne <$> MR.remainingMergeDebt mr
       PendingTreeMerge ptm -> addDebtOne <$> remainingMergeDebtPendingMerge ptm
   where
@@ -348,10 +348,10 @@ remainingMergeDebtPendingMerge (PendingMerge _ prs mts) = do
     -- TODO: optimise to reduce allocations
     debtsPre <- traverse remainingMergeDebtPreExistingRun prs
     debtsChild <- traverse remainingMergeDebt mts
-    return (debtOfNestedMerge (debtsPre <> debtsChild))
+    pure (debtOfNestedMerge (debtsPre <> debtsChild))
   where
     remainingMergeDebtPreExistingRun = \case
-        PreExistingRun        r  -> return (MergeDebt 0, Run.size r)
+        PreExistingRun        r  -> pure (MergeDebt 0, Run.size r)
         PreExistingMergingRun mr -> MR.remainingMergeDebt mr
 
 debtOfNestedMerge :: Vector (MergeDebt, NumEntries) -> (MergeDebt, NumEntries)
@@ -390,12 +390,12 @@ supplyCredits ::
   -> m MR.MergeCredits
 supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
     if c0 <= 0
-      then return 0
+      then pure 0
       else supplyTree mt0 c0
   where
     mkFreshRunPaths = do
         runNumber <- uniqueToRunNumber <$> incrUniqCounter uc
-        return (Paths.runPath (Paths.activeDir root) runNumber)
+        pure (Paths.runPath (Paths.activeDir root) runNumber)
 
     supplyTree =
         MR.supplyChecked remainingMergeDebt $ \(DeRef mt) credits ->
@@ -411,19 +411,19 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
     supplyState reg state credits =
         case state of
           CompletedTreeMerge _ ->
-            return (state, credits)
+            pure (state, credits)
 
           OngoingTreeMerge mr -> do
             leftovers <- MR.supplyCreditsRelative mr threshold credits
             if leftovers <= 0
               then
-                return (state, 0)
+                pure (state, 0)
               else do
                 -- complete ongoing merge
                 r <- withRollback reg (MR.expectCompleted mr) releaseRef
                 delayedCommit reg (releaseRef mr)
                 -- all work is done, we can't spend any more credits
-                return (CompletedTreeMerge r, leftovers)
+                pure (CompletedTreeMerge r, leftovers)
 
           PendingTreeMerge _
             | isStructurallyEmptyState state -> do
@@ -439,14 +439,14 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
                 -- before fromBuilder closes them
                 (Run.newEmpty hfs hbio runParams runPaths)
                 releaseRef
-            return (CompletedTreeMerge run, credits)
+            pure (CompletedTreeMerge run, credits)
 
           PendingTreeMerge pm -> do
             leftovers <- supplyPending pm credits
             if leftovers <= 0
               then
                 -- still remaining work in children, we can't do more for now
-                return (state, leftovers)
+                pure (state, leftovers)
               else do
                 -- all children must be done, create new merge!
                 state' <- startPendingMerge reg pm
@@ -465,15 +465,15 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
               splitEqually (flip supplyTree) (V.toList mts) credits
 
     supplyPreExisting c = \case
-        PreExistingRun _r        -> return c  -- no work to do, all leftovers
+        PreExistingRun _r        -> pure c  -- no work to do, all leftovers
         PreExistingMergingRun mr -> MR.supplyCreditsRelative mr threshold c
 
     -- supply credits left to right until they are used up
     leftToRight ::
          (MR.MergeCredits -> a -> m MR.MergeCredits)
       -> [a] -> MR.MergeCredits -> m MR.MergeCredits
-    leftToRight _ _      0 = return 0
-    leftToRight _ []     c = return c
+    leftToRight _ _      0 = pure 0
+    leftToRight _ []     c = pure c
     leftToRight f (x:xs) c = f c x >>= leftToRight f xs
 
     -- approximately equal, being more precise would require more iterations
@@ -489,11 +489,11 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
         !n = length xs
         !k = MR.MergeCredits ((credits + (n - 1)) `div` n)
 
-        supplyNth 0 _ = return 0
+        supplyNth 0 _ = pure 0
         supplyNth c t = do
             let creditsToSpend = min k c
             leftovers <- f creditsToSpend t
-            return (c - creditsToSpend + leftovers)
+            pure (c - creditsToSpend + leftovers)
 
     startPendingMerge reg pm = do
         (mergeType, rs) <- expectCompletedChildren reg pm
@@ -505,7 +505,7 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
             releaseRef
         -- no need for the runs anymore, 'MR.new' made duplicates
         traverse_ (\r -> delayedCommit reg (releaseRef r)) rs
-        return (OngoingTreeMerge mr)
+        pure (OngoingTreeMerge mr)
 
     -- Child references are released using 'delayedCommit', so they get released
     -- if the whole supply operation runs successfully (so the pending merge
@@ -528,7 +528,7 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
         rs2 <- V.forM mts $ \mt -> do
           delayedCommit reg (releaseRef mt)  -- only released at the end
           withRollback reg (expectCompleted mt) releaseRef
-        return (ty, rs1 <> rs2)
+        pure (ty, rs1 <> rs2)
 
 -- | This does /not/ release the reference, but allocates a new reference for
 -- the returned run, which must be released at some point.

@@ -123,7 +123,7 @@ insertHashes :: MBloom s a -> Hashes a -> ST s ()
 insertHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
     go 0
   where
-    go !i | i >= mbNumHashes = return ()
+    go !i | i >= mbNumHashes = pure ()
     go !i = do
       let probe :: Word64
           probe = evalHashes h i
@@ -137,7 +137,7 @@ readHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
     go 0
   where
     go :: Int -> ST s Bool
-    go !i | i >= mbNumHashes = return True
+    go !i | i >= mbNumHashes = pure True
     go !i = do
       let probe :: Word64
           probe = evalHashes h i
@@ -145,7 +145,7 @@ readHashes MBloom { mbNumBits, mbNumHashes, mbBitArray } !h =
           index = reduceRange64 probe mbNumBits
       b <- BitArray.unsafeRead mbBitArray index
       if b then go (i + 1)
-           else return False
+           else pure False
 
 {-# INLINE deserialise #-}
 -- | Overwrite the filter's bit array. Use 'new' to create a filter of the
