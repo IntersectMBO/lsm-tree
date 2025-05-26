@@ -157,7 +157,7 @@ bloomQueries_loop2 !filters !keyhash !kix = go
           P.writePrimArray res2 resix2 (RunIxKeyIx rix kix)
           ressz2 <- P.getSizeofMutablePrimArray res2
           res2'  <- if resix2+1 < ressz2
-                     then return res2
+                     then pure res2
                      else P.resizeMutablePrimArray res2 (ressz2 * 2)
           go res2' (resix2+1) (rix+1)
 
@@ -283,7 +283,7 @@ bloomFilterFromFile hfs h = do
     trailing <- hGetSome hfs h 1
     when (not (BS.null trailing)) $
       throwFormatError "Byte array is too large for components"
-    return bloom
+    pure bloom
   where
     throwFormatError = throwIO
                      . ErrFileFormatInvalid

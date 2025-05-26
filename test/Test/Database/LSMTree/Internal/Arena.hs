@@ -26,7 +26,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Arena"
                 (off', mba) <- allocateFromArena arena 32 8
                 setByteArray mba off' 32 (1 :: Word8)
                 ba' <- unsafeFreezeByteArray mba
-                return (off', ba')
+                pure (off', ba')
 
 #if NO_IGNORE_ASSERTS
         take 32 (drop off (toList ba)) @?= replicate 32 (0x77 :: Word8)

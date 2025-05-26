@@ -185,7 +185,7 @@ prop_ref_use_after_free testDeRef = do
     True <- readMutVar finalised
     Left e@RefUseAfterRelease{} <- try $ withRef ref return
     when testDeRef $ do
-      Left RefUseAfterRelease{} <- try $ case ref of DeRef _ -> return ()
+      Left RefUseAfterRelease{} <- try $ case ref of DeRef _ -> pure ()
       pure ()
     Left RefUseAfterRelease{} <- try $ dupRef ref
     checkForgottenRefs
@@ -198,10 +198,10 @@ prop_ref_never_released0 ::
 prop_ref_never_released0 = do
     finalised <- newMutVar False
     ref <- newRef (writeMutVar finalised True) TestObject
-    _ <- case ref of DeRef _ -> return ()
+    _ <- case ref of DeRef _ -> pure ()
     checkForgottenRefs
     -- ref is still being used, so check should not fail
-    _ <- case ref of DeRef _ -> return ()
+    _ <- case ref of DeRef _ -> pure ()
     releaseRef ref
 
 prop_ref_never_released1 ::
@@ -212,10 +212,10 @@ prop_ref_never_released1 =
       finalised <- newMutVar False
       ref <- newRef (writeMutVar finalised True) TestObject
       _ <- withRef ref return
-      _ <- case ref of DeRef _ -> return ()
+      _ <- case ref of DeRef _ -> pure ()
       -- ref is never released, so should fail
       checkForgottenRefs
-      return (counterexample "no forgotten refs detected" $ property False)
+      pure (counterexample "no forgotten refs detected" $ property False)
 
 prop_ref_never_released2 ::
      (PrimMonad m, MonadMask m)
@@ -227,17 +227,17 @@ prop_ref_never_released2 =
       ref2 <- dupRef ref
       releaseRef ref
       _ <- withRef ref2 return
-      _ <- case ref2 of DeRef _ -> return ()
+      _ <- case ref2 of DeRef _ -> pure ()
       -- ref2 is never released, so should fail
       checkForgottenRefs
-      return (counterexample "no forgotten refs detected" $ property False)
+      pure (counterexample "no forgotten refs detected" $ property False)
 
 expectRefNeverReleased :: Monad m => RefException -> m Property
 expectRefNeverReleased e@RefNeverReleased{} =
     -- Print the displayed exception as an example
-    return (tabulate "displayException" [displayException e] (property True))
+    pure (tabulate "displayException" [displayException e] (property True))
 expectRefNeverReleased e =
-    return (counterexample (displayException e) $ property False)
+    pure (counterexample (displayException e) $ property False)
 
 -- | If a finaliser throws an exception, then the 'RefTracker' is still released
 prop_release_ref_exception ::

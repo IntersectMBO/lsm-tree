@@ -163,7 +163,7 @@ new resolve !offsetKey sources = do
     for (nonEmpty (catMaybes readers)) $ \xs -> do
       (readersHeap, readCtx) <- Heap.newMutableHeap xs
       readersNext <- newMutVar readCtx
-      return Readers {..}
+      pure Readers {..}
   where
     fromSource :: ReaderNumber -> ReaderSource m h -> m (Maybe (ReadCtx m h))
     fromSource n src =
@@ -176,7 +176,7 @@ new resolve !offsetKey sources = do
             nextReadCtx resolve n rs
           FromReaders mergeType nestedSources -> do
             new resolve offsetKey nestedSources >>= \case
-              Nothing -> return Nothing
+              Nothing -> pure Nothing
               Just rs -> nextReadCtx resolve n (ReadReaders mergeType (SJust rs))
 
     fromWB :: WB.WriteBuffer -> Ref (WB.WriteBufferBlobs m h) -> m (Reader m h)
@@ -211,7 +211,7 @@ close Readers {..} = do
         ReadReaders _ readersMay -> smaybe (pure ()) close readersMay
     closeHeap =
         Heap.extract readersHeap >>= \case
-          Nothing -> return ()
+          Nothing -> pure ()
           Just ReadCtx {readCtxReader} -> do
             closeReader readCtxReader
             closeHeap
@@ -245,7 +245,7 @@ pop ::
 pop resolve r@Readers {..} = do
     ReadCtx {..} <- readMutVar readersNext
     hasMore <- dropOne resolve r readCtxNumber readCtxReader
-    return (readCtxHeadKey, readCtxHeadEntry, hasMore)
+    pure (readCtxHeadKey, readCtxHeadEntry, hasMore)
 
 -- TODO: avoid duplication with Merge.TreeMergeType?
 data ReadersMergeType = MergeLevel | MergeUnion
@@ -282,7 +282,7 @@ popResolved resolve mergeType readers = readEntry
         (key, entry, hasMore) <- pop resolve readers
         case hasMore of
           Drained -> do
-            return (key, entry, Drained)
+            pure (key, entry, Drained)
           HasMore -> do
             case mergeType of
               MergeLevel -> handleLevel key (RunReader.toFullEntry entry)
@@ -296,14 +296,14 @@ popResolved resolve mergeType readers = readEntry
         if nextKey /= key
           then
             -- No more entries for same key, done.
-            return (key, RunReader.Entry entry, HasMore)
+            pure (key, RunReader.Entry entry, HasMore)
           else do
             (_, nextEntry, hasMore) <- pop resolve readers
             let resolved = Entry.combineUnion resolve entry
                              (RunReader.toFullEntry nextEntry)
             case hasMore of
               HasMore -> handleUnion key resolved
-              Drained -> return (key, RunReader.Entry resolved, Drained)
+              Drained -> pure (key, RunReader.Entry resolved, Drained)
 
     handleLevel :: SerialisedKey
                 -> Entry SerialisedValue (RawBlobRef m h)
@@ -316,7 +316,7 @@ popResolved resolve mergeType readers = readEntry
             -- Anything but Upsert supersedes all previous entries of
             -- the same key, so we can simply drop them and are done.
             hasMore' <- dropRemaining key
-            return (key, RunReader.Entry entry, hasMore')
+            pure (key, RunReader.Entry entry, hasMore')
 
     -- Resolve a 'Mupsert' value with the other entries of the same key.
     handleMupdate :: SerialisedKey
@@ -327,19 +327,19 @@ popResolved resolve mergeType readers = readEntry
         if nextKey /= key
           then
             -- No more entries for same key, done.
-            return (key, RunReader.Entry (Upsert v), HasMore)
+            pure (key, RunReader.Entry (Upsert v), HasMore)
           else do
             (_, nextEntry, hasMore) <- pop resolve readers
             let resolved = Entry.combine resolve (Upsert v)
                              (RunReader.toFullEntry nextEntry)
             case hasMore of
               HasMore -> handleLevel key resolved
-              Drained -> return (key, RunReader.Entry resolved, Drained)
+              Drained -> pure (key, RunReader.Entry resolved, Drained)
 
     dropRemaining :: SerialisedKey -> m HasMore
     dropRemaining key = do
         (_, hasMore) <- dropWhileKey resolve readers key
-        return hasMore
+        pure hasMore
 
 {-# SPECIALISE dropWhileKey ::
      ResolveSerialisedValue
@@ -357,7 +357,7 @@ dropWhileKey resolve Readers {..} key = do
     cur <- readMutVar readersNext
     if readCtxHeadKey cur <= key
       then go 0 cur
-      else return (0, HasMore)  -- nothing to do
+      else pure (0, HasMore)  -- nothing to do
   where
     -- invariant: @readCtxHeadKey <= key@
     go !n ReadCtx {readCtxNumber, readCtxReader} = do
@@ -367,7 +367,7 @@ dropWhileKey resolve Readers {..} key = do
         let !n' = n + 1
         case mNext of
           Nothing -> do
-            return (n', Drained)
+            pure (n', Drained)
           Just next -> do
             -- hasMore
             if readCtxHeadKey next <= key
@@ -375,7 +375,7 @@ dropWhileKey resolve Readers {..} key = do
                 go n' next
               else do
                 writeMutVar readersNext next
-                return (n', HasMore)
+                pure (n', HasMore)
 
 {-# SPECIALISE dropOne ::
      ResolveSerialisedValue
@@ -396,10 +396,10 @@ dropOne resolve Readers {..} number reader = do
       Just ctx -> Just <$> Heap.replaceRoot readersHeap ctx
     case mNext of
       Nothing ->
-        return Drained
+        pure Drained
       Just next -> do
         writeMutVar readersNext next
-        return HasMore
+        pure HasMore
 
 {-# SPECIALISE nextReadCtx ::
      ResolveSerialisedValue
@@ -427,14 +427,14 @@ nextReadCtx resolve readCtxNumber readCtxReader =
           Just ReadCtx {..}
       ReadReaders mergeType readersMay -> case readersMay of
         SNothing ->
-          return Nothing
+          pure Nothing
         SJust readers -> do
           (readCtxHeadKey, readCtxHeadEntry, hasMore) <-
             popResolved resolve mergeType readers
           let readersMay' = case hasMore of
                 Drained -> SNothing
                 HasMore -> SJust readers
-          return $ Just ReadCtx {
+          pure $ Just ReadCtx {
               -- TODO: reduce allocations?
               readCtxReader = ReadReaders mergeType readersMay'
             , ..

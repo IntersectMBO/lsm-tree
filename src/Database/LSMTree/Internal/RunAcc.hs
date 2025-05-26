@@ -182,9 +182,9 @@ addSmallKeyOp racc@RunAcc{entryCount , mpageacc} k e =
         -- or because we just flushed it. Adding the new key/op to an empty
         -- page must now succeed, because we know it fits in a page.
         added <- PageAcc.pageAccAddElem mpageacc k e
-        assert added $ return mpagemchunk
+        assert added $ pure mpagemchunk
 
-      else return Nothing
+      else pure Nothing
 
 -- | Add a \"large\" key\/op pair with an optional blob span to the run
 -- accumulator.
@@ -226,7 +226,7 @@ addLargeKeyOp racc@RunAcc{entryCount, mindex, mbloom} k e =
 
     -- Combine the results with anything we flushed before
     let (!pages, !chunks') = selectPagesAndChunks mpagemchunkPre page chunks
-    return (pages, overflowPages, chunks')
+    pure (pages, overflowPages, chunks')
 
 -- | Add a \"large\" pre-serialised key\/op entry to the run accumulator.
 --
@@ -279,7 +279,7 @@ addLargeSerialisedKeyOp racc@RunAcc{entryCount, mindex, mbloom}
     let nOverflowPages = length overflowPages --TODO: consider using vector
     chunks <- Index.appendMulti (k, fromIntegral nOverflowPages) mindex
     let (!pages, !chunks') = selectPagesAndChunks mpagemchunkPre page chunks
-    return (pages, overflowPages, chunks')
+    pure (pages, overflowPages, chunks')
 
 -- | Internal helper: finalise the current page, add the page to the index,
 -- reset the page accumulator and return the serialised 'RawPage' along with
@@ -302,7 +302,7 @@ flushPageIfNonEmpty RunAcc{mpageacc, mindex, mbloom} = do
         -- Now serialise the page and reset the accumulator
         page <- PageAcc.serialisePageAcc mpageacc
         PageAcc.resetPageAcc mpageacc
-        return (Just (page, mchunk))
+        pure (Just (page, mchunk))
 
       else pure Nothing
 

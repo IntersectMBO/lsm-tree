@@ -196,7 +196,7 @@ supplyCreditsIncomingRun ::
   -> IncomingRun m h
   -> NominalCredits
   -> m ()
-supplyCreditsIncomingRun _ _ (Single _r) _ = return ()
+supplyCreditsIncomingRun _ _ (Single _r) _ = pure ()
 supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
                          deposit = do
     (_nominalCredits,
@@ -208,7 +208,7 @@ supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
         !thresh = creditThresholdForLevel conf ln
     (_suppliedCredits,
      _suppliedCredits') <- MR.supplyCreditsAbsolute mr thresh mergeCredits'
-    return ()
+    pure ()
     --TODO: currently each supplying credits action results in contributing
     -- credits to the underlying merge, but this need not be the case. We
     -- _could_ do threshold based batching at the level of the IncomingRun.
@@ -258,7 +258,7 @@ depositNominalCredits (NominalDebt nominalDebt)
     NominalCredits before <- readPrimVar nominalCreditsVar
     let !after = NominalCredits (min (before + deposit) nominalDebt)
     writePrimVar nominalCreditsVar after
-    return (NominalCredits before, after)
+    pure (NominalCredits before, after)
 
 -- | Linearly scale a nominal credit (between 0 and the nominal debt) into an
 -- equivalent merge credit (between 0 and the total merge debt).

@@ -833,7 +833,7 @@ rangeLookup resolve range t fromEntry = do
              -- This requires an extra copy. If we had a size hint, we could
              -- directly write everything into the result vector.
              -- TODO(optimise): revisit
-        else return (V.concat (reverse (V.slice 0 n chunk : chunks)))
+        else pure (V.concat (reverse (V.slice 0 n chunk : chunks)))
 
 {-# SPECIALISE updates ::
      ResolveSerialisedValue
@@ -1081,7 +1081,7 @@ closeCursor ::
 closeCursor Cursor {..} = do
     traceWith cursorTracer $ TraceCloseCursor
     modifyWithActionRegistry_ (takeMVar cursorState) (putMVar cursorState) $ \reg -> \case
-      CursorClosed -> return CursorClosed
+      CursorClosed -> pure CursorClosed
       CursorOpen CursorEnv {..} -> do
         -- This should be safe-ish, but it's still not ideal, because it doesn't
         -- rule out sync exceptions in the cleanup operations.
@@ -1095,7 +1095,7 @@ closeCursor Cursor {..} = do
         V.forM_ cursorRuns $ delayedCommit reg . releaseRef
         forM_ cursorUnion $ releaseUnionCache reg
         delayedCommit reg (releaseRef cursorWBB)
-        return CursorClosed
+        pure CursorClosed
 
 {-# SPECIALISE readCursor ::
      ResolveSerialisedValue
@@ -1155,14 +1155,14 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
         case cursorReaders cursorEnv of
           Nothing ->
             -- a drained cursor will just return an empty vector
-            return (state, V.empty)
+            pure (state, V.empty)
           Just readers -> do
             (vec, hasMore) <- Cursor.readEntriesWhile resolve keyIsWanted fromEntry readers n
             -- if we drained the readers, remove them from the state
             let !state' = case hasMore of
                   Readers.HasMore -> state
                   Readers.Drained -> CursorOpen (cursorEnv {cursorReaders = Nothing})
-            return (state', vec)
+            pure (state', vec)
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -1556,7 +1556,7 @@ unionsInOpenSession reg sesh seshEnv conf ts = do
       False -> do
         empty <- newEmptyTableContent seshEnv reg
         cache <- mkUnionCache reg mt
-        return empty { tableUnionLevel = Union mt cache }
+        pure empty { tableUnionLevel = Union mt cache }
 
     -- Pick the arena manager to optimise the case of:
     -- someUpdates <> bigTableWithLotsOfLookups
@@ -1745,10 +1745,10 @@ supplyUnionCredits resolve t credits = do
             Union mt cache -> do
               unionLevel' <- MT.isStructurallyEmpty mt >>= \case
                 True  ->
-                  return NoUnion
+                  pure NoUnion
                 False -> do
                   cache' <- mkUnionCache reg mt
                   releaseUnionCache reg cache
-                  return (Union mt cache')
+                  pure (Union mt cache')
               pure tc { tableUnionLevel = unionLevel' }
       pure leftovers

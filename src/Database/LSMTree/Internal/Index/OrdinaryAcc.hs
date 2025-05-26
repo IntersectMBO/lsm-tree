@@ -95,7 +95,7 @@ appendSingle (firstKey, lastKey) (IndexOrdinaryAcc unslicedLastKeys baler)
           maybeLastUnslicedLastKey <- Growing.readMaybeLast unslicedLastKeys
           assert
               (all (< firstKey) (fromUnslicedKey <$> maybeLastUnslicedLastKey))
-              (return ())
+              (pure ())
 #endif
           Growing.append unslicedLastKeys 1 (makeUnslicedKey lastKey)
           feedBaler (keyListElem lastKey) baler
@@ -112,7 +112,7 @@ appendMulti (key, overflowPageCount) (IndexOrdinaryAcc unslicedLastKeys baler)
 #ifdef NO_IGNORE_ASSERTS
           maybeLastUnslicedLastKey <- Growing.readMaybeLast unslicedLastKeys
           assert (all (< key) (fromUnslicedKey <$> maybeLastUnslicedLastKey))
-                 (return ())
+                 (pure ())
 #endif
           Growing.append unslicedLastKeys pageCount (makeUnslicedKey key)
           maybeToList <$> feedBaler keyListElems baler
@@ -132,4 +132,4 @@ unsafeEnd :: IndexOrdinaryAcc s -> ST s (Maybe Chunk, IndexOrdinary)
 unsafeEnd (IndexOrdinaryAcc unslicedLastKeys baler) = do
     frozenUnslicedLastKeys <- Growing.freeze unslicedLastKeys
     remnant <- unsafeEndBaler baler
-    return (remnant, IndexOrdinary frozenUnslicedLastKeys)
+    pure (remnant, IndexOrdinary frozenUnslicedLastKeys)

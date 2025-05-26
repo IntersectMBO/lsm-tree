@@ -468,7 +468,7 @@ instance Arbitrary RawPageAndOffset where
               , (1, arbitrarySerialisedKeyMoreThan keyLarge)
               ] <> missingWithinRange
 
-    return $ RawPageAndOffset rawpage offsetKey locInfo
+    pure $ RawPageAndOffset rawpage offsetKey locInfo
 
 -- |
 -- Generate an arbitrary 'SerialisedKey' between the given two keys.

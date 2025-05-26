@@ -401,7 +401,7 @@ instance Arbitrary RawBytes where
     QC.NonNegative (QC.Small payloadLength) <- arbitrary
     QC.NonNegative (QC.Small suffixLength)  <- arbitrary
     base <- genRawBytesN (prefixLength + payloadLength + suffixLength)
-    return (base & RB.drop prefixLength & RB.take payloadLength)
+    pure (base & RB.drop prefixLength & RB.take payloadLength)
   shrink rb = shrinkSlice rb ++ shrinkRawBytes rb
 
 genRawBytesN :: Int -> Gen RawBytes
@@ -422,7 +422,7 @@ packRawBytesPinnedOrUnpinned True  = \ws ->
     RB.RawBytes $ mkPrimVector 0 len $ BA.runByteArray $ do
       mba <- BA.newPinnedByteArray len
       sequence_ [ BA.writeByteArray mba i w | (i, w) <- zip [0..] ws ]
-      return mba
+      pure mba
 
 shrinkRawBytes :: RawBytes -> [RawBytes]
 shrinkRawBytes (RawBytes pvec) =
@@ -538,7 +538,7 @@ arbitraryBiasedKey fromRB genUnbiased = fromRB <$> frequency
     [ (6, genUnbiased)
     , (1, do
         lastByte <- QC.sized $ skewedWithMax . fromIntegral
-        return (RB.pack ([1,3,3,7,0,1,7] <> [lastByte]))
+        pure (RB.pack ([1,3,3,7,0,1,7] <> [lastByte]))
       )
     ]
     where

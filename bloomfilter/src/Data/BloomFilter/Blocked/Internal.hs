@@ -131,7 +131,7 @@ insertHashes MBloom { mbNumBlocks, mbNumHashes, mbBitArray } !h =
     (!blockIx, !g0) = blockIxAndBitGen h mbNumBlocks
 
     go :: BitIxGen -> Int -> ST s ()
-    go !_ 0  = return ()
+    go !_ 0  = pure ()
     go !g !i = do
       let blockBitIx :: BitIx
           (!blockBitIx, !g') = genBitIndex g

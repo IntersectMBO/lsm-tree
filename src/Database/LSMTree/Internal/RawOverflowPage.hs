@@ -106,7 +106,7 @@ makeRawOverflowPageCopy ba off len =
       let suffixlen = min 4096 len -- would only do anything with assertions off
       copyByteArray mba 0 ba off suffixlen
       when (suffixlen < 4096) $ fillByteArray mba suffixlen (4096-suffixlen) 0
-      return mba
+      pure mba
 
 -- | Create a 'RawOverflowPage' without copying. The byte array and offset must
 -- satisfy the invariant for 'RawOverflowPage'.
@@ -161,7 +161,7 @@ unpinnedByteArrayToOverflowPages !off !len !ba =
                       mba <- newPinnedByteArray lenPages
                       copyByteArray mba 0 ba off len
                       fillByteArray mba len (lenPages-len) 0
-                      return mba
+                      pure mba
         pages     = pinnedByteArrayToOverflowPages 0 lenPages ba'
         -- We've arranged to do the conversion without any extra copying,
         -- so assert that we got that right:

@@ -167,7 +167,7 @@ unfold bloomsize f k =
       where
         loop :: b -> ST s ()
         loop !j = case f j of
-                    Nothing      -> return ()
+                    Nothing      -> pure ()
                     Just (a, j') -> insert mb a >> loop j'
 
 

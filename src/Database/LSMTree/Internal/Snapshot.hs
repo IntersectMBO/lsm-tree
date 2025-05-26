@@ -278,7 +278,7 @@ fromSnapMergingTree hfs hbio uc resolve dir =
                 releaseRef
       traverse_ (delayedCommit reg . releasePER) prs'
       traverse_ (delayedCommit reg . releaseRef) mmt'
-      return mt
+      pure mt
 
     go reg (SnapMergingTree (SnapPendingTreeMerge
                               (SnapPendingUnionMerge mts))) = do
@@ -287,7 +287,7 @@ fromSnapMergingTree hfs hbio uc resolve dir =
                 (MT.newPendingUnionMerge mts')
                 releaseRef
       traverse_ (delayedCommit reg . releaseRef) mts'
-      return mt
+      pure mt
 
     go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
       mr <- withRollback reg
@@ -297,7 +297,7 @@ fromSnapMergingTree hfs hbio uc resolve dir =
               (MT.newOngoingMerge mr)
               releaseRef
       delayedCommit reg (releaseRef mr)
-      return mt
+      pure mt
 
     -- Returns fresh refs, which must be released locally.
     fromSnapPreExistingRun :: ActionRegistry m
@@ -679,7 +679,7 @@ fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
         -- more merging work because fromSnapMergingRun already supplies
         -- all the merging credits already.
         supplyCreditsIncomingRun conf ln ir nominalCredits
-        return ir
+        pure ir
 
 {-# SPECIALISE fromSnapMergingRun ::
      MR.IsMergeType t
@@ -717,7 +717,7 @@ fromSnapMergingRun hfs hbio uc resolve dir
         -- here we want to supply the credits now, so we can use a threshold of 1
         let thresh = MR.CreditThreshold (MR.UnspentCredits 1)
         _ <- MR.supplyCreditsAbsolute mr thresh mergeCredits
-        return mr
+        pure mr
 
 {-------------------------------------------------------------------------------
   Hard links

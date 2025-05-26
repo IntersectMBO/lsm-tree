@@ -205,7 +205,7 @@ arbitraryErrors = do
     hGetBufSomeAtE            <- genErrorStreamGetSome
     hPutBufSomeE              <- genErrorStreamPutSome
     hPutBufSomeAtE            <- genErrorStreamPutSome
-    return $ filterErrors Errors {..}
+    pure $ filterErrors Errors {..}
   where
     -- Generate a stream using 'genLikelihoods' for its 'Maybe' elements.
     genStream :: forall a. Gen a -> Gen (Stream a)

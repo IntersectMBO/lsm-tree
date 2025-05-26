@@ -47,7 +47,7 @@ byteVectorFromPrim prim = mkPrimVector 0 (sizeOfType @a) $
                           runByteArray $ do
                               rep <- newByteArray (sizeOfType @a)
                               writeByteArray rep 0 prim
-                              return rep
+                              pure rep
 {-# INLINE byteVectorFromPrim #-}
 
 noRetainedExtraMemory :: forall a. Prim a => VP.Vector a -> Bool

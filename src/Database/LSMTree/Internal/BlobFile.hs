@@ -108,7 +108,7 @@ readBlobRaw fs BlobFile {blobFileHandle}
                              (fromIntegral len :: FS.ByteCount) off
     ba <- P.unsafeFreezeByteArray mba
     let !rb = RB.fromByteArray 0 len ba
-    return (SerialisedBlob rb)
+    pure (SerialisedBlob rb)
 
 {-# SPECIALISE writeBlob :: HasFS IO h -> Ref (BlobFile IO h) -> SerialisedBlob -> Word64 -> IO () #-}
 writeBlob ::
@@ -126,4 +126,4 @@ writeBlob fs (DeRef BlobFile {blobFileHandle})
              (FS.BufferOffset boff)
              (fromIntegral blen :: FS.ByteCount)
              (FS.AbsOffset off)
-    return ()
+    pure ()

@@ -171,7 +171,7 @@ toRawPageViaPageAcc kops0 =
       added <- pageAccAddElem acc k op
       if added
         then go acc kops
-        else return Nothing
+        else pure Nothing
 
 {-------------------------------------------------------------------------------
   NoThunks

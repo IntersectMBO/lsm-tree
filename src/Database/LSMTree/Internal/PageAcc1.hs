@@ -57,7 +57,7 @@ singletonPage k (Insert v) = runST $ do
     ba' <- P.unsafeFreezeByteArray ba
     let !page          = unsafeMakeRawPage ba' 0
         !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
-    return (page, overflowPages)
+    pure (page, overflowPages)
   where
     SerialisedKey      (RawBytes (VP.Vector koff klen kba)) = k
     SerialisedValue v'@(RawBytes (VP.Vector voff vlen vba)) = v
@@ -94,7 +94,7 @@ singletonPage k (InsertWithBlob v (BlobSpan w64 w32)) = runST $ do
     ba' <- P.unsafeFreezeByteArray ba
     let !page          = unsafeMakeRawPage ba' 0
         !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
-    return (page, overflowPages)
+    pure (page, overflowPages)
   where
     SerialisedKey      (RawBytes (VP.Vector koff klen kba)) = k
     SerialisedValue v'@(RawBytes (VP.Vector voff vlen vba)) = v
@@ -129,7 +129,7 @@ singletonPage k (Upsert v) = runST $ do
     ba' <- P.unsafeFreezeByteArray ba
     let !page          = unsafeMakeRawPage ba' 0
         !overflowPages = rawBytesToOverflowPages (RB.drop vlen' v')
-    return (page, overflowPages)
+    pure (page, overflowPages)
   where
     SerialisedKey      (RawBytes (VP.Vector koff klen kba)) = k
     SerialisedValue v'@(RawBytes (VP.Vector voff vlen vba)) = v

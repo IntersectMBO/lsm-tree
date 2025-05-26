@@ -120,7 +120,7 @@ new hfs hbio runBuilderParams@RunParams{..} runBuilderFsPaths numEntries = do
 
     let builder = RunBuilder { runBuilderHasFS = hfs, runBuilderHasBlockIO = hbio, .. }
     writeIndexHeader hfs (forRunIndex runBuilderHandles) runParamIndex
-    return builder
+    pure builder
 
 {-# SPECIALISE addKeyOp ::
      RunBuilder IO h
@@ -155,7 +155,7 @@ addKeyOp RunBuilder{..} key op = do
       then do
         mpagemchunk <- ST.stToIO $ RunAcc.addSmallKeyOp runBuilderAcc key op'
         case mpagemchunk of
-          Nothing -> return ()
+          Nothing -> pure ()
           Just (page, mchunk) -> do
             writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles) page
             for_ mchunk $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
@@ -231,7 +231,7 @@ unsafeFinalise RunBuilder {..} = do
       dropCache runBuilderHasBlockIO (forRunKOpsRaw runBuilderHandles)
       dropCache runBuilderHasBlockIO (forRunBlobRaw runBuilderHandles)
     mapM_ (closeHandle runBuilderHasFS) runBuilderHandles
-    return (runBuilderHasFS, runBuilderHasBlockIO,
+    pure (runBuilderHasFS, runBuilderHasBlockIO,
             runBuilderFsPaths, runFilter, runIndex,
             runBuilderParams, numEntries)
 

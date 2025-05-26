@@ -97,7 +97,7 @@ shortByteStringCopyStepFromTo !ip0 !ipe0 !sbs k =
       | otherwise = do
           SBS.copyToPtr sbs ip op outRemaining
           let !ip' = ip + outRemaining
-          return $ BB.bufferFull 1 ope (go ip' ipe)
+          pure $ BB.bufferFull 1 ope (go ip' ipe)
       where
         outRemaining = ope `minusPtr` op
         inpRemaining = ipe - ip
@@ -112,7 +112,7 @@ byteArrayToByteString off len ba =
       else unsafePinnedByteArrayToByteString 0 len $ runByteArray $ do
         mba <- newPinnedByteArray len
         copyByteArray mba 0 ba off len
-        return mba
+        pure mba
 
 -- | \( O(1) \) conversion. Takes offset and length of the slice to be used.
 -- Fails if the byte array is not pinned.

@@ -134,7 +134,7 @@ next :: forall m h.
 next WriteBufferReader {..} = do
     readMutVar readerCurrentPage >>= \case
       Nothing ->
-        return Empty
+        pure Empty
       Just page -> do
         entryNo <- readPrimVar readerCurrentEntryNo
         go entryNo page
@@ -157,7 +157,7 @@ next WriteBufferReader {..} = do
             stToIO $ writeMutVar readerCurrentPage newPage
             case newPage of
               Nothing -> do
-                return Empty
+                pure Empty
               Just p -> do
                 writePrimVar readerCurrentEntryNo 0
                 go 0 p  -- try again on the new page
@@ -166,7 +166,7 @@ next WriteBufferReader {..} = do
             let entry' :: E.Entry SerialisedValue (RawBlobRef m h)
                 entry' = fmap (mkRawBlobRef readerBlobFile) entry
             let rawEntry = Entry entry'
-            return (ReadEntry key rawEntry)
+            pure (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
             modifyPrimVar readerCurrentEntryNo (+1)
@@ -174,7 +174,7 @@ next WriteBufferReader {..} = do
                 entry' = fmap (mkRawBlobRef readerBlobFile) entry
             overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
-            return (ReadEntry key rawEntry)
+            pure (ReadEntry key rawEntry)
 
 {-# SPECIALISE close :: WriteBufferReader IO h -> IO () #-}
 -- | Close the 'WriteBufferReader'.

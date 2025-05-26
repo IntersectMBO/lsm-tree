@@ -66,7 +66,7 @@ new :: Int -> ST s (MBitArray s)
 new s = do
     mba@(MutableByteArray mba#) <- newPinnedByteArray numBytes
     setByteArray mba 0 numBytes (0 :: Word8)
-    return (MBitArray (MutablePrimArray mba#))
+    pure (MBitArray (MutablePrimArray mba#))
   where
     !numWords = roundUpTo64 s
     !numBytes = unsafeShiftL numWords 3 -- * 8
@@ -100,7 +100,7 @@ unsafeSet :: MBitArray s -> Int -> ST s ()
 unsafeSet (MBitArray arr) i = do
 #ifdef NO_IGNORE_ASSERTS
     sz <- getSizeofMutablePrimArray arr
-    assert (j >= 0 && j < sz) $ return ()
+    assert (j >= 0 && j < sz) $ pure ()
 #endif
     w <- readPrimArray arr j
     writePrimArray arr j (unsafeSetBit w k)
@@ -112,10 +112,10 @@ unsafeRead :: MBitArray s -> Int -> ST s Bool
 unsafeRead (MBitArray arr) i = do
 #ifdef NO_IGNORE_ASSERTS
     sz <- getSizeofMutablePrimArray arr
-    assert (j >= 0 && j < sz) $ return ()
+    assert (j >= 0 && j < sz) $ pure ()
 #endif
     w <- readPrimArray arr j
-    return $! unsafeTestBit w k
+    pure $! unsafeTestBit w k
   where
     !j = unsafeShiftR i 6 -- `div` 64
     !k = i .&. 63         -- `mod` 64
