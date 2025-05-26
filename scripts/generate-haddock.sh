@@ -8,6 +8,7 @@ if [ "${cabal}" = "" ]; then
 fi
 
 # Extract the prologue from the package description
+# shellcheck disable=SC1007
 SCRIPTS_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
 "${SCRIPTS_DIR}/generate-haddock-prologue.hs" || exit 1
 
