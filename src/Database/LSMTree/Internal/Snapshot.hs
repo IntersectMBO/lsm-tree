@@ -139,7 +139,7 @@ instance NFData r => NFData (SnapLevel r) where
 -- a bit subtle.
 --
 -- The nominal debt does not need to be stored because it can be derived based
--- on the table's write buffer size (which is stored in the snapshot's
+-- on the table's write buffer capacity (which is stored in the snapshot's
 -- TableConfig), and on the level number that the merge is at (which also known
 -- from the snapshot structure).
 --

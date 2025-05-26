@@ -113,13 +113,12 @@ module Database.LSMTree (
   ),
   defaultTableConfig,
   MergePolicy (LazyLevelling),
+  MergeSchedule (..),
   SizeRatio (Four),
   WriteBufferAlloc (AllocNumEntries),
   BloomFilterAlloc (AllocFixed, AllocRequestFPR),
-  defaultBloomFilterAlloc,
   FencePointerIndexType (OrdinaryIndex, CompactIndex),
   DiskCachePolicy (..),
-  MergeSchedule (..),
 
   -- ** Table Configuration Overrides #table_configuration_overrides#
   OverrideDiskCachePolicy (..),
@@ -217,8 +216,7 @@ import           Database.LSMTree.Internal.Config
                      DiskCachePolicy (..), FencePointerIndexType (..),
                      LevelNo (..), MergePolicy (..), MergeSchedule (..),
                      SizeRatio (..), TableConfig (..), WriteBufferAlloc (..),
-                     defaultBloomFilterAlloc, defaultTableConfig,
-                     serialiseKeyMinimalSize)
+                     defaultTableConfig, serialiseKeyMinimalSize)
 import           Database.LSMTree.Internal.Config.Override
                      (OverrideDiskCachePolicy (..))
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
