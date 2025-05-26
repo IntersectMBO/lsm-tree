@@ -46,6 +46,10 @@ echo
 ./scripts/lint-hlint.sh || echo > "$warn"
 echo
 
+# Lint shell scripts files with ShellCheck
+./scripts/lint-shellcheck.sh || echo > "$warn"
+echo
+
 # Generate README.md from package description
 ./scripts/generate-readme.hs || echo > "$warn"
 echo
