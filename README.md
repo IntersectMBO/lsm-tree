@@ -151,7 +151,7 @@ schedule are determined by the `TableConfig` parameters
 <tbody>
 <tr>
 <td>Session</td>
-<td>Create/Open</td>
+<td>Open</td>
 <td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline"><em>O</em>(1)</span></td>
@@ -166,7 +166,7 @@ schedule are determined by the `TableConfig` parameters
 </tr>
 <tr>
 <td>Table</td>
-<td>Create</td>
+<td>New</td>
 <td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline"><em>O</em>(1)</span></td>
@@ -253,7 +253,7 @@ schedule are determined by the `TableConfig` parameters
 </tr>
 <tr>
 <td>Cursor</td>
-<td>Create</td>
+<td>New</td>
 <td><code>LazyLevelling</code></td>
 <td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B})$</span></td>
@@ -267,7 +267,7 @@ schedule are determined by the `TableConfig` parameters
 </tr>
 <tr>
 <td></td>
-<td>Read next entry</td>
+<td>Next</td>
 <td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline">$O(\frac{1}{P})$</span></td>
