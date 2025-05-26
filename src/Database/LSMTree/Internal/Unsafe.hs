@@ -1719,7 +1719,7 @@ supplyUnionCredits resolve t credits = do
           Union mt _ -> do
             let conf = tableConfig t
             let AllocNumEntries x = confWriteBufferAlloc conf
-            -- We simply use the write buffer size as merge credit threshold, as
+            -- We simply use the write buffer capacity as merge credit threshold, as
             -- the regular level merges also do.
             -- TODO: pick a more suitable threshold or make configurable?
             let thresh = MR.CreditThreshold (MR.UnspentCredits (MergeCredits x))

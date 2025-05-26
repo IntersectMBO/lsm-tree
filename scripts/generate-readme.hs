@@ -7,7 +7,8 @@ build-depends:
     , pandoc       ^>=3.6.4
     , text          >=2.1
 -}
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
 
@@ -22,7 +23,7 @@ import qualified Distribution.Types.PackageDescription as PackageDescription
 import           Distribution.Utils.ShortText (fromShortText)
 import           System.IO (hPutStrLn, stderr)
 import           Text.Pandoc (runIOorExplode)
-import           Text.Pandoc.Extensions (githubMarkdownExtensions)
+import           Text.Pandoc.Extensions (getDefaultExtensions)
 import           Text.Pandoc.Options (ReaderOptions (..), WriterOptions (..),
                      def)
 import           Text.Pandoc.Readers (readHaddock)
@@ -45,6 +46,6 @@ main = do
                 runIOorExplode $ do
                     doc1 <- readHaddock def description
                     let doc2 = headerShift 1 doc1
-                    writeMarkdown def{writerExtensions = githubMarkdownExtensions} doc2
+                    writeMarkdown def{writerExtensions = getDefaultExtensions "gfm"} doc2
             let readme = T.unlines [readmeHeaderContent, body]
             TIO.writeFile "README.md" readme

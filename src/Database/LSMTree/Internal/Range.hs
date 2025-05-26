@@ -13,9 +13,13 @@ import           Control.DeepSeq (NFData (..))
 
 -- | A range of keys.
 data Range k =
-    -- | Inclusive lower bound, exclusive upper bound
+    {- |
+    @'FromToExcluding' i j@ is the ranges from @i@ (inclusive) to @j@ (exclusive).
+    -}
     FromToExcluding k k
-    -- | Inclusive lower bound, inclusive upper bound
+    {- |
+    @'FromToIncluding' i j@ is the ranges from @i@ (inclusive) to @j@ (inclusive).
+    -}
   | FromToIncluding k k
   deriving stock (Show, Eq, Functor)
 

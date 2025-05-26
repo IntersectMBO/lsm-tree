@@ -16,7 +16,6 @@ module Database.LSMTree.Internal.Config (
   , WriteBufferAlloc (..)
     -- * Bloom filter allocation
   , BloomFilterAlloc (..)
-  , defaultBloomFilterAlloc
   , bloomFilterAllocForLevel
     -- * Fence pointer index
   , FencePointerIndexType (..)
@@ -27,7 +26,6 @@ module Database.LSMTree.Internal.Config (
   , diskCachePolicyForLevel
     -- * Merge schedule
   , MergeSchedule (..)
-  , defaultMergeSchedule
   ) where
 
 import           Control.DeepSeq (NFData (..))
@@ -48,26 +46,57 @@ newtype LevelNo = LevelNo Int
   Table configuration
 -------------------------------------------------------------------------------}
 
--- | Table configuration parameters, including LSM tree tuning parameters.
---
--- Some config options are fixed (for now):
---
--- * Merge policy: Tiering
---
--- * Size ratio: 4
+{- |
+A collection of configuration parameters for tables, which can be used to tune the performance of the table.
+To construct a 'TableConfig', modify the 'defaultTableConfig', which defines reasonable defaults for all parameters.
+
+For a detailed discussion of fine-tuning the table configuration, see [Fine-tuning Table Configuration](../#fine_tuning).
+
+[@confMergePolicy :: t'MergePolicy'@]
+    The /merge policy/ balances the performance of lookups against the performance of updates.
+    Levelling favours lookups.
+    Tiering favours updates.
+    Lazy levelling strikes a middle ground between levelling and tiering, and moderately favours updates.
+    This parameter is explicitly referenced in the documentation of those operations it affects.
+
+[@confSizeRatio :: t'SizeRatio'@]
+    The /size ratio/ pushes the effects of the merge policy to the extreme.
+    If the size ratio is higher, levelling favours lookups more, and tiering and lazy levelling favour updates more.
+    This parameter is referred to as \(T\) in the disk I\/O cost of operations.
+
+[@confWriteBufferAlloc :: t'WriteBufferAlloc'@]
+    The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the database.
+    If the write buffer is larger, it takes up more memory, but lookups and updates are more efficient.
+    This parameter is referred to as \(B\) in the disk I\/O cost of operations.
+    Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
+
+[@confMergeSchedule :: t'MergeSchedule'@]
+    The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
+    The merge schedule does not affect the performance of table unions.
+    With the one-shot merge schedule, lookups and updates are more efficient overall, but some updates may take much longer than others.
+    With the incremental merge schedule, lookups and updates are less efficient overall, but each update does a similar amount of work.
+    This parameter is explicitly referenced in the documentation of those operations it affects.
+
+[@confBloomFilterAlloc :: t'BloomFilterAlloc'@]
+    The Bloom filter size balances the performance of lookups against the in-memory size of the database.
+    If the Bloom filters are larger, they take up more memory, but lookup operations are more efficient.
+
+[@confFencePointerIndex :: t'FencePointerIndexType'@]
+    The /fence-pointer index type/ supports two types of indexes.
+    The /ordinary/ indexes are designed to work with any key.
+    The /compact/ indexes are optimised for the case where the keys in the database are uniformly distributed, e.g., when the keys are hashes.
+
+[@confDiskCachePolicy :: t'DiskCachePolicy'@]
+    The /disk cache policy/ supports caching lookup operations using the OS page cache.
+    Caching may improve the performance of lookups if database access follows certain patterns.
+-}
 data TableConfig = TableConfig {
     confMergePolicy       :: !MergePolicy
   , confMergeSchedule     :: !MergeSchedule
-    -- Size ratio between the capacities of adjacent levels.
   , confSizeRatio         :: !SizeRatio
-    -- | Total number of bytes that the write buffer can use.
-    --
-    -- The maximum is 4GiB, which should be more than enough for realistic
-    -- applications.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
   , confBloomFilterAlloc  :: !BloomFilterAlloc
   , confFencePointerIndex :: !FencePointerIndexType
-    -- | The policy for caching key\/value data from disk in memory.
   , confDiskCachePolicy   :: !DiskCachePolicy
   }
   deriving stock (Show, Eq)
@@ -76,19 +105,31 @@ instance NFData TableConfig where
   rnf (TableConfig a b c d e f g) =
       rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f `seq` rnf g
 
--- | A reasonable default 'TableConfig'.
+-- | The 'defaultTableConfig' defines reasonable defaults for all 'TableConfig' parameters.
 --
--- This uses a write buffer with up to 20,000 elements and a generous amount of
--- memory for Bloom filters (FPR of 1%).
+-- >>> confMergePolicy defaultTableConfig
+-- LazyLevelling
+-- >>> confMergeSchedule defaultTableConfig
+-- Incremental
+-- >>> confSizeRatio defaultTableConfig
+-- Four
+-- >>> confWriteBufferAlloc defaultTableConfig
+-- AllocNumEntries 20000
+-- >>> confBloomFilterAlloc defaultTableConfig
+-- AllocRequestFPR 1.0e-3
+-- >>> confFencePointerIndex defaultTableConfig
+-- OrdinaryIndex
+-- >>> confDiskCachePolicy defaultTableConfig
+-- DiskCacheAll
 --
 defaultTableConfig :: TableConfig
 defaultTableConfig =
     TableConfig
       { confMergePolicy       = LazyLevelling
-      , confMergeSchedule     = defaultMergeSchedule
+      , confMergeSchedule     = Incremental
       , confSizeRatio         = Four
       , confWriteBufferAlloc  = AllocNumEntries 20_000
-      , confBloomFilterAlloc  = defaultBloomFilterAlloc
+      , confBloomFilterAlloc  = AllocRequestFPR 1.0e-3
       , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
       }
@@ -107,12 +148,19 @@ runParamsForLevel conf@TableConfig {..} levelNo =
   Merge policy
 -------------------------------------------------------------------------------}
 
+{- |
+The /merge policy/ balances the performance of lookups against the performance of updates.
+Levelling favours lookups.
+Tiering favours updates.
+Lazy levelling strikes a middle ground between levelling and tiering, and moderately favours updates.
+This parameter is explicitly referenced in the documentation of those operations it affects.
+
+__NOTE:__ This package only supports lazy levelling.
+
+For a detailed discussion of the merge policy, see [Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size](../#fine_tuning_data_layout).
+-}
 data MergePolicy =
-    -- | Use tiering on intermediate levels, and levelling on the last level.
-    -- This makes it easier for delete operations to disappear on the last
-    -- level.
     LazyLevelling
-    -- TODO: add other merge policies, like tiering and levelling.
   deriving stock (Eq, Show)
 
 instance NFData MergePolicy where
@@ -122,6 +170,15 @@ instance NFData MergePolicy where
   Size ratio
 -------------------------------------------------------------------------------}
 
+{- |
+The /size ratio/ pushes the effects of the merge policy to the extreme.
+If the size ratio is higher, levelling favours lookups more, and tiering and lazy levelling favour updates more.
+This parameter is referred to as \(T\) in the disk I\/O cost of operations.
+
+__NOTE:__ This package only supports a size ratio of four.
+
+For a detailed discussion of the size ratio, see [Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size](../#fine_tuning_data_layout).
+-}
 data SizeRatio = Four
   deriving stock (Eq, Show)
 
@@ -135,13 +192,20 @@ sizeRatioInt = \case Four -> 4
   Write buffer allocation
 -------------------------------------------------------------------------------}
 
--- | Allocation method for the write buffer.
+-- TODO: "If the sizes of values vary greatly, this can lead to unevenly sized runs on disk and unpredictable performance."
+
+{- |
+The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the table.
+If the write buffer is larger, it takes up more memory, but lookups and updates are more efficient.
+Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
+
+For a detailed discussion of the size ratio, see [Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size](../#fine_tuning_data_layout).
+-}
 data WriteBufferAlloc =
-    -- | Total number of key\/value pairs that can be present in the write
-    -- buffer before flushing the write buffer to disk.
-    --
-    -- NOTE: if the sizes of values vary greatly, this can lead to wonky runs on
-    -- disk, and therefore unpredictable performance.
+    {- |
+    Allocate space for the in-memory write buffer to fit the requested number of entries.
+    This parameter is referred to as \(B\) in the disk I\/O cost of operations.
+    -}
     AllocNumEntries !Int
   deriving stock (Show, Eq)
 
@@ -149,48 +213,68 @@ instance NFData WriteBufferAlloc where
   rnf (AllocNumEntries n) = rnf n
 
 {-------------------------------------------------------------------------------
+  Merge schedule
+-------------------------------------------------------------------------------}
+
+{- |
+The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
+The merge schedule does not affect the performance of table unions.
+With the one-shot merge schedule, lookups and updates are more efficient overall, but some updates may take much longer than others.
+With the incremental merge schedule, lookups and updates are less efficient overall, but each update does a similar amount of work.
+This parameter is explicitly referenced in the documentation of those operations it affects.
+
+For a detailed discussion of the effect of the merge schedule, see [Fine-tuning: Merge Schedule](../#fine_tuning_merge_schedule).
+-}
+data MergeSchedule =
+    {- |
+    The 'OneShot' merge schedule causes the merging algorithm to complete merges immediately.
+    This is more efficient than the 'Incremental' merge schedule, but has an inconsistent workload.
+    Using the 'OneShot' merge schedule, the worst-case disk I\/O complexity of the update operations is /linear/ in the size of the table.
+    For real-time systems and other use cases where unresponsiveness is unacceptable, use the 'Incremental' merge schedule.
+    -}
+    OneShot
+    {- |
+    The 'Incremental' merge schedule spreads out the merging work over time.
+    This is less efficient than the 'OneShot' merge schedule, but has a consistent workload.
+    Using the 'Incremental' merge schedule, the worst-case disk I\/O complexity of the update operations is /logarithmic/ in the size of the table.
+    -}
+  | Incremental
+  deriving stock (Eq, Show)
+
+instance NFData MergeSchedule where
+  rnf OneShot     = ()
+  rnf Incremental = ()
+
+{-------------------------------------------------------------------------------
   Bloom filter allocation
 -------------------------------------------------------------------------------}
 
--- | Allocation method for bloom filters.
---
--- NOTE: a __physical__ database entry is a key\/operation pair that exists in a
--- file, i.e., a run. Multiple physical entries that have the same key
--- constitute a __logical__ database entry.
---
--- There is a trade-off between bloom filter memory size, and the false
--- positive rate. A higher false positive rate (FPR) leads to more unnecessary
--- I\/O. As a guide, here are some points on the trade-off:
---
--- * FPR of 1e-2 requires approximately 9.9 bits per element
--- * FPR of 1e-3 requires approximately 15.8 bits per element
--- * FPR of 1e-4 requires approximately 22.6 bits per element
---
--- The policy can be specified either by fixing a FPR or by fixing the number
--- of bits per entry.
---
+{- |
+The Bloom filter size balances the performance of lookups against the in-memory size of the table.
+If the Bloom filters are larger, they take up more memory, but lookup operations are more efficient.
+
+For a detailed discussion of the Bloom filter size, see [Fine-tuning: Bloom Filter Size](../#fine_tuning_bloom_filter_size).
+-}
 data BloomFilterAlloc =
-    -- | Allocate a fixed number of bits per physical entry in each bloom
-    -- filter. Non-integer values are legal. Once the number of entries is know,
-    -- the number of bits is rounded.
-    --
-    -- The value must strictly positive, 0 < x. Sane values are 2 .. 24.
-    --
+    {- |
+    Allocate the requested number of bits per entry in the table.
+
+    The value must strictly positive, but fractional values are permitted.
+    The recommended range is \([2, 24]\).
+    -}
     AllocFixed !Double
-  | -- | Allocate as many bits as required per physical entry to get the requested
-    -- false-positive rate. Do this for each bloom filter.
-    --
-    -- The value must be in the range 0 < x < 1. Sane values are 1e-2 .. 1e-5.
-    --
+  | {- |
+    Allocate the required number of bits per entry to get the requested false-positive rate.
+
+    The value must be in the range \((0, 1)\).
+    The recommended range is \([1\mathrm{e}{ -5 },1\mathrm{e}{ -2 }]\).
+    -}
     AllocRequestFPR !Double
   deriving stock (Show, Eq)
 
 instance NFData BloomFilterAlloc where
   rnf (AllocFixed n)        = rnf n
   rnf (AllocRequestFPR fpr) = rnf fpr
-
-defaultBloomFilterAlloc :: BloomFilterAlloc
-defaultBloomFilterAlloc = AllocRequestFPR 1e-3
 
 bloomFilterAllocForLevel :: TableConfig -> RunLevelNo -> RunBloomFilterAlloc
 bloomFilterAllocForLevel conf _levelNo =
@@ -202,27 +286,31 @@ bloomFilterAllocForLevel conf _levelNo =
   Fence pointer index
 -------------------------------------------------------------------------------}
 
--- | Configure the type of fence pointer index.
+{- |
+The /fence-pointer index type/ supports two types of indexes.
+The /ordinary/ indexes are designed to work with any key.
+The /compact/ indexes are optimised for the case where the keys in the database are uniformly distributed, e.g., when the keys are hashes.
+
+For a detailed discussion the fence-pointer index types, see [Fine-tuning: Fence-Pointer Index Type](../#fine_tuning_fence_pointer_index_type).
+-}
 data FencePointerIndexType =
-    -- | Use a compact fence pointer index.
-    --
-    -- Compact indexes are designed to work with keys that are large (for
-    -- example, 32 bytes long) cryptographic hashes.
-    --
-    -- When using a compact index, it is vital that the
-    -- 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function
-    -- satisfies the following law:
-    --
-    -- [Minimal size] @'Database.LSMTree.Internal.RawBytes.size'
-    -- ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
-    --
-    -- Use 'serialiseKeyMinimalSize' to test this law.
+    {- |
+    Ordinary indexes are designed to work with any key.
+
+    When using an ordinary index, the 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function cannot produce output larger than 64KiB.
+    -}
+    OrdinaryIndex
+  | {- |
+    Compact indexes are designed  for the case where the keys in the database are uniformly distributed, e.g., when the keys are hashes.
+
+    When using a compact index, the 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function must satisfy the following additional law:
+
+    [Minimal size]
+      @'Database.LSMTree.Internal.RawBytes.size' ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
+
+    Use 'serialiseKeyMinimalSize' to test this law.
+    -}
     CompactIndex
-    -- | Use an ordinary fence pointer index
-    --
-    -- Ordinary indexes do not have any constraints on keys other than that
-    -- their serialised forms may not be 64 KiB or more in size.
-  | OrdinaryIndex
   deriving stock (Eq, Show)
 
 instance NFData FencePointerIndexType where
@@ -241,48 +329,41 @@ serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 8
   Disk cache policy
 -------------------------------------------------------------------------------}
 
--- | The policy for caching data from disk in memory (using the OS page cache).
---
--- Caching data in memory can improve performance if the access pattern has
--- good access locality or if the overall data size fits within memory. On the
--- other hand, caching is detrimental to performance and wastes memory if the
--- access pattern has poor spatial or temporal locality.
---
--- This implementation is designed to have good performance using a cacheless
--- policy, where main memory is used only to cache Bloom filters and indexes,
--- but none of the key\/value data itself. Nevertheless, some use cases will be
--- faster if some or all of the key\/value data is also cached in memory. This
--- implementation does not do any custom caching of key\/value data, relying
--- simply on the OS page cache. Thus caching is done in units of 4kb disk pages
--- (as opposed to individual key\/value pairs for example).
---
+{- |
+The /disk cache policy/ determines if lookup operations use the OS page cache.
+Caching may improve the performance of lookups if database access follows certain patterns.
+
+For a detailed discussion the disk cache policy, see [Fine-tuning: Disk Cache Policy](../#fine_tuning_disk_cache_policy).
+-}
 data DiskCachePolicy =
+    {- |
+    Cache all data in the table.
 
-       -- | Use the OS page cache to cache any\/all key\/value data in the
-       -- table.
-       --
-       -- Use this policy if the expected access pattern for the table
-       -- has a good spatial or temporal locality.
-       DiskCacheAll
+    Use this policy if the database's access pattern has either good spatial locality or both good spatial and temporal locality.
+    -}
+    DiskCacheAll
 
-       -- | Use the OS page cache to cache data in all LSMT levels from 0 to
-       -- a given level number. For example, use 1 to cache the first level.
-       -- (The write buffer is considered to be level 0.)
-       --
-       -- Use this policy if the expected access pattern for the table
-       -- has good temporal locality for recently inserted keys.
-     | DiskCacheLevelOneTo !Int
+  | {- |
+    Cache the data in the freshest @l@ levels.
 
-       --TODO: Add a policy based on size in bytes rather than internal details
-       -- like levels. An easy use policy would be to say: "cache the first 10
-       -- Mb" and have everything worked out from that.
+    Use this policy if the database's access pattern only has good temporal locality.
 
-       -- | Do not cache any key\/value data in any level (except the write
-       -- buffer).
-       --
-       -- Use this policy if expected access pattern for the table has poor
-       -- spatial or temporal locality, such as uniform random access.
-     | DiskCacheNone
+    The variable @l@ determines the number of levels that are cached.
+    For a description of levels, see [Merge Policy, Size Ratio, and Write Buffer Size](#fine_tuning_data_layout).
+    With this setting, the database can be expected to cache up to \(\frac{k}{P}\) pages of memory,
+    where \(k\) refers to the number of entries that fit in levels \([1,l]\) and is defined as \(\sum_{i=1}^{l}BT^{i}\).
+    -}
+    -- TODO: Add a policy for caching based on size in bytes, rather than exposing internal details such as levels.
+    --       For instance, a policy that states "cache the freshest 10MiB"
+    DiskCacheLevelOneTo !Int
+
+  | {- |
+    Do not cache any table data.
+
+    Use this policy if the database's access pattern has does not have good spatial or temporal locality.
+    For instance, if the access pattern is uniformly random.
+    -}
+    DiskCacheNone
   deriving stock (Show, Eq)
 
 instance NFData DiskCachePolicy where
@@ -303,40 +384,3 @@ diskCachePolicyForLevel policy levelNo =
         RegularLevel l | l <= LevelNo n -> CacheRunData
                        | otherwise      -> NoCacheRunData
         UnionLevel                      -> NoCacheRunData
-
-{-------------------------------------------------------------------------------
-  Merge schedule
--------------------------------------------------------------------------------}
-
--- | A configuration option that determines how merges are stepped to
--- completion. This does not affect the amount of work that is done by merges,
--- only how the work is spread out over time.
-data MergeSchedule =
-    -- | Complete merges immediately when started.
-    --
-    -- The 'OneShot' option will make the merging algorithm perform /big/ batches
-    -- of work in one go, so intermittent slow-downs can be expected. For use
-    -- cases where unresponsiveness is unacceptable, e.g. in real-time systems,
-    -- use 'Incremental' instead.
-    OneShot
-    -- | Schedule merges for incremental construction, and step the merge when
-    -- updates are performed on a table.
-    --
-    -- The 'Incremental' option spreads out merging work over time. More
-    -- specifically, updates to a table can cause a /small/ batch of merge work
-    -- to be performed. The scheduling of these batches is designed such that
-    -- merges are fully completed in time for when new merges are started on the
-    -- same level.
-  | Incremental
-  deriving stock (Eq, Show)
-
-instance NFData MergeSchedule where
-  rnf OneShot     = ()
-  rnf Incremental = ()
-
--- | The default 'MergeSchedule'.
---
--- >>> defaultMergeSchedule
--- Incremental
-defaultMergeSchedule :: MergeSchedule
-defaultMergeSchedule = Incremental
