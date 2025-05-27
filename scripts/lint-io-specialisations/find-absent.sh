@@ -42,9 +42,9 @@
 #         current module or the most recently found such directive is
 #         considered to not be relevant for the remainder of the module.
 #
-#   * This utility requires GNU sed because it uses a backreference in a
-#     regular expression, something that the POSIX standard does not
-#     guarantee to work.
+#   * This utility requires GNU sed because it uses a backreference in
+#     an extended regular expression, something that the POSIX standard
+#     does not guarantee to work.
 
 set -e
 
