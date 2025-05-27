@@ -59,9 +59,11 @@ main = do
             entries <-
                 fmap concat . for diskIOComplexityTable $ \row -> do
                     let fullRow = replicate (5 - length row) "" <> row
-                    let [newResource, newOperations, mergePolicy, mergeSchedule, rawWorstCaseDiskIOComplexity] = fullRow
+                    let [newResource, newOperations, newMergePolicy, newMergeSchedule, rawWorstCaseDiskIOComplexity] = fullRow
                     resource <- atomicModifyIORef resourceRef (merge newResource)
                     operations <- atomicModifyIORef operationsRef (merge newOperations)
+                    let mergePolicy = if newMergePolicy == "N/A" then "" else newMergePolicy
+                    let mergeSchedule = if newMergeSchedule == "N/A" then "" else newMergeSchedule
                     let worstCaseDiskIOComplexity = T.dropWhileEnd (`elem`[' ','*']) rawWorstCaseDiskIOComplexity
                     for (T.splitOn "/" operations) $ \operation -> do
                         let function
