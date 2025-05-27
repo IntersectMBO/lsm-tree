@@ -44,7 +44,7 @@ newline_rs='\
 printf '%s\n' 'Function,Merge policy,Merge schedule,Worst-case disk I/O complexity,Condition'
 
 sed -En -e '
-    # Collect complexity information from a Haddock annotation
+    # Collect all disk I/O complexity information from a Haddock annotation
     /^\{- *\|/,/-}/ {
         # Store an unconditional disk I/O complexity
         s/'"$unconditional_re"'/,,\1,/
@@ -61,7 +61,7 @@ sed -En -e '
             H
             d
         }
-        # Possibly fetch parameter-specific complexity information
+        # Possibly fetch parameter-specific disk I/O complexity information
         /^\['"'"'[^'"'"']+'"'"'(\\\/'"'"'[^'"'"']+'"'"')?]/ {
             # Construct the parameter fields
             s/\['"'"'([^'"'"']+)'"'"'/\1,/
@@ -69,7 +69,7 @@ sed -En -e '
             s/]:$//
             # Get the next line
             N
-            # Store the complexity from a disk I/O complexity item
+            # Store the disk I/O complexity from a disk I/O complexity item
             s/\n *'"$o_expr_re"'\.$/,\1,/
             t store
             # Ignore an item that is not a disk I/O complexity item
