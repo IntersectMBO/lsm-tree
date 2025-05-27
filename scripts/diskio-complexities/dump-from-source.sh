@@ -61,7 +61,7 @@ sed -En -e '
             H
             d
         }
-        # Possibly fetch parameter-specific disk I/O complexity information
+        # Possibly fetch parameter-specific complexity information
         /^\['"'"'[^'"'"']+'"'"'(\\\/'"'"'[^'"'"']+'"'"')?]/ {
             # Construct the parameter fields
             s/\['"'"'([^'"'"']+)'"'"'/\1,/
@@ -69,7 +69,7 @@ sed -En -e '
             s/]:$//
             # Get the next line
             N
-            # Store the disk I/O complexity from a disk I/O complexity item
+            # Store the complexity from a disk I/O complexity item
             s/\n *'"$o_expr_re"'\.$/,\1,/
             t store
             # Ignore an item that is not a disk I/O complexity item
