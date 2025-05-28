@@ -12,6 +12,7 @@ build-depends:
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards   #-}
 
 module Main (main) where
 
@@ -41,6 +42,11 @@ import           Text.Pandoc.Options (ReaderOptions (..), WriterOptions (..),
 import           Text.Pandoc.Readers (readHaddock)
 import           Text.Pandoc.Walk (Walkable (query))
 
+tableEntryToFunction :: Text -> Text -> Text
+tableEntryToFunction resource operation
+    | (resource == "Table" || resource == "Cursor") && operation `notElem` ["New", "Close"] = toCamel (T.splitOn " " operation)
+    | resource == "Snapshot" && operation == "List" = "listSnapshots" -- plural
+    | otherwise = toCamel [operation, resource]
 
 main :: IO ()
 main = do
@@ -62,15 +68,12 @@ main = do
                     let [newResource, newOperations, newMergePolicy, newMergeSchedule, rawWorstCaseDiskIOComplexity] = fullRow
                     resource <- atomicModifyIORef resourceRef (merge newResource)
                     operations <- atomicModifyIORef operationsRef (merge newOperations)
-                    let mergePolicy = if newMergePolicy == "N/A" then "" else newMergePolicy
-                    let mergeSchedule = if newMergeSchedule == "N/A" then "" else newMergeSchedule
+                    let mergePolicy = if newMergePolicy == "N/A" then Nothing else Just newMergePolicy
+                    let mergeSchedule = if newMergeSchedule == "N/A" then Nothing else Just newMergeSchedule
                     let worstCaseDiskIOComplexity = T.dropWhileEnd (`elem`[' ','*']) rawWorstCaseDiskIOComplexity
                     for (T.splitOn "/" operations) $ \operation -> do
-                        let function
-                                | (resource == "Table" || resource == "Cursor") && operation `notElem` ["New", "Close"] = toCamel (T.splitOn " " operation)
-                                | resource == "Snapshot" && operation == "List" = "listSnapshots" -- plural
-                                | otherwise = toCamel [operation, resource]
-                        pure $ DiskIOComplexityEntry (function, mergePolicy, mergeSchedule, worstCaseDiskIOComplexity)
+                        let function = tableEntryToFunction resource operation
+                        pure $ DiskIOComplexity {..}
             let csvData = encodeByName diskIOComplexityHeader entries
             BSL.putStr csvData
 
@@ -78,15 +81,26 @@ main = do
 -- Helper functions
 --------------------------------------------------------------------------------
 
-newtype DiskIOComplexityEntry = DiskIOComplexityEntry (Text, Text, Text, Text)
+type Function = Text
+type MergePolicy = Text
+type MergeSchedule = Text
+type WorstCaseDiskIOComplexity = Text
+
+data DiskIOComplexity = DiskIOComplexity
+  { function                  :: Function
+  , mergePolicy               :: Maybe MergePolicy
+  , mergeSchedule             :: Maybe MergeSchedule
+  , worstCaseDiskIOComplexity :: WorstCaseDiskIOComplexity
+  }
+  deriving (Eq, Show)
 
 diskIOComplexityHeader :: Header
 diskIOComplexityHeader =
   header
     ["Function", "Merge policy", "Merge schedule", "Worst-case disk I/O complexity"]
 
-instance ToNamedRecord DiskIOComplexityEntry where
-  toNamedRecord (DiskIOComplexityEntry (function, mergePolicy, mergeSchedule, worstCaseDiskIOComplexity)) =
+instance ToNamedRecord DiskIOComplexity where
+  toNamedRecord DiskIOComplexity {..} =
     namedRecord
       [ "Function" .= toField function
       , "Merge policy" .= toField mergePolicy
