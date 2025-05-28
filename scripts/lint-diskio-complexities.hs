@@ -17,6 +17,7 @@ build-depends:
 {-# LANGUAGE TypeApplications    #-}
 
 import           Control.Applicative (Alternative (..))
+import           Control.Monad (unless)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Csv
 import           Data.List (zip4)
@@ -32,32 +33,8 @@ import qualified Data.Text.IO as TIO
 import           Data.Traversable (for)
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
+import           System.Exit (ExitCode (..), exitWith)
 import           System.Process (readProcess)
-
-type Function = Text
-type MergePolicy = Text
-type MergeSchedule = Text
-type WorstCaseDiskIOComplexity = Text
-type Condition = Text
-
-data DiskIOComplexity = DiskIOComplexity
-  { function                  :: Function
-  , mergePolicy               :: Maybe MergePolicy
-  , mergeSchedule             :: Maybe MergeSchedule
-  , worstCaseDiskIOComplexity :: WorstCaseDiskIOComplexity
-  , condition                 :: Maybe Condition
-  }
-  deriving (Eq, Show)
-
-looseEq :: DiskIOComplexity -> DiskIOComplexity -> Bool
-dioc1 `looseEq` dioc2 =
-  and
-    [ dioc1.function == dioc2.function
-    , dioc1.mergePolicy == dioc2.mergePolicy
-    , dioc1.mergeSchedule == dioc2.mergeSchedule
-    , dioc1.worstCaseDiskIOComplexity == dioc2.worstCaseDiskIOComplexity
-    , isNothing dioc1.condition || dioc1.condition == dioc2.condition
-    ]
 
 main :: IO ()
 main = do
@@ -78,90 +55,108 @@ main = do
 
   -- Comparing Database.LSMTree.Simple to Database.LSMTree
   putStrLn "Comparing Database.LSMTree.Simple to Database.LSMTree:"
-  diskIOComplexityComparisonSimpleToFull <-
-    for (concat . M.elems $ mapForSimpleApi) $ \diskIOComplexity@DiskIOComplexity{..} -> do
+  comparisonSimpleToFull <-
+    fmap concat . for (concat . M.elems $ mapForSimpleApi) $ \simpleEntry@DiskIOComplexity{..} -> do
       case M.lookup function mapForFullApi of
         Nothing ->
-          pure [("Database.LSMTree.Simple", diskIOComplexity)]
-        Just fullDiskIOComplexities
-          | diskIOComplexity `elem` fullDiskIOComplexities -> pure []
-          | otherwise -> pure (("Database.LSMTree.Simple", diskIOComplexity) : (("Database.LSMTree",) <$> fullDiskIOComplexities))
-  TIO.putStrLn . prettyDiskIOComplexityTable . concat $ diskIOComplexityComparisonSimpleToFull
+          pure [("Database.LSMTree.Simple", simpleEntry)]
+        Just fullEntries
+          | simpleEntry `elem` fullEntries -> pure []
+          | otherwise -> pure (("Database.LSMTree.Simple", simpleEntry) : (("Database.LSMTree",) <$> fullEntries))
+  TIO.putStrLn (prettyDiskIOComplexityTable comparisonSimpleToFull)
 
   -- Comparing lsm-tree.cabal to Database.LSMTree
   putStrLn "Comparing lsm-tree.cabal to Database.LSMTree:"
-  diskIOComplexityComparisonPackageDescriptionToFull <-
-    for (concat . M.elems $ mapForPackageDescription) $ \diskIOComplexity@DiskIOComplexity{..} -> do
+  comparisonPackageDescriptionToFull <-
+    fmap concat . for (concat . M.elems $ mapForPackageDescription) $ \simpleEntry@DiskIOComplexity{..} -> do
       case M.lookup function mapForFullApi of
         Nothing ->
-          pure [("lsm-tree.cabal", diskIOComplexity)]
-        Just fullDiskIOComplexities
-          | any (looseEq diskIOComplexity) fullDiskIOComplexities -> pure []
-          | otherwise -> pure (("lsm-tree.cabal", diskIOComplexity) : (("Database.LSMTree",) <$> fullDiskIOComplexities))
-  TIO.putStrLn . prettyDiskIOComplexityTable . concat $ diskIOComplexityComparisonPackageDescriptionToFull
+          pure [("lsm-tree.cabal", simpleEntry)]
+        Just fullEntries
+          | any (looseEq simpleEntry) fullEntries -> pure []
+          | otherwise -> pure (("lsm-tree.cabal", simpleEntry) : (("Database.LSMTree",) <$> fullEntries))
+  TIO.putStrLn (prettyDiskIOComplexityTable comparisonPackageDescriptionToFull)
+
+  -- Set the exit code based on whether any differences were found
+  unless (null comparisonSimpleToFull && null comparisonPackageDescriptionToFull) $
+    exitWith (ExitFailure 1)
 
 --------------------------------------------------------------------------------
 -- Helper functions
 --------------------------------------------------------------------------------
 
+type Function = Text
+type MergePolicy = Text
+type MergeSchedule = Text
+type WorstCaseDiskIOComplexity = Text
+type Condition = Text
+
+data DiskIOComplexity = DiskIOComplexity
+  { function                  :: Function
+  , mergePolicy               :: Maybe MergePolicy
+  , mergeSchedule             :: Maybe MergeSchedule
+  , worstCaseDiskIOComplexity :: WorstCaseDiskIOComplexity
+  , condition                 :: Maybe Condition
+  }
+  deriving (Eq, Show)
+
+-- | Loose equality which is used when comparing the disk I/O complexities
+--   listed in the package description to those in the modules. Those in the
+--   package description do not list complex side conditions, such as all
+--   tables having been closed beforehand, or all tables having the same merge
+--   policy. Therefore, this equality disregards mismatches when the first
+--   entry does not list a condition.
+looseEq :: DiskIOComplexity -> DiskIOComplexity -> Bool
+entry1 `looseEq` entry2 =
+  and
+    [ entry1.function == entry2.function
+    , entry1.mergePolicy == entry2.mergePolicy
+    , entry1.mergeSchedule == entry2.mergeSchedule
+    , entry1.worstCaseDiskIOComplexity == entry2.worstCaseDiskIOComplexity
+    , isNothing entry1.condition || entry1.condition == entry2.condition
+    ]
+
 -- | Typeset a tagged list of 'DiskIOComplexity' records as an aligned table.
 prettyDiskIOComplexityTable :: [(Text, DiskIOComplexity)] -> Text
-prettyDiskIOComplexityTable diskIOComplexities =
+prettyDiskIOComplexityTable [] = "No differences found.\n"
+prettyDiskIOComplexityTable entries =
   T.unlines
     [ T.unwords
-      [ tag `padUpTo` maxTagLen
-      , function `padUpTo` maxFunctionLen
-      , condition `padUpTo` maxConditionLen
-      , worstCaseDiskIOComplexity `padUpTo` maxWorstCaseDiskIOComplexityLen
+      [ prettyCellForColumn tag tags
+      , prettyCellForColumn function functions
+      , prettyCellForColumn fullCondition fullConditions
+      , prettyCellForColumn worstCaseDiskIOComplexity worstCaseDiskIOComplexities
       ]
-    | (tag, function, condition, worstCaseDiskIOComplexity) <-
-        zip4 tags functions conditions worstCaseDiskIOComplexities
+    | (tag, function, fullCondition, worstCaseDiskIOComplexity) <-
+        zip4 tags functions fullConditions worstCaseDiskIOComplexities
     ]
  where
-  tags = fst <$> diskIOComplexities
-  maxTagLen = maximum (T.length <$> tags)
+  tags = fst <$> entries
+  functions = ((.function) . snd) <$> entries
+  fullConditions = (prettyFullCondition . snd) <$> entries
+  worstCaseDiskIOComplexities = ((.worstCaseDiskIOComplexity) . snd) <$> entries
 
-  functions = ((.function) . snd) <$> diskIOComplexities
-  maxFunctionLen = maximum (T.length <$> functions)
+  prettyCellForColumn :: Text -> [Text] -> Text
+  prettyCellForColumn cell column = cell <> T.replicate (maximum (T.length <$> column) - T.length cell) " "
 
-  conditions = (prettyCondition . snd) <$> diskIOComplexities
-  maxConditionLen = maximum (T.length <$> conditions)
-
-  worstCaseDiskIOComplexities = ((.worstCaseDiskIOComplexity) . snd) <$> diskIOComplexities
-  maxWorstCaseDiskIOComplexityLen = maximum (T.length <$> worstCaseDiskIOComplexities)
-
-  padUpTo :: Text -> Int -> Text
-  padUpTo txt len = txt <> T.replicate (len - T.length txt) " "
-
-  prettyCondition :: DiskIOComplexity -> Text
-  prettyCondition DiskIOComplexity{..} =
-    fromMaybe "*" (unionMaybeWith slash mergePolicy (unionMaybeWith slash mergeSchedule condition))
+  prettyFullCondition :: DiskIOComplexity -> Text
+  prettyFullCondition DiskIOComplexity{..} =
+    fromMaybe "*" mergePolicy `slashWith` mergeSchedule `slashWith` condition
    where
-    slash :: Text -> Text -> Text
-    x `slash` y = x <> "/" <> y
-
-    unionMaybeWith :: (a -> a -> a) -> Maybe a -> Maybe a -> Maybe a
-    unionMaybeWith op (Just x) (Just y) = Just (x `op` y)
-    unionMaybeWith _op (Just x) Nothing = Just x
-    unionMaybeWith _op Nothing (Just y) = Just y
-    unionMaybeWith _op Nothing Nothing  = Nothing
+    slashWith :: Text -> Maybe Text -> Text
+    slashWith x my = maybe x (\y -> x <> "/" <> y) my
 
 -- | Structure vector of 'DiskIOComplexity' records into lookup table by function name.
 buildDiskIOComplexityMap :: Vector DiskIOComplexity -> Map Function [DiskIOComplexity]
 buildDiskIOComplexityMap = M.unionsWith (<>) . fmap toSingletonMap . V.toList
  where
   toSingletonMap :: DiskIOComplexity -> Map Function [DiskIOComplexity]
-  toSingletonMap diskIOComplexity = M.singleton diskIOComplexity.function [diskIOComplexity]
+  toSingletonMap simpleEntry = M.singleton simpleEntry.function [simpleEntry]
 
 -- | Parse CSV file into vector of 'DiskIOComplexity' records.
 decodeDiskIOComplexities :: String -> Vector DiskIOComplexity
 decodeDiskIOComplexities =
   either error snd . decodeByName . BSL.fromStrict . TE.encodeUtf8 . T.pack
-
--- | CSV file header for 'DiskIOComplexity' records.
-diskIOComplexityHeader :: Header
-diskIOComplexityHeader =
-  header ["Function", "Merge policy", "Merge schedule", "Worst-case disk I/O complexity", "Condition"]
 
 normaliseWorstCaseDiskIOComplexity :: WorstCaseDiskIOComplexity -> WorstCaseDiskIOComplexity
 normaliseWorstCaseDiskIOComplexity =
