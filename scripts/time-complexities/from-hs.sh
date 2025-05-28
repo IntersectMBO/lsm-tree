@@ -3,7 +3,7 @@
 # Usage notes:
 #
 #   * This utility requires that any Haddock annotation that contains
-#     information about time complexities appears in the form of a
+#     information about disk I/O complexities appears in the form of a
 #     nested comment (a comment delimited by `{-` and `-}`). This should
 #     not be an unreasonable demand, since any such Haddock annotation
 #     should span multiple lines of source code and nested comments are
@@ -12,14 +12,15 @@
 # Implementation notes:
 #
 #   * The `sed` script that essentially performs all the work uses the
-#     hold space to hold time complexity information that has not yet
-#     been output. Every time a global type signature is encountered,
-#     the identifier from this type signature is attached to the stored
-#     time complexities, and the resulting data is flushed to the
-#     standard output. The hold space additionally contains a trailing
-#     line consisting of only `=` if any time complexity encountered in
-#     the currently processed line refers to the situation where all
-#     tables in a session have the same merge policy.
+#     hold space to hold disk I/O complexity information that has not
+#     yet been output. Every time a global type signature is
+#     encountered, the identifier from this type signature is attached
+#     to the stored disk I/O complexities, and the resulting data is
+#     flushed to the standard output. The hold space additionally
+#     contains a trailing line consisting of only `=` if any disk I/O
+#     complexity encountered in the currently processed line refers to
+#     the situation where all tables in a session have the same merge
+#     policy.
 
 set -e
 
@@ -41,15 +42,15 @@ newline_rs='\
 ' # for use within replacement strings of `s`-commands
 
 sed -En -e '
-    # Collect all time complexity information from a Haddock annotation
+    # Collect complexity information from a Haddock annotation
     /^\{- *\|/,/-}/ {
-        # Store an unconditional time complexity
+        # Store an unconditional disk I/O complexity
         s/'"$unconditional_re"'/,,\1,/
         t store
-        # Store a time complexity for the “nothing left open” case
+        # Store a disk I/O complexity for the “nothing left open” case
         s/'"$nothing_left_open_re"'/,,\1,Nothing left open/
         t store
-        # Store a time complexity with unknown condition
+        # Store a disk I/O complexity with unknown condition
         s/^.*'"$o_expr_re"'.*$/,,\1,Unknown condition/
         t store
         # Note down the occurrence of a “same merge policy” restriction
@@ -58,7 +59,7 @@ sed -En -e '
             H
             d
         }
-        # Possibly fetch parameter-specific time complexity information
+        # Possibly fetch parameter-specific complexity information
         /^\['"'"'[^'"'"']+'"'"'(\\\/'"'"'[^'"'"']+'"'"')?]/ {
             # Construct the parameter fields
             s/\['"'"'([^'"'"']+)'"'"'/\1,/
@@ -66,15 +67,15 @@ sed -En -e '
             s/]:$//
             # Get the next line
             N
-            # Store the time complexity from a time complexity item
+            # Store the complexity from a disk I/O complexity item
             s/\n *'"$o_expr_re"'\.$/,\1,/
             t store
-            # Ignore an item that is not a time complexity item
+            # Ignore an item that is not a disk I/O complexity item
             d
         }
         # Skip the current line
         d
-        # Store a found time complexity
+        # Store a found disk I/O complexity
         :store
         H
         x
@@ -83,17 +84,17 @@ sed -En -e '
         # Continue with the next line
         d
     }
-    # Output the stored time complexities with their global identifier
+    # Output the stored complexities with their global identifier
     /^[^ ]+ *::/ {
         # Remove everything except the identifier
         s/ *::.*//
-        # Swap the identifier and the time complexity information
+        # Swap the identifier and the disk I/O complexity information
         x
         # Remove any “same merge policy” note
         s/\n=$//
-        # Mark the starts of the time complexity entries
+        # Mark the starts of the disk I/O complexity entries
         s/\n/'"$newline_rs$newline_rs"'/g
-        # Mark the end of the time complexity information
+        # Mark the end of the disk I/O complexity information
         s/$/'"$newline_rs"'!/
         # Append the identifier
         G
@@ -101,9 +102,9 @@ sed -En -e '
         :add-id
         s/\n\n(.*\n!\n(.*))/'"$newline_rs"'\2,\1/
         t add-id
-        # Remove everything after the time complexity information
+        # Remove everything after the disk I/O complexity information
         s/\n!\n.*//
-        # Output the time complexity information
+        # Output the disk I/O complexity information
         s/\n//p
         # Clear the store
         b reset
