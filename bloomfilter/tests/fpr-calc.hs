@@ -2,7 +2,7 @@
 module Main (main) where
 
 import qualified Data.BloomFilter as B (BitsPerEntry, BloomPolicy, BloomSize,
-                     FPR, Hashable)
+                     FPR, Hashable, Salt)
 import qualified Data.BloomFilter.Blocked as B.Blocked
 import qualified Data.BloomFilter.Classic as B.Classic
 
@@ -142,23 +142,26 @@ actualFalsePositiveRate bloomimpl policy n g0 =
 countFalsePositives :: forall bloom. BloomImpl bloom
                     -> B.BloomPolicy -> Int -> StdGen -> Int
 countFalsePositives BloomImpl{..} policy n g0 =
-    let (!g0', !g0'') = splitGen g0
+    let (!g01, !g02) = splitGen g0
+
+        -- create a random salt
+        (!salt, !g03) = uniform g02
 
         -- create a bloom filter from n elements from g0
         size  = sizeForPolicy policy n
 
         xs_b :: bloom Int
-        !xs_b = unfold size nextElement (g0', 0)
+        !xs_b = unfold size salt nextElement (g01, 0)
 
         -- and a set, so we can make sure we don't count true positives
         xs_s :: IntSet
-        !xs_s = IntSet.fromList (unfoldr nextElement (g0', 0))
+        !xs_s = IntSet.fromList (unfoldr nextElement (g01, 0))
 
         -- now for a different random sequence (that will mostly not overlap)
         -- count the number of false positives
      in length
           [ ()
-          | y <- unfoldr nextElement (g0'', 0)
+          | y <- unfoldr nextElement (g03, 0)
           , y `elem` xs_b                -- Bloom filter reports positive
           , not (y `IntSet.member` xs_s) -- but it is not a true positive
           ]
@@ -177,7 +180,7 @@ data BloomImpl bloom = BloomImpl {
        policyFPR     :: B.BloomPolicy -> B.FPR,
        sizeForPolicy :: B.BloomPolicy -> Int -> B.BloomSize,
        unfold        :: forall a b. B.Hashable a
-                     => B.BloomSize -> (b -> Maybe (a, b)) -> b -> bloom a,
+                     => B.BloomSize -> B.Salt -> (b -> Maybe (a, b)) -> b -> bloom a,
        elem          :: forall a. B.Hashable a => a -> bloom a -> Bool
      }
 
