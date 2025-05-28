@@ -22,6 +22,7 @@ module Data.BloomFilter.Classic (
 
     -- * Types
     Hash,
+    Salt,
     Hashable,
 
     -- * Immutable Bloom filters
@@ -100,26 +101,27 @@ import           Prelude hiding (elem, notElem, read)
 -- @
 --
 -- Note that the result of the setup function is not used.
-create :: BloomSize
+create :: Salt
+       -> BloomSize
        -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
        -> Bloom a
 {-# INLINE create #-}
-create bloomsize body =
+create bloomsalt bloomsize body =
     runST $ do
-      mb <- new bloomsize
+      mb <- new bloomsalt bloomsize
       body mb
       unsafeFreeze mb
 
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
 insert :: Hashable a => MBloom s a -> a -> ST s ()
-insert !mb !x = insertHashes mb (hashes x)
+insert !mb !x = insertHashes mb (hashes mb x)
 
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: Hashable a => a -> Bloom a -> Bool
-elem = \ !x !b -> elemHashes b (hashes x)
+elem = \ !x !b -> elemHashes b (hashes b x)
 
 -- | Same as 'elem' but with the opposite argument order:
 --
@@ -142,7 +144,7 @@ notElem = \ x b -> not (x `elem` b)
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 read :: Hashable a => MBloom s a -> a -> ST s Bool
-read !mb !x = readHashes mb (hashes x)
+read !mb !x = readHashes mb (hashes mb x)
 
 -- | Build an immutable Bloom filter from a seed value.  The seeding
 -- function populates the filter as follows.
@@ -154,13 +156,14 @@ read !mb !x = readHashes mb (hashes x)
 --     @b@ is used as a new seed.
 unfold :: forall a b.
           Hashable a
-       => BloomSize
+       => Salt
+       -> BloomSize
        -> (b -> Maybe (a, b))       -- ^ seeding function
        -> b                         -- ^ initial seed
        -> Bloom a
 {-# INLINE unfold #-}
-unfold bloomsize f k =
-    create bloomsize body
+unfold bloomsalt bloomsize f k =
+    create bloomsalt bloomsize body
   where
     body :: forall s. MBloom s a -> ST s ()
     body mb = loop k
@@ -180,23 +183,26 @@ unfold bloomsize f k =
 -- filt = fromList (policyForBits 10) [\"foo\", \"bar\", \"quux\"]
 -- @
 fromList :: (Foldable t, Hashable a)
-         => BloomPolicy
+         => Salt
+         -> BloomPolicy
          -> t a -- ^ values to populate with
          -> Bloom a
-fromList policy xs =
-    create bsize (\b -> mapM_ (insert b) xs)
+fromList bsalt policy xs =
+    create bsalt bsize (\b -> mapM_ (insert b) xs)
   where
     bsize = sizeForPolicy policy (length xs)
 
-{-# SPECIALISE deserialise :: BloomSize
+{-# SPECIALISE deserialise :: Salt
+                           -> BloomSize
                            -> (MutableByteArray RealWorld -> Int -> Int -> IO ())
                            -> IO (Bloom a) #-}
 deserialise :: PrimMonad m
-            => BloomSize
+            => Salt
+            -> BloomSize
             -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
             -> m (Bloom a)
-deserialise bloomsize fill = do
-    mbloom <- stToPrim $ new bloomsize
+deserialise bloomsalt bloomsize fill = do
+    mbloom <- stToPrim $ new bloomsalt bloomsize
     Internal.deserialise mbloom fill
     stToPrim $ unsafeFreeze mbloom
 
