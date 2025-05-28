@@ -45,6 +45,7 @@ import           Text.Pandoc.Walk (Walkable (query))
 tableEntryToFunction :: Text -> Text -> Text
 tableEntryToFunction resource operation
     | (resource == "Table" || resource == "Cursor") && operation `notElem` ["New", "Close"] = toCamel (T.splitOn " " operation)
+    | resource == "Snapshot" && operation == "Open" = "openTableFromSnapshot"
     | resource == "Snapshot" && operation == "List" = "listSnapshots" -- plural
     | otherwise = toCamel [operation, resource]
 
