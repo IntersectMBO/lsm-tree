@@ -41,6 +41,8 @@ same_merge_policy_re='^The following assumes all tables in the session have the 
 newline_rs='\
 ' # for use within replacement strings of `s`-commands
 
+printf '%s\n' 'Function,Merge policy,Merge schedule,Worst-case disk I/O complexity,Condition'
+
 sed -En -e '
     # Collect complexity information from a Haddock annotation
     /^\{- *\|/,/-}/ {
