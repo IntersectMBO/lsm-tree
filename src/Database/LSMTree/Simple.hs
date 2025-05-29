@@ -917,7 +917,7 @@ Duplicate a table.
 The duplicate is an independent copy of the given table.
 The duplicate is unaffected by subsequent updates to the given table and vice versa.
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation is \(O(0)\).
 
 __Warning:__ The duplicate must be independently closed using 'closeTable'.
 

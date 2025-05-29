@@ -188,7 +188,7 @@ schedule are determined by the `TableConfig` parameters
 <tr>
 <td></td>
 <td>Range Lookup</td>
-<td><code>LazyLevelling</code></td>
+<td>N/A</td>
 <td>N/A</td>
 <td><span class="math inline">$O(T \: \log_T \frac{n}{B} +
 \frac{b}{P})$</span>

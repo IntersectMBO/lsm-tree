@@ -721,7 +721,7 @@ The batch of keys corresponds in-order to the batch of results.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
+    \(O(b \: T \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -862,7 +862,7 @@ The batch of keys corresponds in-order to the batch of results.
 The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
 
 ['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
+    \(O(b \: T \log_T \frac{n}{B})\).
 
 The variable \(b\) refers to the length of the input vector.
 
@@ -914,7 +914,7 @@ instance Bifunctor (Entry k) where
 {- |
 Look up a batch of values associated with keys in the given range.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B} + b)\),
+The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B} + \frac{b}{P})\),
 where the variable \(b\) refers to the length of the /output/ vector.
 
 Range lookups can be performed concurrently from multiple Haskell threads.
@@ -1359,7 +1359,10 @@ Found (Value "Hello")
 Found (Value "Goodbye")
 Found (Value "Hello")
 
-The worst-case disk I\/O complexity of this operation is \(O(0)\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -1455,7 +1458,7 @@ Found (Value "Goodbye")
 Found (Value "Hello")
 Found (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -1538,7 +1541,7 @@ Found (Value "Goodbye")
 Found (Value "Hello")
 Found (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
 
@@ -1615,7 +1618,10 @@ Found (Value "Goodbye")
 Found (Value "Hello")
 Found (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -1656,8 +1662,12 @@ withIncrementalUnion table1 table2 =
 {- |
 Variant of 'withIncrementalUnion' that takes any number of tables.
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
-where the variable \(b\) refers to the number of input tables.
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B} + b)\).
+
+The variable \(b\) refers to the number of input tables.
 -}
 {-# SPECIALISE
   withIncrementalUnions ::
@@ -1783,7 +1793,7 @@ runExample $ \session table1 -> do
 :}
 UnionDebt: 4
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation is \(O(0)\).
 
 Throws the following exceptions:
 
@@ -1836,7 +1846,7 @@ The 'remainingUnionDebt' functions gets an /upper bound/ for the amount of reman
 In the example above, the second call to 'remainingUnionDebt' reports @2@, but the union debt is @1@.
 Therefore, the second call to 'supplyUnionCredits' returns more leftovers than expected.
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
+The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
 where the variable \(b\) refers to the amount of credits supplied.
 
 Throws the following exceptions:
@@ -1966,7 +1976,10 @@ runExample $ \session table -> do
 Entry (Key 0) (Value "Hello")
 Entry (Key 1) (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -2042,7 +2055,10 @@ runExample $ \session table -> do
 Entry (Key 0) (Value "Hello")
 Entry (Key 1) (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 __Warning:__ Cursors hold open resources and must be closed using 'closeCursor'.
 
@@ -2101,7 +2117,10 @@ newCursorAtOffset (Table table) offsetKey =
 {- |
 Close a cursor.
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 Closing is idempotent, i.e., closing a closed cursor does nothing.
 All other operations on a closed cursor will throw an exception.
@@ -2135,7 +2154,7 @@ Just (Entry (Key 0) (Value "Hello"))
 Just (Entry (Key 1) (Value "World"))
 Nothing
 
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{1}{P})\).
 
 Throws the following exceptions:
 
@@ -2175,7 +2194,7 @@ runExample $ \session table -> do
 Entry (Key 0) (Value "Hello")
 Entry (Key 1) (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
+The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
 where the variable \(b\) refers to the length of the /output/ vector,
 which is /at most/ equal to the given number.
 In practice, the length of the output vector is only less than the given number
@@ -2224,7 +2243,7 @@ runExample $ \session table -> do
 :}
 Entry (Key 0) (Value "Hello")
 
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
+The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
 where the variable \(b\) refers to the length of the /output/ vector,
 which is /at most/ equal to the given number.
 In practice, the length of the output vector is only less than the given number
@@ -2285,7 +2304,10 @@ runExample $ \session table -> do
   LSMT.saveSnapshot "example" "Key Value Blob" table
 :}
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
 
@@ -2331,7 +2353,7 @@ runExample $ \session table -> do
 Entry (Key 0) (Value "Hello")
 Entry (Key 1) (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 This function is exception-safe for both synchronous and asynchronous exceptions.
 
@@ -2418,7 +2440,7 @@ runExample $ \session table -> do
 Entry (Key 0) (Value "Hello")
 Entry (Key 1) (Value "World")
 
-The worst-case disk I\/O complexity of this operation is \(O(n)\).
+The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
 
 __Warning:__ The new table must be independently closed using 'closeTable'.
 
@@ -2493,7 +2515,10 @@ runExample $ \session table -> do
   LSMT.deleteSnapshot session "example"
 :}
 
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B})\).
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
 
 Throws the following exceptions:
 
