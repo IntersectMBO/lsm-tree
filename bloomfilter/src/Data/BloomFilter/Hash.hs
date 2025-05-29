@@ -9,7 +9,6 @@ module Data.BloomFilter.Hash (
     -- * Basic hash functionality
     Hash,
     Hashable(..),
-    hash64,
     hashByteArray,
     -- * Incremental hashing
     Incremental (..),
@@ -43,10 +42,6 @@ class Hashable a where
            Word64  -- ^ seed
         -> a       -- ^ value to hash
         -> Word64
-
--- | Compute a 64-bit hash.
-hash64 :: Hashable a => a -> Word64
-hash64 = hashSalt64 0
 
 instance Hashable () where
     hashSalt64 salt _ = salt
@@ -97,12 +92,12 @@ just adding bytes to the state (without any extras).
 
 instance Hashable a => Hashable [a] where
     hashSalt64 salt xs = incrementalHash salt $ \s -> forM_ xs $ \x ->
-        update s (hash64 x)
+        update s (hashSalt64 salt x)
 
 instance (Hashable a, Hashable b) => Hashable (a, b) where
     hashSalt64 salt (x, y) = incrementalHash salt $ \s -> do
-        update s (hash64 x)
-        update s (hash64 y)
+        update s (hashSalt64 salt x)
+        update s (hashSalt64 salt y)
 
 -- | Hash a (part of) 'P.ByteArray'.
 hashByteArray :: P.ByteArray -> Int -> Int -> Word64 -> Word64
