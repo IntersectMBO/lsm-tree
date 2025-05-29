@@ -7,7 +7,7 @@ package lsm-tree
   ghc-options: -fno-ignore-asserts
 
   -- there are no cpp-options in cabal.project files
-  ghc-options: -optP -DNO_IGNORE_ASSERTS
+  ghc-options: -optP -DNO_IGNORE_ASSERTS -DDEBUG_TRACES
 
 package blockio
   -- apply this to all components
