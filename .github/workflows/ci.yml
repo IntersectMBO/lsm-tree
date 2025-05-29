@@ -269,6 +269,19 @@ jobs:
       run: ./scripts/format-stylish-haskell.sh && git diff --exit-code
 
   ################################################################################
+  # Lint for missing IO specialisations
+  ################################################################################
+  lint-io-specialisations:
+    name: Lint for missing IO specialisations
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🎗️ Lint for missing IO specialisations
+      run: ./scripts/lint-io-specialisations.sh
+
+  ################################################################################
   # Lint with generate-readme
   ################################################################################
   lint-generate-readme:
