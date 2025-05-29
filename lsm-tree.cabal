@@ -963,6 +963,31 @@ library mcg
     , base    <5
     , primes
 
+benchmark lsm-tree-bench-unions
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/macro
+  main-is:        lsm-tree-bench-unions.hs
+  build-depends:
+    , async
+    , base
+    , bytestring
+    , Chart
+    , Chart-diagrams        >=1.9.5.1
+    , clock
+    , colour
+    , containers
+    , directory
+    , lsm-tree
+    , lsm-tree:extras
+    , mtl
+    , optparse-applicative
+    , primitive
+    , random
+    , vector
+
+  ghc-options:    -rtsopts -with-rtsopts=-T -threaded
+
 flag measure-batch-latency
   description:
     Measure the latency for individual batches of updates and lookups
