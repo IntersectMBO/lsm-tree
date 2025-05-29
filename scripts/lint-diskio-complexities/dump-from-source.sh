@@ -44,16 +44,16 @@ newline_rs='\
 printf '%s\n' 'Function,Merge policy,Merge schedule,Worst-case disk I/O complexity,Condition'
 
 sed -En -e '
-    # Collect complexity information from a Haddock annotation
+    # Collect all disk I/O complexity information from a Haddock annotation
     /^\{- *\|/,/-}/ {
         # Store an unconditional disk I/O complexity
         s/'"$unconditional_re"'/,,\1,/
         t store
         # Store a disk I/O complexity for the “nothing left open” case
-        s/'"$nothing_left_open_re"'/,,\1,Nothing left open/
+        s/'"$nothing_left_open_re"'/,,\1,NothingLeftOpen/
         t store
         # Store a disk I/O complexity with unknown condition
-        s/^.*'"$o_expr_re"'.*$/,,\1,Unknown condition/
+        s/^.*'"$o_expr_re"'.*$/,,\1,UnknownCondition/
         t store
         # Note down the occurrence of a “same merge policy” restriction
         /'"$same_merge_policy_re"'/ {
@@ -81,7 +81,7 @@ sed -En -e '
         :store
         H
         x
-        s/\n=\n(.*)/'"$newline_rs"'\1Same merge policy'"$newline_rs"'=/
+        s/\n=\n(.*)/'"$newline_rs"'\1SameMergePolicy'"$newline_rs"'=/
         x
         # Continue with the next line
         d
