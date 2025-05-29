@@ -218,7 +218,7 @@ jobs:
         # The index-state is fixed to enable caching and ensure that the version
         # regardless of the current state of Hackage head.
         # If you want a newer version of cabal-fmt, use a more recent time.
-        hackage-index-state: "2024-04-27T12:31:04Z"
+        hackage-index-state: "2025-05-22T00:00:00Z"
 
     - name: 🎗️ Lint with cabal-fmt
       run: ./scripts/format-cabal-fmt.sh && git diff --exit-code
@@ -286,7 +286,7 @@ jobs:
         # The index-state is fixed to enable caching and ensure that the version
         # regardless of the current state of Hackage head.
         # If you want a newer version of cabal-fmt, use a more recent time.
-        hackage-index-state: "2024-04-27T12:31:04Z"
+        hackage-index-state: "2025-05-22T00:00:00Z"
 
     - name: 🎗️ Lint with generate-readme
       run: git diff --exit-code
@@ -305,7 +305,7 @@ jobs:
     - name: 🛠️ Setup HLint
       uses: haskell-actions/hlint-setup@v2
       with:
-        version: "3.8"
+        version: "3.10"
 
     - name: 🎗️ Lint with HLint
       run: ./scripts/lint-hlint.sh

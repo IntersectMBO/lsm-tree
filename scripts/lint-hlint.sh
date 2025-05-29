@@ -3,7 +3,7 @@
 export LC_ALL=C.UTF-8
 
 # Check for hlint
-hlint_expect_version="3.8"
+hlint_expect_version="3.10"
 if [ "${hlint}" = "" ]; then
     hlint=$(which "hlint")
     if [ "${hlint}" = "" ]; then
