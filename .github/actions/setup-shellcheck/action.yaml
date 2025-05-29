@@ -1,0 +1,52 @@
+name: "Setup ShellCheck"
+description: "Install a specific ShellCheck version"
+inputs:
+  shellcheck-version:
+    required: true
+    description: "Version of ShellCheck"
+runs:
+  using: composite
+  steps:
+    - name: 💾 Restore cache
+      uses: actions/cache/restore@v4
+      if: ${{ !env.ACT }}
+      with:
+        path: "${{ github.workspace }}/.shellcheck/bin"
+        key: ${{ runner.os }}-shellcheck-${{ inputs.shellcheck-version }}
+      id: cache-shellcheck
+
+    - name: 🛠️ Install ShellCheck (Linux)
+      if: ${{ runner.os == 'Linux' && (env.ACT || steps.cache-actionlint.outputs.cache-hit != 'true') }}
+      env:
+        SHELLCHECK_URL: "https://github.com/koalaman/shellcheck/releases/download/v${{ inputs.shellcheck-version }}/shellcheck-v${{ inputs.shellcheck-version }}.linux.x86_64.tar.xz"
+      run: |
+        mkdir --parents "${{ github.workspace }}/.shellcheck/bin"
+        curl --silent --location "$SHELLCHECK_URL" | tar --extract --xz --directory="${{ github.workspace }}/.shellcheck/bin" --strip-components=1 shellcheck-v${{ inputs.shellcheck-version }}/shellcheck
+      shell: sh
+
+    - name: 🛠️ Install ShellCheck (macOS)
+      if: ${{ runner.os == 'macOS' && (env.ACT || steps.cache-actionlint.outputs.cache-hit != 'true') }}
+      env:
+        SHELLCHECK_URL: "https://github.com/koalaman/shellcheck/releases/download/v${{ inputs.shellcheck-version }}/shellcheck-v${{ inputs.shellcheck-version }}.darwin.aarch64.tar.xz"
+      run: |
+        mkdir --parents "${{ github.workspace }}/.shellcheck/bin"
+        curl --silent --location "$SHELLCHECK_URL" | tar --extract --xz --directory="${{ github.workspace }}/.shellcheck/bin" --strip-components=1 shellcheck-v${{ inputs.shellcheck-version }}/shellcheck
+      shell: sh
+
+    - name: 🛠️ Install ShellCheck (Windows)
+      if: ${{ runner.os == 'Windows' && (env.ACT || steps.cache-actionlint.outputs.cache-hit != 'true') }}
+      run: |
+        echo "Windows is unsupported"
+        exit 1
+      shell: sh
+
+    - name: 🛠️ Add ShellCheck to PATH
+      run: echo "${{ github.workspace }}/.shellcheck/bin" >> "$GITHUB_PATH"
+      shell: sh
+
+    - name: 💾 Save cache
+      if: ${{ !env.ACT && steps.cache-shellcheck.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: "${{ github.workspace }}/.shellcheck/bin"
+        key: ${{ steps.cache-shellcheck.outputs.cache-primary-key }}

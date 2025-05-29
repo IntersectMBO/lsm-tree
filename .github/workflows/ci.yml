@@ -310,6 +310,25 @@ jobs:
     - name: 🎗️ Lint with HLint
       run: ./scripts/lint-hlint.sh
 
+
+  #############################################################################
+  # Lint with ShellCheck
+  #############################################################################
+  lint-shellcheck:
+    name: "Lint with ShellCheck"
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🛠️ Install ShellCheck
+        uses: ./.github/actions/setup-shellcheck
+        with:
+          shellcheck-version: "0.10.0"
+
+      - name: 🎗️ Lint with ShellCheck
+        run: ./scripts/lint-shellcheck.sh
+
   ################################################################################
   # Publish documentation
   ################################################################################
