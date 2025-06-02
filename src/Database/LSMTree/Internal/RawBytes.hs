@@ -129,28 +129,6 @@ instance Hashable RawBytes where
 hash :: Word64 -> RawBytes -> Word64
 hash salt (RawBytes (VP.Vector off len ba)) = hashByteArray ba off len salt
 
-{- |
-@'fromList'@: \(O(n)\).
-
-@'toList'@: \(O(n)\).
--}
-instance IsList RawBytes where
-  type Item RawBytes = Word8
-
-  fromList :: [Item RawBytes] -> RawBytes
-  fromList = pack
-
-  toList :: RawBytes -> [Item RawBytes]
-  toList = unpack
-
-{- |
-@'fromString'@: \(O(n)\).
-
-__Warning:__ 'fromString' truncates multi-byte characters to octets. e.g. \"枯朶に烏のとまりけり秋の暮\" becomes \"�6k�nh~�Q��n�\".
--}
-instance IsString RawBytes where
-    fromString = fromByteString . fromString
-
 {-------------------------------------------------------------------------------
   Accessors
 -------------------------------------------------------------------------------}

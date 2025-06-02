@@ -22,6 +22,7 @@ import           Test.Tasty.HUnit (testCase, (@=?))
 import           Test.Tasty.QuickCheck
 import           Test.Util.RawPage
 
+import           Database.LSMTree.Extras.RawBytes ()
 import qualified Database.LSMTree.Extras.ReferenceImpl as Ref
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import qualified Database.LSMTree.Internal.Entry as Entry

@@ -729,6 +729,7 @@ library extras
     Database.LSMTree.Extras.NoThunks
     Database.LSMTree.Extras.Orphans
     Database.LSMTree.Extras.Random
+    Database.LSMTree.Extras.RawBytes
     Database.LSMTree.Extras.ReferenceImpl
     Database.LSMTree.Extras.RunData
     Database.LSMTree.Extras.UTxO
