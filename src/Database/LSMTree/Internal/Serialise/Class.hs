@@ -411,7 +411,7 @@ instance SerialiseKeyOrderPreserving String
 
 @'deserialiseKey'@: \(O(n)\).
 
-The 'String' is (de)serialiseValue as UTF-8.
+The 'String' is (de)serialised as UTF-8.
 -}
 instance SerialiseValue String where
   -- TODO: Optimise. The performance is \(O(n) + O(n)\) but it could be \(O(n)\).
@@ -513,7 +513,7 @@ instance SerialiseValue P.ByteArray where
 {- |
 This instance is intended for tables without blobs.
 
-The implementation of 'deseriValue' throws an excepValuen.
+The implementation of @'deserialiseValue'@ throws an excepValuen.
 -}
 instance SerialiseValue Void where
   serialiseValue = absurd
@@ -526,7 +526,7 @@ instance SerialiseValue Void where
 {- |
 An instance for 'Sum' which is transparent to the serialisation of the value type.
 
-__NOTE:__ If you want to seriValue @'Sum' a@ differValuely from @a@, you must use another newtype wrapper.
+__NOTE:__ If you want to serialise @'Sum' a@ differently from @a@, you must use another newtype wrapper.
 -}
 instance SerialiseValue a => SerialiseValue (Sum a) where
   serialiseValue (Sum v) = serialiseValue v

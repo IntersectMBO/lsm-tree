@@ -181,12 +181,12 @@ description:
 
   [@confDiskCachePolicy@]
       The /disk cache policy/ determines if lookup operations use the OS page cache.
-      Caching may improve the performance of lookups if database access follows certain patterns.
+      Caching may improve the performance of lookups and updates if database access follows certain patterns.
 
   ==== Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size #fine_tuning_data_layout#
 
   The configuration parameters @confMergePolicy@, @confSizeRatio@, and @confWriteBufferAlloc@ affect how the table organises its data.
-  To understand what effect these parameters have, one must have a basic understand of how an LSM-tree stores its data.
+  To understand what effect these parameters have, one must have a basic understanding of how an LSM-tree stores its data.
   The physical entries in an LSM-tree are key–operation pairs, which pair a key with an operation such as an @Insert@ with a value or a @Delete@.
   These key–operation pairs are organised into /runs/, which are sequences of key–operation pairs sorted by their key.
   Runs are organised into /levels/, which are unordered sequences or runs.
@@ -331,10 +331,10 @@ description:
   which balances the performance of lookups against the in-memory size of the table.
 
   Tables maintain a [Bloom filter](https://en.wikipedia.org/wiki/Bloom_filter) in memory for each run on disk.
-  These Bloom filter are probablilistic datastructure that are used to track which keys are present in their corresponding run.
+  These Bloom filters are probablilistic datastructures that are used to track which keys are present in their corresponding run.
   Querying a Bloom filter returns either \"maybe\" meaning the key is possibly in the run or \"no\" meaning the key is definitely not in the run.
   When a query returns \"maybe\" while the key is /not/ in the run, this is referred to as a /false positive/.
-  While the database executes a lookup operation, any Bloom filter query that returns a false positive causes the database to unnecessarily read a run from disk.
+  While the database executes a lookup operation, any Bloom filter query that returns a false positive causes the database to unnecessarily read a page from disk.
   The probabliliy of these spurious reads follow a [binomial distribution](https://en.wikipedia.org/wiki/Binomial_distribution) \(\text{Binomial}(r,\text{FPR})\)
   where \(r\) refers to the number of runs and \(\text{FPR}\) refers to the false-positive rate of the Bloom filters.
   Hence, the expected number of spurious reads for each lookup operation is \(r\cdot\text{FPR}\).
@@ -401,7 +401,7 @@ description:
       Ordinary indexes are designed for any use case.
 
       Ordinary indexes store one serialised key per page of memory.
-      The total in-memory size of all indexes is \(K \cdot \frac{n}{P}\) bits,
+      The average total in-memory size of all indexes is \(K \cdot \frac{n}{P}\) bits,
       where \(K\) refers to the average size of a serialised key in bits.
 
   [@CompactIndex@]
@@ -410,7 +410,7 @@ description:
       Compact indexes store the 64 most significant bits of the minimum serialised key of each page of memory.
       This requires that serialised keys are /at least/ 64 bits in size.
       Compact indexes store 1 additional bit per page of memory to resolve collisions, 1 additional bit per page of memory to mark entries that are larger than one page, and a negligible amount of memory for tie breakers.
-      The total in-memory size of all indexes is \(66 \cdot \frac{n}{P}\) bits.
+      The average total in-memory size of all indexes is \(66 \cdot \frac{n}{P}\) bits.
 
   ==== Fine-tuning: Disk Cache Policy #fine_tuning_disk_cache_policy#
 

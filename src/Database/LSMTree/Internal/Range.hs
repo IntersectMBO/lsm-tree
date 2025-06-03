@@ -14,11 +14,11 @@ import           Control.DeepSeq (NFData (..))
 -- | A range of keys.
 data Range k =
     {- |
-    @'FromToExcluding' i j@ is the ranges from @i@ (inclusive) to @j@ (exclusive).
+    @'FromToExcluding' i j@ is the range from @i@ (inclusive) to @j@ (exclusive).
     -}
     FromToExcluding k k
     {- |
-    @'FromToIncluding' i j@ is the ranges from @i@ (inclusive) to @j@ (inclusive).
+    @'FromToIncluding' i j@ is the range from @i@ (inclusive) to @j@ (inclusive).
     -}
   | FromToIncluding k k
   deriving stock (Show, Eq, Functor)

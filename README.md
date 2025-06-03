@@ -353,24 +353,24 @@ uniformly distributed, e.g., when the keys are hashes.
 
 `confDiskCachePolicy`  
 The *disk cache policy* determines if lookup operations use the OS page
-cache. Caching may improve the performance of lookups if database access
-follows certain patterns.
+cache. Caching may improve the performance of lookups and updates if
+database access follows certain patterns.
 
 ##### Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size <span id="fine_tuning_data_layout" class="anchor"></span>
 
 The configuration parameters `confMergePolicy`, `confSizeRatio`, and
 `confWriteBufferAlloc` affect how the table organises its data. To
 understand what effect these parameters have, one must have a basic
-understand of how an LSM-tree stores its data. The physical entries in
-an LSM-tree are key–operation pairs, which pair a key with an operation
-such as an `Insert` with a value or a `Delete`. These key–operation
-pairs are organised into *runs*, which are sequences of key–operation
-pairs sorted by their key. Runs are organised into *levels*, which are
-unordered sequences or runs. Levels are organised hierarchically. Level
-0 is kept in memory, and is referred to as the *write buffer*. All
-subsequent levels are stored on disk, with each run stored in its own
-file. The following shows an example LSM-tree layout, with each run as a
-boxed sequence of keys and each level as a row.
+understanding of how an LSM-tree stores its data. The physical entries
+in an LSM-tree are key–operation pairs, which pair a key with an
+operation such as an `Insert` with a value or a `Delete`. These
+key–operation pairs are organised into *runs*, which are sequences of
+key–operation pairs sorted by their key. Runs are organised into
+*levels*, which are unordered sequences or runs. Levels are organised
+hierarchically. Level 0 is kept in memory, and is referred to as the
+*write buffer*. All subsequent levels are stored on disk, with each run
+stored in its own file. The following shows an example LSM-tree layout,
+with each run as a boxed sequence of keys and each level as a row.
 
 ``` math
 
@@ -527,15 +527,16 @@ in-memory size of the table.
 
 Tables maintain a [Bloom
 filter](https://en.wikipedia.org/wiki/Bloom_filter "https://en.wikipedia.org/wiki/Bloom_filter")
-in memory for each run on disk. These Bloom filter are probablilistic
-datastructure that are used to track which keys are present in their
+in memory for each run on disk. These Bloom filters are probablilistic
+datastructures that are used to track which keys are present in their
 corresponding run. Querying a Bloom filter returns either "maybe"
 meaning the key is possibly in the run or "no" meaning the key is
 definitely not in the run. When a query returns "maybe" while the key is
 *not* in the run, this is referred to as a *false positive*. While the
 database executes a lookup operation, any Bloom filter query that
-returns a false positive causes the database to unnecessarily read a run
-from disk. The probabliliy of these spurious reads follow a [binomial
+returns a false positive causes the database to unnecessarily read a
+page from disk. The probabliliy of these spurious reads follow a
+[binomial
 distribution](https://en.wikipedia.org/wiki/Binomial_distribution "https://en.wikipedia.org/wiki/Binomial_distribution")
 $`\text{Binomial}(r,\text{FPR})`$ where $`r`$ refers to the number of
 runs and $`\text{FPR}`$ refers to the false-positive rate of the Bloom
@@ -601,9 +602,10 @@ types of fence-pointer indexes:
 `OrdinaryIndex`  
 Ordinary indexes are designed for any use case.
 
-Ordinary indexes store one serialised key per page of memory. The total
-in-memory size of all indexes is $`K \cdot \frac{n}{P}`$ bits, where
-$`K`$ refers to the average size of a serialised key in bits.
+Ordinary indexes store one serialised key per page of memory. The
+average total in-memory size of all indexes is $`K \cdot \frac{n}{P}`$
+bits, where $`K`$ refers to the average size of a serialised key in
+bits.
 
 `CompactIndex`  
 Compact indexes are designed for the use case where the keys in the
@@ -614,8 +616,8 @@ serialised key of each page of memory. This requires that serialised
 keys are *at least* 64 bits in size. Compact indexes store 1 additional
 bit per page of memory to resolve collisions, 1 additional bit per page
 of memory to mark entries that are larger than one page, and a
-negligible amount of memory for tie breakers. The total in-memory size
-of all indexes is $`66 \cdot \frac{n}{P}`$ bits.
+negligible amount of memory for tie breakers. The average total
+in-memory size of all indexes is $`66 \cdot \frac{n}{P}`$ bits.
 
 ##### Fine-tuning: Disk Cache Policy <span id="fine_tuning_disk_cache_policy" class="anchor"></span>
 
