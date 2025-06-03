@@ -914,7 +914,10 @@ remainingUnionDebt (LSMHandle _ lsmr) = do
     LSMContent _ _ ul <- readSTRef lsmr
     UnionDebt <$> case ul of
       NoUnion      -> return 0
-      Union tree d -> checkedUnionDebt tree d
+      Union tree d -> 1 + checkedUnionDebt tree d
+                      -- there is a union, which at least needs to be migrated
+                      -- to the regular levels (which takes work)
+                      -- TODO: can we now remove the +1 for PendingUnions?
 
 -- | Credits are used to pay off 'UnionDebt', completing a 'union' in the
 -- process.
@@ -938,20 +941,25 @@ newtype UnionCredits = UnionCredits Credit
 supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
 supplyUnionCredits (LSMHandle scr lsmr) (UnionCredits credits)
   | credits <= 0 = return (UnionCredits 0)
-  | otherwise = do
-    content@(LSMContent _ _ ul) <- readSTRef lsmr
-    UnionCredits <$> case ul of
-      NoUnion ->
-        return credits
-      Union tree debtRef -> do
-        modifySTRef' scr (+1)
-        _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
-        c' <- supplyCreditsMergingTree credits tree
-        debt' <- checkedUnionDebt tree debtRef
-        when (debt' > 0) $
-          assertST $ c' == 0  -- should have spent these credits
-        invariant content
-        return c'
+  | otherwise    = do
+      content@(LSMContent _ ls ul) <- readSTRef lsmr
+      c' <- supply ul
+      (ls', ul') <- migrateUnionLevel nullTracer scr ls ul
+      return (UnionCredits c')  -- TODO: update lsmr
+  where
+    supply ul =
+      case ul of
+        NoUnion ->
+          return credits
+        Union tree debtRef -> do
+          modifySTRef' scr (+1)
+          _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
+          c' <- supplyCreditsMergingTree credits tree
+          debt' <- checkedUnionDebt tree debtRef
+          when (debt' > 0) $
+            assertST $ c' == 0  -- should have spent these credits
+          invariant content
+          return c'
 
 -- | Like 'remainingDebtMergingTree', but additionally asserts that the debt
 -- never increases.
