@@ -51,7 +51,7 @@ module Database.LSMTree.Internal.RawBytes (
   ) where
 
 import           Control.DeepSeq (NFData)
-import           Control.Exception (assert)
+import           Data.Bits (Bits (..))
 import           Data.BloomFilter.Hash (Hashable (..), hashByteArray)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BB
@@ -70,6 +70,9 @@ import           GHC.Exts
 import           GHC.Stack
 import           GHC.Word
 import           Text.Printf (printf)
+
+-- $setup
+-- >>> import Numeric
 
 {- Note: [Export structure]
    ~~~~~~~~~~~~~~~~~~~~~~~
@@ -172,14 +175,29 @@ drop = coerce VP.drop
 --
 -- The /top/ corresponds to the most significant bit (big-endian).
 --
--- PRECONDITION: The byte-size of the raw bytes should be at least 8 bytes.
+-- If the number of bits is smaller than @64@, then any missing bits default to
+-- @0@s.
+--
+-- >>> showHex (topBits64 (pack [1,0,0,0,0,0,0,0])) ""
+-- "100000000000000"
+--
+-- >>> showHex (topBits64 (pack [1,0,0])) ""
+-- "100000000000000"
 --
 -- TODO: optimisation ideas: use unsafe shift/byteswap primops, look at GHC
 -- core, find other opportunities for using primops.
 --
 topBits64 :: RawBytes -> Word64
-topBits64 rb@(RawBytes (VP.Vector (I# off#) _size (ByteArray k#))) =
-    assert (size rb >= 8) $ toWord64 (indexWord8ArrayAsWord64# k# off#)
+topBits64 rb@(RawBytes v@(VP.Vector (I# off#) _size (ByteArray k#)))
+  | n >= 8
+  = toWord64 (indexWord8ArrayAsWord64# k# off#)
+  | otherwise
+  = VP.foldl' f 0 v `unsafeShiftL` ((8 - n) * 8)
+  where
+    !n = size rb
+
+    f :: Word64 -> Word8 -> Word64
+    f acc w = acc `unsafeShiftL` 8 + fromIntegral w
 
 #if (MIN_VERSION_GLASGOW_HASKELL(9, 4, 0, 0))
 toWord64 :: Word64# -> Word64
