@@ -952,12 +952,19 @@ supplyCredits ::
   -> NominalCredits
   -> Levels m h
   -> m ()
-supplyCredits conf deposit levels =
-    iforLevelM_ levels $ \ln (Level ir _rs) ->
-      supplyCreditsIncomingRun conf ln ir deposit
-      --TODO: consider tracing supply of credits,
-      -- supplyCreditsIncomingRun could easily return the supplied credits
-      -- before & after, which may be useful for tracing.
+supplyCredits conf (NominalCredits depositPerLevel) levels =
+    V.ifoldM_ supply deposit levels
+  where
+    !deposit = NominalCredits (depositPerLevel * V.length levels)
+
+    supply !credits !i !(Level ir _rs) = do
+        let !ln = LevelNo (i + 1)
+        if credits <= NominalCredits 0
+          then
+            return credits
+          else do
+            leftover <- supplyCreditsIncomingRun conf ln ir credits
+            return leftover
 
 maxMergeDebt :: TableConfig -> MergePolicyForLevel -> LevelNo -> MergeDebt
 maxMergeDebt TableConfig {

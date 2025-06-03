@@ -678,7 +678,7 @@ fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
         -- This will set the correct nominal credits, but it will not do any
         -- more merging work because fromSnapMergingRun already supplies
         -- all the merging credits already.
-        supplyCreditsIncomingRun conf ln ir nominalCredits
+        _ <- supplyCreditsIncomingRun conf ln ir nominalCredits
         pure ir
 
 {-# SPECIALISE fromSnapMergingRun ::
