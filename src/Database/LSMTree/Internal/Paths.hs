@@ -104,7 +104,7 @@ instance IsString SnapshotName where
 
 data InvalidSnapshotNameError
   = ErrInvalidSnapshotName !String
-  deriving stock (Show)
+  deriving stock (Show, Eq)
   deriving anyclass (Exception)
 
 -- | Check if a 'String' would be a valid snapshot name.
