@@ -340,10 +340,6 @@ releaseLevels reg levels =
       delayedCommit reg (releaseIncomingRun incomingRun)
       V.mapM_ (delayedCommit reg . releaseRef) residentRuns
 
-{-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
-iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
-iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
-
 {-------------------------------------------------------------------------------
   Union level
 -------------------------------------------------------------------------------}
@@ -952,12 +948,26 @@ supplyCredits ::
   -> NominalCredits
   -> Levels m h
   -> m ()
-supplyCredits conf deposit levels =
-    iforLevelM_ levels $ \ln (Level ir _rs) ->
-      supplyCreditsIncomingRun conf ln ir deposit
-      --TODO: consider tracing supply of credits,
-      -- supplyCreditsIncomingRun could easily return the supplied credits
-      -- before & after, which may be useful for tracing.
+supplyCredits conf (NominalCredits depositPerLevel) levels0 = do
+    -- EXPERIMENT: instead of supplying the same amount of nominal credits to
+    -- each level, we supply all these credits the smallest levels first. Only
+    -- when the smallest level is fully merged, do we use the leftover credits
+    -- for the next one, etc.
+    --
+    -- Note that that the notion of leftover credits is based on the nominal
+    -- credits, so if shared merges have already been progressed by another
+    -- table, we still end up doing fewer physical merge steps than we would
+    -- have.
+    let !deposit = NominalCredits (depositPerLevel * V.length levels0)
+    () <$ go 1 deposit levels0
+  where
+    go !ln !credits levels
+      | Just (Level ir _rs, ls) <- V.uncons levels
+      , credits > NominalCredits 0 = do
+        leftovers <- supplyCreditsIncomingRun conf (LevelNo ln) ir credits
+        go (ln + 1) leftovers ls
+      | otherwise =
+        return credits
 
 maxMergeDebt :: TableConfig -> MergePolicyForLevel -> LevelNo -> MergeDebt
 maxMergeDebt TableConfig {

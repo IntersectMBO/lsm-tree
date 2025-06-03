@@ -174,8 +174,8 @@ newtype NominalDebt = NominalDebt Int
 -- | Merge credits that get supplied to a table's levels.
 --
 -- This corresponds to the number of update operations inserted into the table.
-newtype NominalCredits = NominalCredits Int
-  deriving stock Eq
+newtype NominalCredits = NominalCredits { unNominalCredits :: Int }
+  deriving stock (Eq, Ord)
   deriving newtype (Prim, NFData)
 
 nominalDebtAsCredits :: NominalDebt -> NominalCredits
@@ -186,7 +186,7 @@ nominalDebtAsCredits (NominalDebt c) = NominalCredits c
   -> LevelNo
   -> IncomingRun IO h
   -> NominalCredits
-  -> IO () #-}
+  -> IO NominalCredits #-}
 -- | Supply a given number of nominal credits to the merge in an incoming run.
 -- This is a relative addition of credits, not a new absolute total value.
 supplyCreditsIncomingRun ::
@@ -195,20 +195,26 @@ supplyCreditsIncomingRun ::
   -> LevelNo
   -> IncomingRun m h
   -> NominalCredits
-  -> m ()
-supplyCreditsIncomingRun _ _ (Single _r) _ = pure ()
+  -> m NominalCredits  -- ^ leftovers
+supplyCreditsIncomingRun _ _ (Single _r) deposit = pure deposit
 supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
                          deposit = do
-    (_nominalCredits,
+    (nominalCredits,
      nominalCredits') <- depositNominalCredits nominalDebt nominalCreditsVar
                                                deposit
+
     let !mergeDebt     = MR.totalMergeDebt mr
         !mergeCredits' = scaleNominalToMergeCredit nominalDebt mergeDebt
                                                    nominalCredits'
         !thresh = creditThresholdForLevel conf ln
     (_suppliedCredits,
      _suppliedCredits') <- MR.supplyCreditsAbsolute mr thresh mergeCredits'
-    pure ()
+
+    let used               = unNominalCredits nominalCredits'
+                               - unNominalCredits nominalCredits
+        leftovers          = unNominalCredits deposit - used
+    assert (leftovers >= 0) $
+      pure $ NominalCredits leftovers
     --TODO: currently each supplying credits action results in contributing
     -- credits to the underlying merge, but this need not be the case. We
     -- _could_ do threshold based batching at the level of the IncomingRun.
@@ -369,7 +375,7 @@ immediatelyCompleteIncomingRun conf ln ir =
 
         NominalCredits nominalCredits <- readPrimVar nominalCreditsVar
         let !deposit = NominalCredits (nominalDebt - nominalCredits)
-        supplyCreditsIncomingRun conf ln ir deposit
+        _ <- supplyCreditsIncomingRun conf ln ir deposit
 
         -- This ensures the merge is really completed. However, we don't
         -- release the merge yet, but we do return a new reference to the run.
