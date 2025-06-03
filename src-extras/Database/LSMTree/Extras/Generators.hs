@@ -33,8 +33,6 @@ module Database.LSMTree.Extras.Generators (
   , genRawBytesSized
   , packRawBytesPinnedOrUnpinned
   , LargeRawBytes (..)
-  , isKeyForIndexCompact
-  , KeyForIndexCompact (..)
   , BiasedKey (..)
     -- * helpers
   , shrinkVec
@@ -509,28 +507,6 @@ instance Arbitrary LargeRawBytes where
       ]
 
 deriving newtype instance SerialiseValue LargeRawBytes
-
--- Serialised keys for the compact index must be at least 8 bytes long.
-
-genKeyForIndexCompact :: Gen RawBytes
-genKeyForIndexCompact =
-    genRawBytesN =<< QC.sized (\s -> QC.chooseInt (8, s + 8))
-
-isKeyForIndexCompact :: RawBytes -> Bool
-isKeyForIndexCompact rb = RB.size rb >= 8
-
-newtype KeyForIndexCompact =
-    KeyForIndexCompact { getKeyForIndexCompact :: RawBytes }
-  deriving stock (Eq, Ord, Show)
-
-instance Arbitrary KeyForIndexCompact where
-  arbitrary =
-      KeyForIndexCompact <$> genKeyForIndexCompact
-  shrink (KeyForIndexCompact rawBytes) =
-      [KeyForIndexCompact rawBytes' | rawBytes' <- shrink rawBytes,
-                                      isKeyForIndexCompact rawBytes']
-
-deriving newtype instance SerialiseKey KeyForIndexCompact
 
 -- we try to make collisions and close keys more likely (very crudely)
 arbitraryBiasedKey :: (RawBytes -> k) -> Gen RawBytes -> Gen k

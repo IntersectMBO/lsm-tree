@@ -64,9 +64,6 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         prop_arbitraryAndShrinkPreserveInvariant
           (\(LargeRawBytes rb) -> labelRawBytes rb)
           (deepseqInvariant @LargeRawBytes)
-    , testGroup "KeyForIndexCompact" $
-        prop_arbitraryAndShrinkPreserveInvariant noTags $
-          isKeyForIndexCompact . getKeyForIndexCompact
     , testGroup "BiasedKey" $
           prop_arbitraryAndShrinkPreserveInvariant
             (labelTestKOps @BiasedKey)

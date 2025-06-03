@@ -28,7 +28,7 @@ import           Data.Word
 import           Database.LSMTree.Extras
 import           Database.LSMTree.Extras.Generators (ChunkSize (..),
                      LogicalPageSummaries, LogicalPageSummary (..), Pages (..),
-                     genRawBytes, isKeyForIndexCompact, labelPages, toAppends)
+                     genRawBytes, labelPages, toAppends)
 import           Database.LSMTree.Extras.Index (Append (..), appendToCompact)
 import           Database.LSMTree.Internal.BitMath
 import           Database.LSMTree.Internal.Chunk as Chunk (toByteString)
@@ -54,9 +54,7 @@ import           Text.Printf (printf)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
-    testGroup "TestKey" $
-      prop_arbitraryAndShrinkPreserveInvariant @TestKey noTags isTestKey
-  , testProperty "prop_distribution @TestKey" $
+    testProperty "prop_distribution @TestKey" $
       prop_distribution @TestKey
   , testProperty "prop_searchMinMaxKeysAfterConstruction" $
       prop_searchMinMaxKeysAfterConstruction @TestKey 100
@@ -173,15 +171,12 @@ instance Arbitrary TestKey where
   -- Shrink keys extensively: most failures will occur in small counterexamples,
   -- so we don't have to limit the number of shrinks as much.
   shrink (TestKey bytes) = [
-        TestKey bytes'
+        testkey'
       | let RawBytes vec = bytes
       , vec' <- VP.fromList <$> shrink (VP.toList vec)
-      , let bytes' = RawBytes vec'
-      , isKeyForIndexCompact bytes'
+      , let testkey' = TestKey $ RawBytes vec'
       ]
 
-isTestKey :: TestKey -> Bool
-isTestKey (TestKey bytes) = isKeyForIndexCompact bytes
 
 {-------------------------------------------------------------------------------
   Properties

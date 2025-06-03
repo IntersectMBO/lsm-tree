@@ -11,15 +11,13 @@ import           Criterion.Main (Benchmark, Benchmarkable, bench, bgroup, env,
 import           Data.List (foldl')
                  -- foldl' is included in the Prelude from base 4.20 onwards
 #endif
-import           Database.LSMTree.Extras.Generators (getKeyForIndexCompact,
-                     mkPages, toAppends)
+import           Database.LSMTree.Extras.Generators (mkPages, toAppends)
                      -- also for @Arbitrary@ instantiation of @SerialisedKey@
 import           Database.LSMTree.Extras.Index (Append, append)
 import           Database.LSMTree.Internal.Index (Index,
                      IndexType (Compact, Ordinary), newWithDefaults, search,
                      unsafeEnd)
-import           Database.LSMTree.Internal.Serialise
-                     (SerialisedKey (SerialisedKey))
+import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 import           Test.QuickCheck (choose, vector)
 import           Test.QuickCheck.Gen (Gen (MkGen))
 import           Test.QuickCheck.Random (mkQCGen)
@@ -61,8 +59,7 @@ generated (MkGen exec) = exec (mkQCGen 411) 30
 keysForIndexCompact :: Int             -- ^ Number of keys
                     -> [SerialisedKey] -- ^ Constructed keys
 keysForIndexCompact = vector                                        >>>
-                      generated                                     >>>
-                      map (getKeyForIndexCompact >>> SerialisedKey)
+                      generated
 
 {-|
     Constructs append operations whose serialised keys conform to the key size

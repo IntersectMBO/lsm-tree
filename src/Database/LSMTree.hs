@@ -149,7 +149,6 @@ module Database.LSMTree (
   serialiseKeyIdentity,
   serialiseKeyIdentityUpToSlicing,
   serialiseKeyPreservesOrdering,
-  serialiseKeyMinimalSize,
   serialiseValueIdentity,
   serialiseValueIdentityUpToSlicing,
   packSlice,
@@ -227,8 +226,7 @@ import           Database.LSMTree.Internal.Config
                      DiskCachePolicy (..), FencePointerIndexType (..),
                      LevelNo (..), MergeBatchSize (..), MergePolicy (..),
                      MergeSchedule (..), SizeRatio (..), TableConfig (..),
-                     WriteBufferAlloc (..), defaultTableConfig,
-                     serialiseKeyMinimalSize)
+                     WriteBufferAlloc (..), defaultTableConfig)
 import           Database.LSMTree.Internal.Config.Override
                      (TableConfigOverride (..), noTableConfigOverride)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
