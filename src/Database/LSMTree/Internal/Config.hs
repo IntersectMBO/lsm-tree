@@ -20,7 +20,6 @@ module Database.LSMTree.Internal.Config (
     -- * Fence pointer index
   , FencePointerIndexType (..)
   , indexTypeForRun
-  , serialiseKeyMinimalSize
     -- * Disk cache policy
   , DiskCachePolicy (..)
   , diskCachePolicyForLevel
@@ -32,11 +31,9 @@ import           Control.DeepSeq (NFData (..))
 import           Database.LSMTree.Internal.Index (IndexType)
 import qualified Database.LSMTree.Internal.Index as Index
                      (IndexType (Compact, Ordinary))
-import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunBuilder (RunParams (..))
-import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..))
 
 newtype LevelNo = LevelNo Int
   deriving stock (Show, Eq, Ord)
@@ -303,12 +300,7 @@ data FencePointerIndexType =
   | {- |
     Compact indexes are designed  for the case where the keys in the database are uniformly distributed, e.g., when the keys are hashes.
 
-    When using a compact index, the 'Database.LSMTree.Internal.Serialise.Class.serialiseKey' function must satisfy the following additional law:
-
-    [Minimal size]
-      @'Database.LSMTree.Internal.RawBytes.size' ('Database.LSMTree.Internal.Serialise.Class.serialiseKey' x) >= 8@
-
-    Use 'serialiseKeyMinimalSize' to test this law.
+    When using a compact index, serialised keys should ideally contain 8 bytes or more.
     -}
     CompactIndex
   deriving stock (Eq, Show)
@@ -320,10 +312,6 @@ instance NFData FencePointerIndexType where
 indexTypeForRun :: FencePointerIndexType -> IndexType
 indexTypeForRun CompactIndex  = Index.Compact
 indexTypeForRun OrdinaryIndex = Index.Ordinary
-
--- | Test the __Minimal size__ law for the 'CompactIndex' option.
-serialiseKeyMinimalSize :: SerialiseKey k => k -> Bool
-serialiseKeyMinimalSize x = RB.size (serialiseKey x) >= 8
 
 {-------------------------------------------------------------------------------
   Disk cache policy

@@ -132,7 +132,6 @@ module Database.LSMTree.Simple (
     serialiseKeyIdentity,
     serialiseKeyIdentityUpToSlicing,
     serialiseKeyPreservesOrdering,
-    serialiseKeyMinimalSize,
     serialiseValueIdentity,
     serialiseValueIdentityUpToSlicing,
     packSlice,
@@ -178,9 +177,8 @@ import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
                      TableTooLargeError (..), UnionCredits (..), UnionDebt (..),
                      WriteBufferAlloc, isValidSnapshotName, packSlice,
                      serialiseKeyIdentity, serialiseKeyIdentityUpToSlicing,
-                     serialiseKeyMinimalSize, serialiseKeyPreservesOrdering,
-                     serialiseValueIdentity, serialiseValueIdentityUpToSlicing,
-                     toSnapshotName)
+                     serialiseKeyPreservesOrdering, serialiseValueIdentity,
+                     serialiseValueIdentityUpToSlicing, toSnapshotName)
 import qualified Database.LSMTree as LSMT
 import           Prelude hiding (lookup, take, takeWhile)
 
