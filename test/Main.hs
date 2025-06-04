@@ -45,6 +45,7 @@ import qualified Test.Database.LSMTree.Model.Table
 import qualified Test.Database.LSMTree.Resolve
 import qualified Test.Database.LSMTree.StateMachine
 import qualified Test.Database.LSMTree.StateMachine.DL
+import qualified Test.Database.LSMTree.Tracer.Golden
 import qualified Test.Database.LSMTree.UnitTests
 import qualified Test.FS
 import           Test.Tasty
@@ -91,9 +92,10 @@ main = do
     , Test.Database.LSMTree.Internal.WriteBufferReader.FS.tests
     , Test.Database.LSMTree.Model.Table.tests
     , Test.Database.LSMTree.Resolve.tests
-    , Test.Database.LSMTree.UnitTests.tests
     , Test.Database.LSMTree.StateMachine.tests
     , Test.Database.LSMTree.StateMachine.DL.tests
+    , Test.Database.LSMTree.Tracer.Golden.tests
+    , Test.Database.LSMTree.UnitTests.tests
     , Test.FS.tests
     ]
   Control.RefCount.checkForgottenRefs

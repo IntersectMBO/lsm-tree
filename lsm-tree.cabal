@@ -845,6 +845,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.StateMachine
     Test.Database.LSMTree.StateMachine.DL
     Test.Database.LSMTree.StateMachine.Op
+    Test.Database.LSMTree.Tracer.Golden
     Test.Database.LSMTree.UnitTests
     Test.FS
     Test.Util.Arbitrary
