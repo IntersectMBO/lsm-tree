@@ -78,6 +78,12 @@ also rely on copying file contents.
 A copying snapshotting implementation would probably kill two birds with one
 stone by removing the two current limitations just discussed.
 
+Presumably, `cardano-node` will eventually be required to support storing
+snapshots on a different volume than where the session is placed, for example on
+a cheaper non-SSD drive. This feature was unfortunately not anticipated in the
+project specification and so is not currently included. As discussed above, it
+could be added with some additional work.
+
 ## Value resolving
 
 When instantiating the `ResolveValue` class, it is usually advisable to
