@@ -1,4 +1,5 @@
 {-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Database.LSMTree.Internal.Config (
     LevelNo (..)
@@ -10,7 +11,14 @@ module Database.LSMTree.Internal.Config (
     -- * Merge policy
   , MergePolicy (..)
     -- * Size ratio
-  , SizeRatio (..)
+  , SizeRatio (Four)
+    -- ** Internal
+    --
+    -- 'UnsafeSizeRatio' should only be used internally (for now), so it is
+    -- exported as a @pattern@. This means that 'UnsafeSizeRatio' is not
+    -- automatically bundled with the 'SizeRatio' type that is exposed from the
+    -- public API.
+  , pattern UnsafeSizeRatio
   , sizeRatioInt
     -- * Write buffer allocation
   , WriteBufferAlloc (..)
@@ -37,6 +45,7 @@ import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
 import           Database.LSMTree.Internal.RunBuilder (RunParams (..))
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..))
+import           GHC.Show
 
 newtype LevelNo = LevelNo Int
   deriving stock (Show, Eq, Ord)
@@ -179,14 +188,29 @@ __NOTE:__ This package only supports a size ratio of four.
 
 For a detailed discussion of the size ratio, see [Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size](../#fine_tuning_data_layout).
 -}
-data SizeRatio = Four
-  deriving stock (Eq, Show)
+newtype SizeRatio =
+    -- | This constructor is for internal use only
+    UnsafeSizeRatio Int
+  deriving stock Eq
+  deriving newtype NFData
 
-instance NFData SizeRatio where
-  rnf Four = ()
+instance Show SizeRatio where
+  showsPrec d (UnsafeSizeRatio x)
+    -- We should not leak the internal unsafe constructor, so we print as "Four"
+    | x == 4
+    = showString "Four"
+    | otherwise =
+        showParen (d > appPrec)
+      $ showString "UnsafeSizeRatio "
+      . shows x
 
 sizeRatioInt :: SizeRatio -> Int
-sizeRatioInt = \case Four -> 4
+sizeRatioInt (UnsafeSizeRatio x) = x
+
+{-# COMPLETE Four #-}
+
+pattern Four :: SizeRatio
+pattern Four = UnsafeSizeRatio 4
 
 {-------------------------------------------------------------------------------
   Write buffer allocation

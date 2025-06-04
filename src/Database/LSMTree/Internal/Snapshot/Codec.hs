@@ -312,14 +312,10 @@ instance DecodeVersioned MergePolicy where
 -- SizeRatio
 
 instance Encode SizeRatio where
-  encode Four = encodeInt 4
+  encode (UnsafeSizeRatio x) = encodeInt x
 
 instance DecodeVersioned SizeRatio where
-  decodeVersioned V0 = do
-      x <- decodeWord64
-      case x of
-        4 -> pure Four
-        _ -> fail ("Expected 4, but found " <> show x)
+  decodeVersioned V0 = UnsafeSizeRatio <$> decodeInt
 
 -- WriteBufferAlloc
 

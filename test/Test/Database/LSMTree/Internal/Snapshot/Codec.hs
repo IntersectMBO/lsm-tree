@@ -241,8 +241,8 @@ instance Arbitrary MergePolicy where
   shrink LazyLevelling = []
 
 instance Arbitrary SizeRatio where
-  arbitrary = pure Four
-  shrink Four = []
+  arbitrary = UnsafeSizeRatio <$> arbitrary
+  shrink (UnsafeSizeRatio x) = UnsafeSizeRatio <$> shrink x
 
 instance Arbitrary WriteBufferAlloc where
   arbitrary = AllocNumEntries <$> arbitrary
