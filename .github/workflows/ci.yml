@@ -122,6 +122,7 @@ jobs:
           --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}"
 
     - name: 🧪 Test
+      id: test
       if: ${{ !matrix.cabal-skip-tests }}
       run: |
         cabal test all \
@@ -130,6 +131,19 @@ jobs:
           --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}"
       env:
         TASTY_TIMEOUT: "5m"
+
+    # Golden test output is not printed to the screen, so if a golden test fails
+    # then it is not clear from the logs why the test fails. Uploading the
+    # directory containing the golden files after running the goldens tests
+    # allows us to diff the expected and actual golden file contents.
+    - name: 📦 Upload golden files
+      if: ${{ !matrix.cabal-skip-tests && steps.test.outcome != 'success' && always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: golden-files-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
+        path: test/golden-file-data
+        if-no-files-found: error
+        retention-days: 1
 
     - name: 🛠️ Setup cabal-docspec (Linux)
       if: ${{ !matrix.cabal-skip-tests && runner.os == 'Linux' }}
