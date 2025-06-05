@@ -101,6 +101,9 @@ module Database.LSMTree (
   toSnapshotName,
   SnapshotLabel (..),
 
+  -- * Session Configuration #session_configuration#
+  Salt,
+
   -- * Table Configuration #table_configuration#
   TableConfig (
     confMergePolicy,
@@ -242,7 +245,7 @@ import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
 import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
 import           Database.LSMTree.Internal.Types (BlobRef (..), Cursor (..),
                      ResolveAsFirst (..), ResolveValue (..),
-                     ResolveViaSemigroup (..), Session (..), Table (..),
+                     ResolveViaSemigroup (..), Salt, Session (..), Table (..),
                      resolveAssociativity, resolveCompatibility,
                      resolveValidOutput)
 import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
@@ -263,6 +266,7 @@ import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO, withIOHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
+import           System.Random (randomIO)
 
 --------------------------------------------------------------------------------
 -- Usage Notes
@@ -426,6 +430,7 @@ Throws the following exceptions:
     Tracer IO LSMTreeTrace ->
     HasFS IO HandleIO ->
     HasBlockIO IO HandleIO ->
+    Salt ->
     FsPath ->
     (Session IO -> IO a) ->
     IO a
@@ -436,12 +441,14 @@ withSession ::
   Tracer m LSMTreeTrace ->
   HasFS m h ->
   HasBlockIO m h ->
+  -- | The session salt.
+  Salt ->
   -- | The session directory.
   FsPath ->
   (Session m -> m a) ->
   m a
-withSession tracer hasFS hasBlockIO sessionDir action = do
-  Internal.withSession tracer hasFS hasBlockIO sessionDir (action . Session)
+withSession tracer hasFS hasBlockIO sessionSalt sessionDir action = do
+  Internal.withSession tracer hasFS hasBlockIO sessionSalt sessionDir (action . Session)
 
 -- | Variant of 'withSession' that is specialised to 'IO' using the real filesystem.
 withSessionIO ::
@@ -453,8 +460,9 @@ withSessionIO tracer sessionDir action = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
   let hasFS = ioHasFS mountPoint
+  sessionSalt <- randomIO
   withIOHasBlockIO hasFS defaultIOCtxParams $ \hasBlockIO ->
-    withSession tracer hasFS hasBlockIO sessionDirFsPath action
+    withSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
 
 {- |
 Open a session from a session directory.
@@ -480,7 +488,7 @@ Throws the following exceptions:
     Tracer IO LSMTreeTrace ->
     HasFS IO HandleIO ->
     HasBlockIO IO HandleIO ->
-    -- \| The session directory.
+    Salt ->
     FsPath ->
     IO (Session IO)
   #-}
@@ -490,26 +498,29 @@ openSession ::
   Tracer m LSMTreeTrace ->
   HasFS m h ->
   HasBlockIO m h ->
+  -- | The session salt.
+  Salt ->
   -- | The session directory.
   FsPath ->
   m (Session m)
-openSession tracer hasFS hasBlockIO sessionDir =
-  Session <$> Internal.openSession tracer hasFS hasBlockIO sessionDir
+openSession tracer hasFS hasBlockIO sessionSalt sessionDir =
+  Session <$> Internal.openSession tracer hasFS hasBlockIO sessionSalt sessionDir
 
 -- | Variant of 'openSession' that is specialised to 'IO' using the real filesystem.
 openSessionIO ::
   Tracer IO LSMTreeTrace ->
-  -- \| The session directory.
+  -- | The session directory.
   FilePath ->
   IO (Session IO)
 openSessionIO tracer sessionDir = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
   let hasFS = ioHasFS mountPoint
+  sessionSalt <- randomIO
   let acquireHasBlockIO = ioHasBlockIO hasFS defaultIOCtxParams
   let releaseHasBlockIO HasBlockIO{close} = close
   bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
-    openSession tracer hasFS hasBlockIO sessionDirFsPath
+    openSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath
 
 {- |
 Close a session.
