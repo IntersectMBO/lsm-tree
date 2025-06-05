@@ -8,6 +8,7 @@ module Test.Database.LSMTree.Internal.RunReader (
 import           Control.RefCount
 import           Data.Coerce (coerce)
 import qualified Data.Map as Map
+import           Database.LSMTree.Class.Common (testSessionSalt)
 import           Database.LSMTree.Extras.Generators (BiasedKey (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
@@ -89,7 +90,7 @@ prop_readAtOffset ::
   -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
-    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio testSessionSalt runParams (simplePath 42) rd' $ \run -> do
       rhs <- readKOps (coerce offsetKey) run
 
       pure . labelRunData rd' $
@@ -133,7 +134,7 @@ prop_readAtOffsetIdempotence ::
   -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
-    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio testSessionSalt runParams (simplePath 42) rd' $ \run -> do
     lhs <- readKOps (coerce offsetKey) run
     rhs <- readKOps (coerce offsetKey) run
 
@@ -157,7 +158,7 @@ prop_readAtOffsetReadHead ::
   -> RunData BiasedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
-    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio testSessionSalt runParams (simplePath 42) rd' $ \run -> do
       lhs <- readKOps Nothing run
       rhs <- case lhs of
         []        -> pure []

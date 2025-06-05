@@ -13,6 +13,7 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Traversable (for)
 import qualified Data.Vector as V
+import           Database.LSMTree.Class.Common (testSessionSalt)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.MergingRunData
 import           Database.LSMTree.Extras.MergingTreeData
@@ -126,7 +127,7 @@ prop_lookupTree ::
 prop_lookupTree hfs hbio keys mtd = do
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal runParams path counter mtd $ \tree -> do
+    withMergingTree hfs hbio resolveVal testSessionSalt runParams path counter mtd $ \tree -> do
       arenaManager <- newArenaManager
       withActionRegistry $ \reg -> do
         res <- fetchBlobs =<< lookupsIO reg arenaManager tree
@@ -169,6 +170,7 @@ prop_lookupTree hfs hbio keys mtd = do
             hbio
             mgr
             resolveVal
+            testSessionSalt
             runs
             (fmap (\(DeRef r) -> Run.runFilter   r) runs)
             (fmap (\(DeRef r) -> Run.runIndex    r) runs)
@@ -229,7 +231,7 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
     FS.createDirectory hfs setupPath
     FS.createDirectory hfs (FS.mkFsPath ["active"])
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal runParams setupPath counter mtd $ \tree -> do
+    withMergingTree hfs hbio resolveVal testSessionSalt runParams setupPath counter mtd $ \tree -> do
       (MR.MergeDebt initialDebt, _) <- remainingMergeDebt tree
       props <- for credits $ \c -> do
         (MR.MergeDebt debt, _) <- remainingMergeDebt tree
@@ -238,7 +240,7 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
             pure $ property True
           else do
             leftovers <-
-              supplyCredits hfs hbio resolveVal runParams threshold root counter tree c
+              supplyCredits hfs hbio resolveVal testSessionSalt runParams threshold root counter tree c
             (MR.MergeDebt debt', _) <- remainingMergeDebt tree
             pure $
               -- semi-useful, but mainly tells us in how many steps we supplied
