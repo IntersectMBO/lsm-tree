@@ -7,6 +7,7 @@ import           Data.Coerce (Coercible, coerce)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word64, Word8)
+import           Database.LSMTree.Class.Common (testSessionSalt)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators
 import           Database.LSMTree.Extras.MergingRunData
@@ -162,7 +163,7 @@ prop_withRunDoesntLeak hfs hbio rd = do
     let path = FS.mkFsPath ["something-1"]
     let fsPaths = RunFsPaths path (RunNumber 0)
     FS.createDirectory hfs path
-    withRunAt hfs hbio (runParams indexType) fsPaths rd $ \_run -> do
+    withRunAt hfs hbio testSessionSalt (runParams indexType) fsPaths rd $ \_run -> do
       pure (QC.property True)
 
 prop_withMergingRunDoesntLeak ::
@@ -175,7 +176,7 @@ prop_withMergingRunDoesntLeak hfs hbio mrd = do
     let path = FS.mkFsPath ["something-2"]
     FS.createDirectory hfs path
     counter <- newUniqCounter 0
-    withMergingRun hfs hbio resolveVal (runParams indexType) path counter mrd $
+    withMergingRun hfs hbio resolveVal testSessionSalt (runParams indexType) path counter mrd $
       \_mr -> do
         pure (QC.property True)
 
@@ -191,7 +192,7 @@ prop_withMergingTreeDoesntLeak hfs hbio mrd = do
     let path = FS.mkFsPath ["something-3"]
     FS.createDirectory hfs path
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal (runParams indexType) path counter mrd $
+    withMergingTree hfs hbio resolveVal testSessionSalt (runParams indexType) path counter mrd $
       \_tree -> do
         pure (QC.property True)
 

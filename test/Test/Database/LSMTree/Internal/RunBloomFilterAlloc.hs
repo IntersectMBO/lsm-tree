@@ -32,6 +32,7 @@ import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
+import           Database.LSMTree.Class.Common (testSessionSalt)
 import           Database.LSMTree.Extras.Random
 import qualified Database.LSMTree.Internal.Entry as LSMT
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..),
@@ -294,7 +295,7 @@ type BloomMaker a = [a] -> Bloom a
 -- filter according to 'RunBloomFilterAlloc'.
 mkBloomFromAlloc :: Hashable a => RunBloomFilterAlloc -> BloomMaker a
 mkBloomFromAlloc alloc xs = runST $ do
-    mb <- newMBloom n alloc
+    mb <- newMBloom n alloc testSessionSalt
     mapM_ (Bloom.insert mb) xs
     Bloom.unsafeFreeze mb
   where

@@ -9,6 +9,7 @@ import           Control.Tracer
 import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.Vector as V
 import           Data.Word
+import           Database.LSMTree.Class.Common (testSalt)
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Config
@@ -173,7 +174,7 @@ prop_flipSnapshotBit ::
 prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     runSimOrThrow $
     withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _fsVar ->
-    withSession nullTracer hfs hbio root $ \s ->
+    withSession nullTracer hfs hbio testSalt root $ \s ->
     withTable s conf $ \t -> do
       -- Create a table, populate it, and create a snapshot
       updates resolve es' t
