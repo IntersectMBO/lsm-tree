@@ -237,6 +237,9 @@ deriving anyclass instance NoThunks RunNumber
 deriving stock instance Generic SessionRoot
 deriving anyclass instance NoThunks SessionRoot
 
+deriving stock instance Generic SessionSalt
+deriving anyclass instance NoThunks SessionSalt
+
 deriving stock instance Generic RunFsPaths
 deriving anyclass instance NoThunks RunFsPaths
 

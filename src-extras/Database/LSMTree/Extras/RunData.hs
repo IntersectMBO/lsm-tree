@@ -75,29 +75,31 @@ import           Test.QuickCheck
 withRun ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedRunData
   -> (Ref (Run IO h) -> IO a)
   -> IO a
-withRun hfs hbio runParams path counter rd = do
+withRun hfs hbio sessionSalt runParams path counter rd = do
     bracket
-      (unsafeCreateRun hfs hbio runParams path counter rd)
+      (unsafeCreateRun hfs hbio sessionSalt runParams path counter rd)
       releaseRef
 
 -- | Create a temporary 'Run' using 'unsafeCreateRunAt'.
 withRunAt ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> SerialisedRunData
   -> (Ref (Run IO h) -> IO a)
   -> IO a
-withRunAt hfs hbio runParams path rd = do
+withRunAt hfs hbio sessionSalt runParams path rd = do
     bracket
-      (unsafeCreateRunAt hfs hbio runParams path rd)
+      (unsafeCreateRunAt hfs hbio sessionSalt runParams path rd)
       releaseRef
 
 {-# INLINABLE withRuns #-}
@@ -105,17 +107,18 @@ withRunAt hfs hbio runParams path rd = do
 withRuns ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> [SerialisedRunData]
   -> ([Ref (Run IO h)] -> IO a)
   -> IO a
-withRuns hfs hbio runParams path counter = go
+withRuns hfs hbio sessionSalt runParams path counter = go
   where
     go []       act = act []
     go (rd:rds) act =
-      withRun hfs hbio runParams path counter rd $ \r ->
+      withRun hfs hbio sessionSalt runParams path counter rd $ \r ->
         go rds $ \rs ->
           act (r:rs)
 
@@ -124,15 +127,16 @@ withRuns hfs hbio runParams path counter = go
 unsafeCreateRun ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
-unsafeCreateRun fs hbio runParams path counter rd = do
+unsafeCreateRun fs hbio sessionSalt runParams path counter rd = do
     n <- incrUniqCounter counter
     let fsPaths = RunFsPaths path (uniqueToRunNumber n)
-    unsafeCreateRunAt fs hbio runParams fsPaths rd
+    unsafeCreateRunAt fs hbio sessionSalt runParams fsPaths rd
 
 -- | Flush serialised run data to disk as if it were a write buffer.
 --
@@ -143,18 +147,19 @@ unsafeCreateRun fs hbio runParams path counter rd = do
 unsafeCreateRunAt ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
-unsafeCreateRunAt fs hbio runParams fsPaths (RunData m) = do
+unsafeCreateRunAt fs hbio sessionSalt runParams fsPaths (RunData m) = do
     -- the WBB file path doesn't have to be at a specific place relative to
     -- the run we want to create, but fsPaths should already point to a unique
     -- location, so we just append something to not conflict with that.
     let blobpath = FS.addExtension (runBlobPath fsPaths) ".wb"
     bracket (WBB.new fs blobpath) releaseRef $ \wbblobs -> do
       wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) m
-      Run.fromWriteBuffer fs hbio runParams fsPaths wb wbblobs
+      Run.fromWriteBuffer fs hbio sessionSalt runParams fsPaths wb wbblobs
 
 -- | Create a 'RunFsPaths' using an empty 'FsPath'. The empty path corresponds
 -- to the "root" or "mount point" of a 'HasFS' instance.
