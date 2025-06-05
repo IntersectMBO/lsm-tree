@@ -8,6 +8,7 @@
 module Data.BloomFilter.Hash (
     -- * Basic hash functionality
     Hash,
+    Salt,
     Hashable(..),
     hashByteArray,
     -- * Incremental hashing
@@ -27,6 +28,9 @@ import qualified XXH3
 
 -- | A hash value is 64 bits wide.
 type Hash = Word64
+
+-- | The salt value to be used for hashes.
+type Salt = Word64
 
 -------------------------------------------------------------------------------
 -- One shot hashing

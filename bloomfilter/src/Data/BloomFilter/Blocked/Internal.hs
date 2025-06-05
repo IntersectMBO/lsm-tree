@@ -19,7 +19,6 @@ module Data.BloomFilter.Blocked.Internal (
 
     -- * Hash-based operations
     Hashes,
-    Salt,
     hashesWithSalt,
     insertHashes,
     prefetchInsert,
@@ -102,8 +101,8 @@ instance NFData (MBloom s a) where
 --
 -- The filter size is capped at 'maxSizeBits'.
 --
-new :: Salt -> BloomSize -> ST s (MBloom s a)
-new hashSalt BloomSize { sizeBits, sizeHashes } = do
+new :: BloomSize -> Salt -> ST s (MBloom s a)
+new BloomSize { sizeBits, sizeHashes } hashSalt = do
     let numBlocks = bitsToBlocks (max 1 (min maxSizeBits sizeBits))
     mbBitArray <- BitArray.new numBlocks
     pure MBloom {
@@ -243,9 +242,9 @@ prefetchElem Bloom { numBlocks, bitArray } !h =
 --
 -- See also 'formatVersion' for compatibility advice.
 --
-serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
+serialise :: Bloom a -> (BloomSize, Salt, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
-    (size b, ba, off, len)
+    (size b, hashSalt b, ba, off, len)
   where
     (ba, off, len) = BitArray.serialise bitArray
 

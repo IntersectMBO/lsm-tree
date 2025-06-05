@@ -1,7 +1,6 @@
 -- | Various formulas for working with bloomfilters.
 module Data.BloomFilter.Classic.Calc (
     NumEntries,
-    Salt,
     BloomSize (..),
     FPR,
     sizeForFPR,
@@ -14,15 +13,11 @@ module Data.BloomFilter.Classic.Calc (
     policyForBits,
 ) where
 
-import           Data.Word (Word64)
-import           Numeric
+import           Numeric (Floating (expm1, log1mexp))
 
 type FPR          = Double
 type BitsPerEntry = Double
 type NumEntries   = Int
-
--- | The salt value to be used for hashes.
-type Salt = Word64
 
 -- | A policy on intended bloom filter size -- independent of the number of
 -- elements.
