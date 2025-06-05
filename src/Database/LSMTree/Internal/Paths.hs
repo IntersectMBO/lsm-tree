@@ -3,6 +3,7 @@
 
 module Database.LSMTree.Internal.Paths (
     SessionRoot (..)
+  , SessionSalt (..)
   , lockFile
   , ActiveDir (..)
   , activeDir
@@ -57,6 +58,7 @@ import           Control.Applicative (Applicative (..))
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception.Base (throw)
 import           Control.Monad.Class.MonadThrow (Exception)
+import qualified Data.BloomFilter.Hash as Bloom
 import qualified Data.ByteString.Char8 as BS
 import           Data.Foldable (toList)
 import qualified Data.Map as Map
@@ -72,6 +74,9 @@ import           System.FS.API
 
 
 newtype SessionRoot = SessionRoot { getSessionRoot :: FsPath }
+  deriving stock Eq
+
+newtype SessionSalt = SessionSalt { getSessionSalt :: Bloom.Salt }
   deriving stock Eq
 
 lockFile :: SessionRoot -> FsPath

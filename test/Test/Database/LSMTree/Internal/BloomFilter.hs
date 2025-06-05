@@ -52,7 +52,7 @@ roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
   where
     sz  = Bloom.BloomSize { sizeBits   = limitBits bits,
                          sizeHashes = hfN }
-    lhs = Bloom.create sz (\b -> mapM_ (Bloom.insert b) ws)
+    lhs = Bloom.create theRandomSalt sz (\b -> mapM_ (Bloom.insert b) ws)
     bs  = LBS.toStrict (bloomFilterToLBS lhs)
 
 limitBits :: Int -> Int

@@ -49,6 +49,7 @@ import qualified Database.LSMTree.Internal.Index as Index (appendMulti,
 import           Database.LSMTree.Internal.PageAcc (PageAcc)
 import qualified Database.LSMTree.Internal.PageAcc as PageAcc
 import qualified Database.LSMTree.Internal.PageAcc1 as PageAcc
+import           Database.LSMTree.Internal.Paths (SessionSalt (..))
 import           Database.LSMTree.Internal.RawOverflowPage
 import           Database.LSMTree.Internal.RawPage (RawPage)
 import qualified Database.LSMTree.Internal.RawPage as RawPage
@@ -80,10 +81,11 @@ data RunAcc s = RunAcc {
 new ::
      NumEntries
   -> RunBloomFilterAlloc
+  -> SessionSalt
   -> IndexType
   -> ST s (RunAcc s)
-new nentries alloc indexType = do
-    mbloom <- newMBloom nentries alloc
+new nentries alloc sessionSalt indexType = do
+    mbloom <- newMBloom nentries alloc sessionSalt
     mindex <- Index.newWithDefaults indexType
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
@@ -343,9 +345,9 @@ instance NFData RunBloomFilterAlloc where
     rnf (RunAllocFixed a)      = rnf a
     rnf (RunAllocRequestFPR a) = rnf a
 
-newMBloom :: NumEntries -> RunBloomFilterAlloc -> ST s (MBloom s a)
-newMBloom (NumEntries nentries) alloc =
-    Bloom.new (Bloom.sizeForPolicy (policy alloc) nentries)
+newMBloom :: NumEntries -> RunBloomFilterAlloc -> SessionSalt -> ST s (MBloom s a)
+newMBloom (NumEntries nentries) alloc sessionSalt =
+    Bloom.new (Bloom.sizeForPolicy (policy alloc) nentries) (getSessionSalt sessionSalt)
   where
     --TODO: it'd be possible to turn the RunBloomFilterAlloc into a BloomPolicy
     -- without the NumEntries, and cache the policy, avoiding recalculating the
