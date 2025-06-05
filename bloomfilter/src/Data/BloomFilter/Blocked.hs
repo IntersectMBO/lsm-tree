@@ -99,14 +99,14 @@ import           Prelude hiding (elem, notElem)
 -- @
 --
 -- Note that the result of the setup function is not used.
-create :: Salt
-       -> BloomSize
+create :: BloomSize
+       -> Salt
        -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
        -> Bloom a
 {-# INLINE create #-}
-create bloomsalt bloomsize body =
+create bloomsize bloomsalt body =
     runST $ do
-      mb <- new bloomsalt bloomsize
+      mb <- new bloomsize bloomsalt
       body mb
       unsafeFreeze mb
 
@@ -151,14 +151,14 @@ notElem = \x b -> not (x `elem` b)
 --     @b@ is used as a new seed.
 unfold :: forall a b.
           Hashable a
-       => Salt
-       -> BloomSize
+       => BloomSize
+       -> Salt
        -> (b -> Maybe (a, b))       -- ^ seeding function
        -> b                         -- ^ initial seed
        -> Bloom a
 {-# INLINE unfold #-}
-unfold bloomsalt bloomsize f k =
-    create bloomsalt bloomsize body
+unfold bloomsize bloomsalt f k =
+    create bloomsize bloomsalt body
   where
     body :: forall s. MBloom s a -> ST s ()
     body mb = loop k
@@ -176,26 +176,26 @@ unfold bloomsalt bloomsize f k =
 -- filt = fromList (policyForBits 10) [\"foo\", \"bar\", \"quux\"]
 -- @
 fromList :: (Foldable t, Hashable a)
-         => Salt
-         -> BloomPolicy
+         => BloomPolicy
+         -> Salt
          -> t a -- ^ values to populate with
          -> Bloom a
-fromList bloomsalt policy xs =
-    create bloomsalt bsize (\b -> mapM_ (insert b) xs)
+fromList policy bloomsalt xs =
+    create bsize bloomsalt (\b -> mapM_ (insert b) xs)
   where
     bsize = sizeForPolicy policy (length xs)
 
-{-# SPECIALISE deserialise :: Salt
-                           -> BloomSize
+{-# SPECIALISE deserialise :: BloomSize
+                           -> Salt
                            -> (MutableByteArray RealWorld -> Int -> Int -> IO ())
                            -> IO (Bloom a) #-}
 deserialise :: PrimMonad m
-            => Salt
-            -> BloomSize
+            => BloomSize
+            -> Salt
             -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
             -> m (Bloom a)
-deserialise bloomsalt bloomsize fill = do
-    mbloom <- stToPrim $ new bloomsalt bloomsize
+deserialise bloomsize bloomsalt fill = do
+    mbloom <- stToPrim $ new bloomsize bloomsalt
     Internal.deserialise mbloom fill
     stToPrim $ unsafeFreeze mbloom
 

@@ -21,7 +21,7 @@ module Data.BloomFilter.Classic.Internal (
     -- * Hash-based operations
     Hashes,
     Salt,
-    Hasher (hashes),
+    hashesWithSalt,
     insertHashes,
     elemHashes,
     readHashes,
@@ -42,7 +42,7 @@ import           Control.Exception (assert)
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Control.Monad.ST (ST)
 import           Data.Bits
-import           Data.Kind (Constraint, Type)
+import           Data.Kind (Type)
 import           Data.Primitive.ByteArray
 import           Data.Primitive.PrimArray
 import           Data.Primitive.Types (Prim (..))
@@ -107,8 +107,8 @@ instance NFData (MBloom s a) where
 --
 -- The filter size is capped at 'maxSizeBits'.
 --
-new :: Salt -> BloomSize -> ST s (MBloom s a)
-new mbHashSalt BloomSize { sizeBits, sizeHashes } = do
+new :: BloomSize -> Salt -> ST s (MBloom s a)
+new BloomSize { sizeBits, sizeHashes } mbHashSalt = do
     let !mbNumBits = max 1 (min maxSizeBits sizeBits)
     mbBitArray <- BitArray.new mbNumBits
     pure MBloom {
@@ -230,9 +230,9 @@ elemHashes Bloom { numBits, numHashes, bitArray } !h =
 --
 -- See also 'formatVersion' for compatibility advice.
 --
-serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
+serialise :: Bloom a -> (BloomSize, Salt, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
-    (size b, ba, off, len)
+    (size b, hashSalt b, ba, off, len)
   where
     (ba, off, len) = BitArray.serialise bitArray
 
@@ -434,20 +434,6 @@ https://github.com/facebook/rocksdb/blob/096fb9b67d19a9a180e7c906b4a0cdb2b2d0c1f
 --
 evalHashes :: Hashes a -> Int -> Hash
 evalHashes (Hashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
-
-type Hasher :: (Type -> Type) -> Constraint
-class Hasher b where
-  hashes :: (Hashable a) => b a -> a -> Hashes a
-
-instance Hasher (MBloom s) where
-  hashes :: (Hashable a) => MBloom s a -> a -> Hashes a
-  hashes = \ !mb !x -> hashesWithSalt (mbHashSalt mb) x
-  {-# INLINE hashes #-}
-
-instance Hasher Bloom where
-  hashes :: (Hashable a) => Bloom a -> a -> Hashes a
-  hashes = \ !b !x -> hashesWithSalt (hashSalt b) x
-  {-# INLINE hashes #-}
 
 -- | Create 'Hashes' structure.
 --
