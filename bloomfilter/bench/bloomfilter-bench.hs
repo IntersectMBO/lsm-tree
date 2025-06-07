@@ -1,13 +1,11 @@
 module Main where
 
+import           Criterion.Main (bench, bgroup, defaultMain, env, whnf)
 import qualified Data.BloomFilter.Blocked as B.Blocked
 import qualified Data.BloomFilter.Classic as B.Classic
-import           Data.BloomFilter.Hash (Hashable (..), hash64)
-
+import           Data.BloomFilter.Hash (Hashable (..))
 import           Data.Word (Word64)
-import           System.Random
-
-import           Criterion.Main
+import           System.Random (StdGen, newStdGen, uniform)
 
 main :: IO ()
 main =
@@ -42,11 +40,13 @@ main =
 
 constructBloom_classic :: Int -> Double -> StdGen -> B.Classic.Bloom Word64
 constructBloom_classic n fpr g0 =
-    B.Classic.unfold (B.Classic.sizeForFPR fpr n) (nextElement n) (g0, 0)
+  let (!salt, !g1) = uniform g0 in
+    B.Classic.unfold (B.Classic.sizeForFPR fpr n) salt (nextElement n) (g1, 0)
 
 constructBloom_blocked :: Int -> Double -> StdGen -> B.Blocked.Bloom Word64
 constructBloom_blocked n fpr g0 =
-    B.Blocked.unfold (B.Blocked.sizeForFPR fpr n) (nextElement n) (g0, 0)
+  let (!salt, !g1) = uniform g0 in
+    B.Blocked.unfold (B.Blocked.sizeForFPR fpr n) salt (nextElement n) (g1, 0)
 
 {-# INLINE nextElement #-}
 nextElement :: Int -> (StdGen, Int) -> Maybe (Word64, (StdGen, Int))

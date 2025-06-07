@@ -96,6 +96,7 @@ instance NFData RunDataCaching where
 {-# SPECIALISE new ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> NumEntries
@@ -107,13 +108,14 @@ new ::
      (MonadST m, MonadSTM m)
   => HasFS m h
   -> HasBlockIO m h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> m (RunBuilder m h)
-new hfs hbio runBuilderParams@RunParams{..} runBuilderFsPaths numEntries = do
+new hfs hbio sessionSalt runBuilderParams@RunParams{..} runBuilderFsPaths numEntries = do
     runBuilderAcc <- ST.stToIO $
-                       RunAcc.new numEntries runParamAlloc runParamIndex
+                       RunAcc.new numEntries runParamAlloc sessionSalt runParamIndex
     runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)

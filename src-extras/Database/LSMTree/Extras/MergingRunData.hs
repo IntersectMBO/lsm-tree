@@ -46,15 +46,16 @@ withMergingRun ::
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> SessionSalt
   -> RunBuilder.RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedMergingRunData t
   -> (Ref (MergingRun t IO h) -> IO a)
   -> IO a
-withMergingRun hfs hbio resolve runParams path counter mrd = do
+withMergingRun hfs hbio resolve sessionSalt runParams path counter mrd = do
     bracket
-      (unsafeCreateMergingRun hfs hbio resolve runParams path counter mrd)
+      (unsafeCreateMergingRun hfs hbio resolve sessionSalt runParams path counter mrd)
       releaseRef
 
 -- | Flush serialised merging run data to disk.
@@ -68,24 +69,25 @@ unsafeCreateMergingRun ::
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> SessionSalt
   -> RunBuilder.RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedMergingRunData t
   -> IO (Ref (MergingRun t IO h))
-unsafeCreateMergingRun hfs hbio resolve runParams path counter = \case
+unsafeCreateMergingRun hfs hbio resolve sessionSalt runParams path counter = \case
     CompletedMergeData _ rd -> do
-      withRun hfs hbio runParams path counter rd $ \run -> do
+      withRun hfs hbio sessionSalt runParams path counter rd $ \run -> do
         -- slightly hacky, generally it's larger
         let totalDebt = MR.numEntriesToMergeDebt (Run.size run)
         MR.newCompleted totalDebt run
 
     OngoingMergeData mergeType rds -> do
-      withRuns hfs hbio runParams path counter (toRunData <$> rds)
+      withRuns hfs hbio sessionSalt runParams path counter (toRunData <$> rds)
         $ \runs -> do
           n <- incrUniqCounter counter
           let fsPaths = RunFsPaths path (RunNumber (uniqueToInt n))
-          MR.new hfs hbio resolve runParams mergeType
+          MR.new hfs hbio resolve sessionSalt runParams mergeType
                  fsPaths (V.fromList runs)
 
 {-------------------------------------------------------------------------------

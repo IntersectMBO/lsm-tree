@@ -89,7 +89,8 @@ import           Database.LSMTree (BlobRefInvalidError (..),
                      TableCorruptedError (..),
                      TableUnionNotCompatibleError (..))
 import qualified Database.LSMTree as R
-import           Database.LSMTree.Class (Entry (..), LookupResult (..))
+import           Database.LSMTree.Class (Entry (..), LookupResult (..),
+                     testSalt)
 import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
@@ -316,7 +317,7 @@ propLockstep_RealImpl_RealFS_IO tr =
     acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
-        session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
+        session <- R.openSession tr hasFS hasBlockIO testSalt (mkFsPath [])
         errsVar <- newTVarIO FSSim.emptyErrors
         logVar <- newTVarIO emptyLog
         pure (tmpDir, session, errsVar, logVar)
@@ -411,7 +412,7 @@ acquire_RealImpl_MockFS tr = do
     errsVar <- newTVarIO FSSim.emptyErrors
     logVar <- newTVarIO emptyLog
     (hfs, hbio) <- simErrorHasBlockIOLogged fsVar errsVar logVar
-    session <- R.openSession tr hfs hbio (mkFsPath [])
+    session <- R.openSession tr hfs hbio testSalt (mkFsPath [])
     pure (fsVar, session, errsVar, logVar)
 
 -- | Flag that turns on\/off file system checks.

@@ -68,7 +68,7 @@ import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import qualified Database.LSMTree.Internal.MergingTree.Lookup as MT
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
-                     SessionRoot)
+                     SessionRoot, SessionSalt)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
@@ -445,6 +445,7 @@ releaseUnionCache reg (UnionCache mt) =
   -> HasFS IO h
   -> HasBlockIO IO h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter IO
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> ActionRegistry IO
@@ -483,12 +484,13 @@ updatesWithInterleavedFlushes ::
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter m
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
+updatesWithInterleavedFlushes tr conf resolve hfs hbio root sessionSalt uc es reg tc = do
     let wb = tableWriteBuffer tc
         wbblobs = tableWriteBufferBlobs tc
     (wb', es') <- addWriteBufferEntries hfs resolve wbblobs maxn wb es
@@ -502,14 +504,14 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es reg tc = do
       pure $! tc'
     -- If the write buffer did reach capacity, then we flush.
     else do
-      tc'' <- flushWriteBuffer tr conf resolve hfs hbio root uc reg tc'
+      tc'' <- flushWriteBuffer tr conf resolve hfs hbio root sessionSalt uc reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes tr conf resolve hfs hbio root uc es' reg tc''
+        updatesWithInterleavedFlushes tr conf resolve hfs hbio root sessionSalt uc es' reg tc''
   where
     AllocNumEntries (NumEntries -> maxn) = confWriteBufferAlloc conf
 
@@ -563,6 +565,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
   -> HasFS IO h
   -> HasBlockIO IO h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter IO
   -> ActionRegistry IO
   -> TableContent IO h
@@ -579,11 +582,12 @@ flushWriteBuffer ::
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter m
   -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-flushWriteBuffer tr conf resolve hfs hbio root uc reg tc
+flushWriteBuffer tr conf resolve hfs hbio root sessionSalt uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     !uniq <- incrUniqCounter uc
@@ -597,7 +601,7 @@ flushWriteBuffer tr conf resolve hfs hbio root uc reg tc
       TraceFlushWriteBuffer size (runNumber runPaths) runParams
     r <- withRollback reg
             (Run.fromWriteBuffer
-              hfs hbio
+              hfs hbio sessionSalt
               runParams runPaths
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
@@ -605,7 +609,7 @@ flushWriteBuffer tr conf resolve hfs hbio root uc reg tc
     delayedCommit reg (releaseRef (tableWriteBufferBlobs tc))
     wbblobs' <- withRollback reg (WBB.new hfs (Paths.tableBlobPath root uniq))
                                  releaseRef
-    levels' <- addRunToLevels tr conf resolve hfs hbio root uc r reg
+    levels' <- addRunToLevels tr conf resolve hfs hbio root sessionSalt uc r reg
                  (tableLevels tc)
                  (tableUnionLevel tc)
     tableCache' <- rebuildCache reg (tableCache tc) levels'
@@ -625,6 +629,7 @@ flushWriteBuffer tr conf resolve hfs hbio root uc reg tc
   -> HasFS IO h
   -> HasBlockIO IO h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter IO
   -> Ref (Run IO h)
   -> ActionRegistry IO
@@ -644,13 +649,14 @@ addRunToLevels ::
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter m
   -> Ref (Run m h)
   -> ActionRegistry m
   -> Levels m h
   -> UnionLevel m h
   -> m (Levels m h)
-addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul = do
+addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root sessionSalt uc r0 reg levels ul = do
     go (LevelNo 1) (V.singleton r0) levels
   where
     -- NOTE: @go@ is based on the @increment@ function from the
@@ -732,7 +738,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
     newMerge mergePolicy mergeType ln rs = do
       ir <- withRollback reg
               (newIncomingRunAtLevel tr hfs hbio
-                                     root uc conf resolve
+                                     root sessionSalt uc conf resolve
                                      mergePolicy mergeType ln rs)
               releaseIncomingRun
       -- The runs will end up inside the incoming/merging run, with fresh
@@ -756,6 +762,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
   -> HasFS IO h
   -> HasBlockIO IO h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter IO
   -> TableConfig
   -> ResolveSerialisedValue
@@ -770,6 +777,7 @@ newIncomingRunAtLevel ::
   -> HasFS m h
   -> HasBlockIO m h
   -> SessionRoot
+  -> SessionSalt
   -> UniqCounter m
   -> TableConfig
   -> ResolveSerialisedValue
@@ -779,7 +787,7 @@ newIncomingRunAtLevel ::
   -> V.Vector (Ref (Run m h))
   -> m (IncomingRun m h)
 newIncomingRunAtLevel tr hfs hbio
-                      root uc conf resolve
+                      root sessionSalt uc conf resolve
                       mergePolicy mergeType ln rs
   | Just (r, rest) <- V.uncons rs, V.null rest = do
 
@@ -799,7 +807,7 @@ newIncomingRunAtLevel tr hfs hbio
                     runParams mergePolicy mergeType
 
     bracket
-      (MR.new hfs hbio resolve runParams mergeType runPaths rs)
+      (MR.new hfs hbio resolve sessionSalt runParams mergeType runPaths rs)
       releaseRef $ \mr ->
         assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $
         let nominalDebt = nominalDebtForLevel conf ln in
