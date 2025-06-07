@@ -72,10 +72,11 @@ For a detailed discussion of fine-tuning the table configuration, see [Fine-tuni
 
 [@confMergeSchedule :: t'MergeSchedule'@]
     The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
-    The merge schedule does not affect the performance of table unions.
     With the one-shot merge schedule, lookups and updates are more efficient overall, but some updates may take much longer than others.
     With the incremental merge schedule, lookups and updates are less efficient overall, but each update does a similar amount of work.
     This parameter is explicitly referenced in the documentation of those operations it affects.
+    The merge schedule does not affect the way that table unions are computed.
+    However, any table union must complete all outstanding incremental updates.
 
 [@confBloomFilterAlloc :: t'BloomFilterAlloc'@]
     The Bloom filter size balances the performance of lookups against the in-memory size of the database.
@@ -88,7 +89,7 @@ For a detailed discussion of fine-tuning the table configuration, see [Fine-tuni
 
 [@confDiskCachePolicy :: t'DiskCachePolicy'@]
     The /disk cache policy/ supports caching lookup operations using the OS page cache.
-    Caching may improve the performance of lookups if database access follows certain patterns.
+    Caching may improve the performance of lookups and updates if database access follows certain patterns.
 -}
 data TableConfig = TableConfig {
     confMergePolicy       :: !MergePolicy
