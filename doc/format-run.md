@@ -198,7 +198,7 @@ The compact index type is designed to work with keys that are large
 cryptographic hashes, e.g. 32 bytes. In particular it requires:
 
 * keys must be uniformly distributed
-* keys must be at least 8 bytes (64bits), but can otherwise be variable length
+* keys should ideally be at least 8 bytes (64bits), but can otherwise be variable length
 
 For this important special case, we can do significantly better than storing a
 whole key per page: we can typically store just 8 bytes (64bits) per page. This

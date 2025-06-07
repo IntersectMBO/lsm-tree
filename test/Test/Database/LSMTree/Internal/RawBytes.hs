@@ -1,8 +1,13 @@
+{-# LANGUAGE OverloadedLists #-}
+
 module Test.Database.LSMTree.Internal.RawBytes (tests) where
 
+import           Data.Bits (Bits (shiftL))
+import qualified Data.List as List
+import qualified Data.Vector.Primitive as VP
 import           Database.LSMTree.Extras.Generators ()
-import           Database.LSMTree.Internal.RawBytes (RawBytes)
-import qualified Database.LSMTree.Internal.RawBytes as RB (size)
+import           Database.LSMTree.Internal.RawBytes (RawBytes (RawBytes))
+import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Test.QuickCheck (Property, classify, collect, mapSize,
                      withDiscardRatio, withMaxSuccess, (.||.), (===), (==>))
 import           Test.Tasty (TestTree, testGroup)
@@ -26,7 +31,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.RawBytes" $
                 testProperty "Transitivity"  prop_ordTransitivity,
                 testProperty "Reflexivity"   prop_ordReflexivity,
                 testProperty "Antisymmetry"  prop_ordAntisymmetry
-            ]
+            ],
+            testProperty "prop_topBits64" prop_topBits64,
+            testProperty "prop_topBits64_default0s" prop_topBits64_default0s
         ]
 
 -- * Utilities
@@ -92,3 +99,22 @@ prop_ordAntisymmetry = mapSize (const 4)    $
     untunedProp block1 block2
         = withFirstBlockSizeInfo block1 $
           block1 <= block2 && block2 <= block1 ==> block1 === block2
+
+{-------------------------------------------------------------------------------
+  Accessors
+-------------------------------------------------------------------------------}
+
+-- | Compare 'topBits64' against a model
+prop_topBits64 :: RawBytes -> Property
+prop_topBits64 x@(RawBytes v) =
+    expected === RB.topBits64 x
+  where
+    expected =
+      let ws = take 8 (VP.toList v ++ repeat 0)
+      in  List.foldl' (\acc w -> acc `shiftL` 8 + fromIntegral w) 0 ws
+
+-- | If @x@ has fewer than 8 bytes, then all missing bits in the result default
+-- to 0s.
+prop_topBits64_default0s :: RawBytes -> Property
+prop_topBits64_default0s x =
+    RB.topBits64 x === RB.topBits64 (x <> mconcat (replicate 8 [0]))
