@@ -586,8 +586,8 @@ library
     , crc32c                  ^>=0.2.1
     , deepseq                 ^>=1.4      || ^>=1.5
     , filepath
-    , fs-api                  ^>=0.3
-    , io-classes              ^>=1.6      || ^>=1.7
+    , fs-api                  ^>=0.4
+    , io-classes              ^>=1.6      || ^>=1.7      || ^>=1.8.0.1
     , io-classes:strict-mvar
     , lsm-tree:bloomfilter
     , lsm-tree:control
@@ -1163,7 +1163,7 @@ library control
   build-depends:
     , base                   >=4.16 && <4.22
     , deepseq                ^>=1.4 || ^>=1.5
-    , io-classes             ^>=1.6 || ^>=1.7
+    , io-classes             ^>=1.6 || ^>=1.7 || ^>=1.8.0.1
     , io-classes:strict-stm
     , primitive              ^>=0.9
 
