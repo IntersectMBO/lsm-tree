@@ -666,7 +666,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
         traceWith tr $ AtLevel ln TraceAddLevel
         -- Make a new level
         let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty ul
-        ir <- newMerge policyForLevel MR.MergeLastLevel ln rs
+        ir <- newMerge policyForLevel (mergeTypeForLevel V.empty ul) ln rs
         pure $! V.singleton $ Level ir V.empty
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
         r <- expectCompletedMerge ln ir
@@ -707,7 +707,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
           -- Otherwise we start merging the incoming runs into the run.
           LevelLevelling -> do
             assert (V.null rs && V.null ls) $ pure ()
-            ir' <- newMerge LevelLevelling MR.MergeLastLevel ln (rs' `V.snoc` r)
+            ir' <- newMerge LevelLevelling (mergeTypeForLevel ls ul) ln (rs' `V.snoc` r)
             pure $! Level ir' V.empty `V.cons` V.empty
 
     -- Releases the incoming run.

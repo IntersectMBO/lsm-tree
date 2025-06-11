@@ -92,12 +92,12 @@ import qualified Database.LSMTree as R
 import           Database.LSMTree.Class (Entry (..), LookupResult (..))
 import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Extras (showPowersOf)
-import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
+import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
 import qualified Database.LSMTree.Internal.Config as R
                      (TableConfig (TableConfig))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
-                     SerialisedValue)
+                     SerialisedKey, SerialisedValue)
 import qualified Database.LSMTree.Internal.Types as R.Types
 import qualified Database.LSMTree.Internal.Unsafe as R.Unsafe
 import qualified Database.LSMTree.Model.IO as ModelIO
@@ -567,7 +567,7 @@ handleFsError = Model.ErrFsError . displayException
   Key and value types
 -------------------------------------------------------------------------------}
 
-newtype Key = Key KeyForIndexCompact
+newtype Key = Key SerialisedKey
   deriving stock (Show, Eq, Ord)
   deriving newtype (Arbitrary, R.SerialiseKey)
 
