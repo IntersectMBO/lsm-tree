@@ -95,6 +95,7 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Control.Tracer
+import qualified Data.BloomFilter.Hash as Bloom
 import           Data.Either (fromRight)
 import           Data.Foldable
 import           Data.List.NonEmpty (NonEmpty (..))
@@ -124,7 +125,7 @@ import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree
 import qualified Database.LSMTree.Internal.MergingTree as MT
 import qualified Database.LSMTree.Internal.MergingTree.Lookup as MT
-import           Database.LSMTree.Internal.Paths (SessionRoot (..),
+import           Database.LSMTree.Internal.Paths (SessionRoot (..), SessionSalt,
                      SnapshotMetaDataChecksumFile (..),
                      SnapshotMetaDataFile (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
@@ -240,6 +241,7 @@ data SessionEnv m h = SessionEnv {
     -- INVARIANT: the session root is never changed during the lifetime of a
     -- session.
     sessionRoot        :: !SessionRoot
+  , sessionSalt        :: !SessionSalt
   , sessionHasFS       :: !(HasFS m h)
   , sessionHasBlockIO  :: !(HasBlockIO m h)
   , sessionLockFile    :: !(FS.LockFileHandle m)
@@ -299,6 +301,7 @@ withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
      Tracer IO LSMTreeTrace
   -> HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> FsPath
   -> (Session IO h -> IO a)
   -> IO a #-}
@@ -308,10 +311,11 @@ withSession ::
   => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> FsPath
   -> (Session m h -> m a)
   -> m a
-withSession tr hfs hbio dir = bracket (openSession tr hfs hbio dir) closeSession
+withSession tr hfs hbio salt dir = bracket (openSession tr hfs hbio salt dir) closeSession
 
 -- | The session directory does not exist.
 data SessionDirDoesNotExistError
@@ -335,6 +339,7 @@ data SessionDirCorruptedError
      Tracer IO LSMTreeTrace
   -> HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> FsPath
   -> IO (Session IO h) #-}
 -- | See 'Database.LSMTree.openSession'.
@@ -344,9 +349,10 @@ openSession ::
   => Tracer m LSMTreeTrace
   -> HasFS m h
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
+  -> Bloom.Salt
   -> FsPath -- ^ Path to the session directory
   -> m (Session m h)
-openSession tr hfs hbio dir =
+openSession tr hfs hbio sessionSalt dir =
     -- We can not use modifyWithActionRegistry here, since there is no in-memory
     -- state to modify. We use withActionRegistry instead, which may have a tiny
     -- chance of leaking resources if openSession is not called in a masked
@@ -397,6 +403,7 @@ openSession tr hfs hbio dir =
         openCursorsVar <- newMVar Map.empty
         sessionVar <- RW.new $ SessionOpen $ SessionEnv {
             sessionRoot = root
+          , sessionSalt = Paths.SessionSalt sessionSalt
           , sessionHasFS = hfs
           , sessionHasBlockIO = hbio
           , sessionLockFile = lockFile
@@ -406,6 +413,7 @@ openSession tr hfs hbio dir =
           }
         pure $! Session sessionVar tr
 
+    -- TODO: write session salt to session metadata file
     newSession reg sessionFileLock = do
         traceWith tr TraceNewSession
         withRollback_ reg
@@ -416,6 +424,8 @@ openSession tr hfs hbio dir =
           (FS.removeDirectoryRecursive hfs snapshotsDirPath)
         mkSession sessionFileLock
 
+    -- TODO: read serialise session salt from session metadata file
+    -- TODO: split openSession and newSession
     restoreSession _reg sessionFileLock = do
         traceWith tr TraceRestoreSession
         -- If the layouts are wrong, we throw an exception
@@ -567,6 +577,11 @@ data TableEnv m h = TableEnv {
  -- | Inherited from session for ease of access.
 tableSessionRoot :: TableEnv m h -> SessionRoot
 tableSessionRoot = sessionRoot . tableSessionEnv
+
+{-# INLINE tableSessionSalt #-}
+ -- | Inherited from session for ease of access.
+tableSessionSalt :: TableEnv m h -> SessionSalt
+tableSessionSalt = sessionSalt . tableSessionEnv
 
 {-# INLINE tableHasFS #-}
 -- | Inherited from session for ease of access.
@@ -769,6 +784,7 @@ lookups resolve ks t = do
           (tableHasBlockIO tEnv)
           (tableArenaManager t)
           resolve
+          (tableSessionSalt tEnv)
           (tableWriteBuffer tc)
           (tableWriteBufferBlobs tc)
           (cachedRuns cache)
@@ -799,6 +815,7 @@ lookups resolve ks t = do
           (tableHasBlockIO tEnv)
           (tableArenaManager t)
           resolve
+          (tableSessionSalt tEnv)
           runs
           (V.mapStrict (\(DeRef r) -> Run.runFilter   r) runs)
           (V.mapStrict (\(DeRef r) -> Run.runIndex    r) runs)
@@ -874,6 +891,7 @@ updates resolve es t = do
             hfs
             (tableHasBlockIO tEnv)
             (tableSessionRoot tEnv)
+            (tableSessionSalt tEnv)
             (tableSessionUniqCounter tEnv)
             es
             reg
@@ -1329,6 +1347,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve =
 
         am <- newArenaManager
 
+        let salt = sessionSalt seshEnv
         let activeDir = Paths.activeDir (sessionRoot seshEnv)
 
         -- Read write buffer
@@ -1342,7 +1361,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve =
               Nothing -> pure NoUnion
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir) mTree
-                mt <- fromSnapMergingTree hfs hbio uc resolve activeDir reg snapTree
+                mt <- fromSnapMergingTree hfs hbio salt uc resolve activeDir reg snapTree
                 isStructurallyEmpty mt >>= \case
                   True ->
                     pure NoUnion
@@ -1352,7 +1371,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve =
                     pure (Union mt cache)
 
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels hfs hbio uc conf resolve reg activeDir snapLevels'
+        tableLevels <- fromSnapLevels hfs hbio salt uc conf resolve reg activeDir snapLevels'
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
@@ -1625,6 +1644,7 @@ writeBufferToNewRun ::
   -> m (Maybe (Ref (Run m h)))
 writeBufferToNewRun SessionEnv {
                       sessionRoot        = root,
+                      sessionSalt        = salt,
                       sessionHasFS       = hfs,
                       sessionHasBlockIO  = hbio,
                       sessionUniqCounter = uc
@@ -1640,7 +1660,7 @@ writeBufferToNewRun SessionEnv {
     let (!runParams, !runPaths) = mergingRunParamsForLevel
                                    (Paths.activeDir root) conf uniq (LevelNo 1)
     Run.fromWriteBuffer
-      hfs hbio
+      hfs hbio salt
       runParams runPaths
       tableWriteBuffer
       tableWriteBufferBlobs
@@ -1738,6 +1758,7 @@ supplyUnionCredits resolve t credits = do
                 (tableHasFS tEnv)
                 (tableHasBlockIO tEnv)
                 resolve
+                (tableSessionSalt tEnv)
                 (runParamsForLevel conf UnionLevel)
                 thresh
                 (tableSessionRoot tEnv)

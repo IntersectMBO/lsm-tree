@@ -5,6 +5,8 @@ module Database.LSMTree.Class.Common (
   , IsSession (..)
   , SessionArgs (..)
   , withSession
+  , testSalt
+  , testSessionSalt
   , module Types
   ) where
 
@@ -17,6 +19,7 @@ import           Database.LSMTree as Types (IOLike, Range (..), SerialiseKey,
                      SerialiseValue, SnapshotLabel (..), SnapshotName,
                      UnionCredits (..), UnionDebt (..))
 import qualified Database.LSMTree as R
+import           Database.LSMTree.Internal.Paths (SessionSalt (..))
 import           System.FS.API (FsPath, HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -77,6 +80,12 @@ withSession seshArgs = bracket (openSession seshArgs) closeSession
   Real instance
 -------------------------------------------------------------------------------}
 
+testSalt :: R.Salt
+testSalt = 4
+
+testSessionSalt :: SessionSalt
+testSessionSalt = SessionSalt testSalt
+
 instance IsSession R.Session where
     data SessionArgs R.Session m where
       SessionArgs ::
@@ -85,7 +94,7 @@ instance IsSession R.Session where
         -> SessionArgs R.Session m
 
     openSession (SessionArgs hfs hbio dir) = do
-       R.openSession nullTracer hfs hbio dir
+       R.openSession nullTracer hfs hbio testSalt dir
     closeSession = R.closeSession
     deleteSnapshot = R.deleteSnapshot
     listSnapshots = R.listSnapshots

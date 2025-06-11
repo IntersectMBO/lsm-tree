@@ -13,6 +13,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as SBS
 import           Data.Maybe
 import qualified Data.Vector.Primitive as VP
+import           Database.LSMTree.Class.Common (testSessionSalt)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary),
@@ -57,7 +58,7 @@ test_singleKeyRun =  do
         !e = InsertWithBlob (SerialisedValue' (VP.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, b, ic, _numEntries)) <- stToIO $ do
-      racc <- new (NumEntries 1) (RunAllocFixed 10) Index.Ordinary
+      racc <- new (NumEntries 1) (RunAllocFixed 10) testSessionSalt Index.Ordinary
       addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
 

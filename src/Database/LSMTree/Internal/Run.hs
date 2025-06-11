@@ -185,6 +185,7 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
 {-# SPECIALISE newEmpty ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> IO (Ref (Run IO h)) #-}
@@ -194,11 +195,12 @@ newEmpty ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> m (Ref (Run m h))
-newEmpty hfs hbio runParams runPaths = do
-    builder <- Builder.new hfs hbio runParams runPaths (NumEntries 0)
+newEmpty hfs hbio sessionSalt runParams runPaths = do
+    builder <- Builder.new hfs hbio sessionSalt runParams runPaths (NumEntries 0)
     fromBuilder builder
 
 {-# SPECIALISE fromBuilder ::
@@ -224,6 +226,7 @@ fromBuilder builder = do
 {-# SPECIALISE fromWriteBuffer ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> WriteBuffer
@@ -243,13 +246,14 @@ fromWriteBuffer ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
+  -> SessionSalt
   -> RunParams
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio params fsPaths buffer blobs = do
-    builder <- Builder.new fs hbio params fsPaths (WB.numEntries buffer)
+fromWriteBuffer fs hbio sessionSalt params fsPaths buffer blobs = do
+    builder <- Builder.new fs hbio sessionSalt params fsPaths (WB.numEntries buffer)
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs

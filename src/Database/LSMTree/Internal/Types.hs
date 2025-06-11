@@ -2,6 +2,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 
 module Database.LSMTree.Internal.Types (
+    Salt,
     Session (..),
     Table (..),
     BlobRef (..),
@@ -18,10 +19,19 @@ import           Control.DeepSeq (NFData (..), deepseq)
 import           Data.Kind (Type)
 import           Data.Semigroup (Sum)
 import           Data.Typeable
+import           Data.Word (Word64)
 import qualified Database.LSMTree.Internal.BlobRef as Unsafe
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseValue (..))
 import qualified Database.LSMTree.Internal.Unsafe as Unsafe
+
+{- |
+The session salt is used to secure the hash operations in the Bloom filters.
+
+The value of the salt must be kept secret.
+Otherwise, there are no restrictions on the value.
+-}
+type Salt = Word64
 
 {- |
 A session stores context that is shared by multiple tables.

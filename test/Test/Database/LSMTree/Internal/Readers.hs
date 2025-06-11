@@ -44,6 +44,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans ()
 
+import           Database.LSMTree.Class.Common (testSessionSalt)
 import           Test.QuickCheck.StateModel
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
@@ -453,7 +454,7 @@ runIO act lu = case act of
           wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hfs wbblobs)) kops
           pure $ Readers.FromWriteBuffer wb wbblobs
         FromRunData rd -> do
-          r <- unsafeCreateRun hfs hbio runParams (FS.mkFsPath []) counter $ serialiseRunData rd
+          r <- unsafeCreateRun hfs hbio testSessionSalt runParams (FS.mkFsPath []) counter $ serialiseRunData rd
           pure $ Readers.FromRun r
         FromReadersData ty rds -> do
           Readers.FromReaders ty <$> traverse (fromSourceData hfs hbio counter) rds
