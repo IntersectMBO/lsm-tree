@@ -45,6 +45,9 @@ module Database.LSMTree (
   lookup,
   lookups,
   Entry (..),
+  getEntryKey,
+  getEntryValue,
+  getEntryBlob,
   rangeLookup,
 
   -- ** Table Updates #table_updates#
@@ -1088,6 +1091,27 @@ data Entry k v b
   = Entry !k !v
   | EntryWithBlob !k !v !b
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
+
+{- |
+Get the field of type @k@ from an @'Entry' k v b@.
+-}
+getEntryKey :: Entry k v b -> k
+getEntryKey (Entry !k !_v)             = k
+getEntryKey (EntryWithBlob !k !_v !_b) = k
+
+{- |
+Get the field of type @v@ from an @'Entry' k v b@.
+-}
+getEntryValue :: Entry k v b -> v
+getEntryValue (Entry !_k !v)             = v
+getEntryValue (EntryWithBlob !_k !v !_b) = v
+
+{- |
+Get the field of type @b@ from an @'Entry' k v b@, if any.
+-}
+getEntryBlob :: Entry k v b -> Maybe b
+getEntryBlob (Entry !_k !_v)            = Nothing
+getEntryBlob (EntryWithBlob !_k !_v !b) = Just b
 
 instance (NFData k, NFData v, NFData b) => NFData (Entry k v b) where
   rnf :: Entry k v b -> ()
