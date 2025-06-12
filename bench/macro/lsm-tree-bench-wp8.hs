@@ -411,7 +411,7 @@ doSetup' gopts opts = do
 
     hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
 
-    let name = LSM.toSnapshotName "bench"
+    let name = LSM.toSnapshotName ("bench_" ++ show (initialSize gopts))
 
     LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
         tbl <- LSM.newTableWith @IO @K @V @B (mkTableConfigSetup gopts opts benchTableConfig) session
