@@ -1252,3 +1252,25 @@ test-suite control-test
     , QuickCheck
     , tasty
     , tasty-quickcheck
+
+executable demo
+  import:         language, warnings
+  scope:          private
+  hs-source-dirs: app
+  main-is:        Main.hs
+  other-modules:  Database.LSMTree.Demo
+  build-depends:
+    , base           <5
+    , blockio
+    , blockio:sim
+    , contra-tracer
+    , directory
+    , fs-api
+    , fs-sim
+    , io-classes
+    , io-sim
+    , lsm-tree
+    , primitive
+    , vector
+
+  ghc-options:    -threaded
