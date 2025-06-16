@@ -360,7 +360,7 @@ jobs:
         hackage-index-state: "2025-06-16T00:00:00Z"
         # Run without supplying any cabal files just to verify whether the
         # script runs without problems.
-        cabal-files: ""
+        cli-args: "Default"
 
   ################################################################################
   # Publish documentation

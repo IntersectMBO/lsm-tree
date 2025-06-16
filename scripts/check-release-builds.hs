@@ -29,17 +29,26 @@ import           Text.Printf
 
 main :: IO ()
 main = do
-    cabalFiles <- getArgs
-    printf "Checking release builds for %s...\n" (show cabalFiles)
+    args <- getArgs
+    case args of
+      ghcVersions : cabalFiles
+        | Just vs <- case ghcVersions of
+            "Default" -> Just [Default]
+            "All" -> Just allGhcVersions
+            _ -> Nothing
+        -> do
+          printf "Checking release builds for %s with ghc versions %s...\n" (show cabalFiles) (show $ fmap ghcVersionExecutableName vs)
 
-    forM_ allGhcVersions findGhcExecutable
+          forM_ vs findGhcExecutable
 
-    withTempProjectFile cabalFiles $ \projectFile ->
-      forM_ cabalFiles $ \cabalFile -> do
-        let component = (dropExtension $ takeFileName cabalFile)
-        forM_ allGhcVersions $ buildComponentWith projectFile component
+          withTempProjectFile cabalFiles $ \projectFile ->
+            forM_ cabalFiles $ \cabalFile -> do
+              let component = (dropExtension $ takeFileName cabalFile)
+              forM_ vs $ buildComponentWith projectFile component
 
-    printf "All release builds successful for GHC versions: %s" (unwords $ fmap ghcVersionExecutableName allGhcVersions)
+          printf "All release builds successful for GHC versions: %s" (unwords $ fmap ghcVersionExecutableName vs)
+      _ -> do
+        putStrLn "Usage: [Default|All] FILES"
 
 -- TODO: I wanted to use the --ignore-project cabal option, which should be
 -- a globally configurable value according to the cabal user guide, but for
@@ -58,14 +67,15 @@ withTempProjectFile cabalFiles k = do
       (\_ -> removeFile tempProjectFilePath)
       k
 
-data GhcVersion = Ghc9_2 | Ghc9_4 | Ghc9_6 | Ghc9_8 | Ghc9_10 | Ghc9_12
+data GhcVersion = Default | Ghc9_2 | Ghc9_4 | Ghc9_6 | Ghc9_8 | Ghc9_10 | Ghc9_12
   deriving stock (Enum, Bounded)
 
 allGhcVersions :: [GhcVersion]
-allGhcVersions = [minBound .. maxBound]
+allGhcVersions = [Ghc9_2 .. maxBound]
 
 ghcVersionExecutableName :: GhcVersion -> String
 ghcVersionExecutableName = \case
+    Default -> "ghc"
     Ghc9_2  -> "ghc-9.2"
     Ghc9_4  -> "ghc-9.4"
     Ghc9_6  -> "ghc-9.6"

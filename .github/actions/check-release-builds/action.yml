@@ -10,9 +10,9 @@ inputs:
   hackage-index-state:
     required: true
     description: "Timestamp for Hackage index"
-  cabal-files:
+  cli-args:
     required: true
-    description: "Cabal files of the libraries that should be checked"
+    description: "Command-line arguments for the check-release-builds script"
 runs:
   using: composite
   steps:
