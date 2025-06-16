@@ -692,9 +692,14 @@ benchmark bloomfilter-bench
     , lsm-tree:bloomfilter
     , random
 
-executable bloomfilter-fpr-calc
+-- TODO: ideally this should be an executable because it's not really testing
+-- anything, but if we make it an executable component then the solver takes the
+-- build-depends into account when building the public library, which is not
+-- desirable. Maybe these executables should be moved out into a separate
+-- package?
+test-suite bloomfilter-fpr-calc
   import:         language, warnings
-  scope:          private
+  type:           exitcode-stdio-1.0
   hs-source-dirs: bloomfilter/tests
   main-is:        fpr-calc.hs
   build-depends:
@@ -707,9 +712,14 @@ executable bloomfilter-fpr-calc
 
   ghc-options:    -threaded
 
-executable bloomfilter-spell
+-- TODO: ideally this should be an executable because it's not really testing
+-- anything, but if we make it an executable component then the solver takes the
+-- build-depends into account when building the public library, which is not
+-- desirable. Maybe these executables should be moved out into a separate
+-- package?
+test-suite bloomfilter-spell
   import:         language
-  scope:          private
+  type:           exitcode-stdio-1.0
   hs-source-dirs: bloomfilter/examples
   main-is:        spell.hs
   build-depends:
