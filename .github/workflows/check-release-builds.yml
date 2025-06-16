@@ -60,8 +60,7 @@ jobs:
         cabal-version: ${{ matrix.cabal-version }}
 
     - name: 🛠️ Setup system dependencies (Linux)
-      if: ${{ env.full-run }}
-      if: ${{ runner.os == 'Linux' }}
+      if: ${{ runner.os == 'Linux' && env.full-run }}
       run: sudo apt-get update && sudo apt-get -y install liburing-dev librocksdb-dev
       env:
         DEBIAN_FRONTEND: "noninteractive"
