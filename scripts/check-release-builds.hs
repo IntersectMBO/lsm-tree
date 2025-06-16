@@ -34,8 +34,8 @@ main = do
       ghcVersions : cabalFiles
         | Just vs <- case ghcVersions of
             "Default" -> Just [Default]
-            "All" -> Just allGhcVersions
-            _ -> Nothing
+            "All"     -> Just allGhcVersions
+            _         -> Nothing
         -> do
           printf "Checking release builds for %s with ghc versions %s...\n" (show cabalFiles) (show $ fmap ghcVersionExecutableName vs)
 

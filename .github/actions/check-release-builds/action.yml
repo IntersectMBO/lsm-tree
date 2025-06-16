@@ -56,4 +56,4 @@ runs:
       run: |
          cabal run ./scripts/check-release-builds.hs \
           ${{ inputs.hackage-index-state && format('--index-state={0}', inputs.hackage-index-state) }} \
-          -- ${{ inputs.cabal-files }}
+          -- ${{ inputs.cli-args }}
