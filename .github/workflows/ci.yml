@@ -108,6 +108,8 @@ jobs:
           --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}" \
           --only-dependencies
 
+        cabal build --only-dependencies ./scripts/check-release.hs
+
     - name: 💾 Save Cabal dependencies
       uses: actions/cache/save@v4
       if: ${{ !env.ACT && steps.cache-cabal.outputs.cache-hit != 'true' }}
@@ -120,6 +122,8 @@ jobs:
       run: |
         cabal build all \
           --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}"
+
+        cabal build ./scripts/check-release.hs
 
     - name: 🧪 Test
       if: ${{ !matrix.cabal-skip-tests }}
