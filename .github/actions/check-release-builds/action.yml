@@ -1,0 +1,59 @@
+name: "Check release builds"
+description: "Check release builds for public libraries in local packages"
+inputs:
+  ghc-version:
+    required: true
+    description: "Version of GHC"
+  cabal-version:
+    required: true
+    description: "Version of cabal"
+  hackage-index-state:
+    required: true
+    description: "Timestamp for Hackage index"
+  cabal-files:
+    required: true
+    description: "Cabal files of the libraries that should be checked"
+runs:
+  using: composite
+  steps:
+    - name: 🛠️ Install Haskell
+      uses: haskell-actions/setup@v2
+      id: setup-haskell
+      with:
+        ghc-version: ${{ inputs.ghc-version }}
+        cabal-version: ${{ inputs.cabal-version }}
+
+    - name: 💾 Restore Cabal dependencies
+      uses: actions/cache/restore@v4
+      if: ${{ !env.ACT }}
+      id: cache-cabal
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: check-release-builds-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}-input-state-${{ inputs.hackage-index-state }}
+
+    - name: 🛠️ Build Cabal dependencies
+      shell: sh
+      run: |
+        cabal build ./scripts/check-release-builds.hs \
+          ${{ inputs.hackage-index-state && format('--index-state={0}', inputs.hackage-index-state) }} \
+          --only-dependencies
+
+    - name: 💾 Save Cabal dependencies
+      uses: actions/cache/save@v4
+      if: ${{ !env.ACT && steps.cache-cabal.outputs.cache-hit != 'true' }}
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ steps.cache-cabal.outputs.cache-primary-key }}
+
+    - name: 🏗️ Build
+      shell: sh
+      run: |
+        cabal build ./scripts/check-release-builds.hs \
+          ${{ inputs.hackage-index-state && format('--index-state={0}', inputs.hackage-index-state) }}
+
+    - name: 🛠️ Check release builds
+      shell: sh
+      run: |
+         cabal run ./scripts/check-release-builds.hs \
+          ${{ inputs.hackage-index-state && format('--index-state={0}', inputs.hackage-index-state) }} \
+          -- ${{ inputs.cabal-files }}
