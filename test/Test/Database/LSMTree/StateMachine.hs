@@ -94,8 +94,7 @@ import qualified Database.LSMTree.Class as Class
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (KeyForIndexCompact)
 import           Database.LSMTree.Extras.NoThunks (propNoThunks)
-import qualified Database.LSMTree.Internal.Config as R
-                     (TableConfig (TableConfig))
+import qualified Database.LSMTree.Internal.Config as R (TableConfig (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedBlob,
                      SerialisedValue)
 import qualified Database.LSMTree.Internal.Types as R.Types
@@ -226,6 +225,8 @@ instance Arbitrary R.TableConfig where
         ]
     confWriteBufferAlloc <- QC.arbitrary
     confFencePointerIndex <- QC.arbitrary
+    confMergeBatchSize <- QC.sized $ \sz ->
+                            R.MergeBatchSize <$> QC.chooseInt (1, sz)
     pure $ R.TableConfig {
         R.confMergePolicy       = R.LazyLevelling
       , R.confSizeRatio         = R.Four
@@ -234,6 +235,7 @@ instance Arbitrary R.TableConfig where
       , confFencePointerIndex
       , R.confDiskCachePolicy   = R.DiskCacheNone
       , confMergeSchedule
+      , confMergeBatchSize
       }
 
   shrink R.TableConfig{..} =

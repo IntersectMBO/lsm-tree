@@ -111,6 +111,7 @@ module Database.LSMTree.Simple (
     FencePointerIndexType (OrdinaryIndex, CompactIndex),
     DiskCachePolicy (..),
     MergeSchedule (..),
+    MergeBatchSize (..),
 
     -- ** Table Configuration Overrides #table_configuration_overrides#
     OverrideDiskCachePolicy (..),
@@ -165,9 +166,9 @@ import           Data.Vector (Vector)
 import           Data.Void (Void)
 import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
                      DiskCachePolicy, FencePointerIndexType,
-                     InvalidSnapshotNameError (..), MergePolicy, MergeSchedule,
-                     OverrideDiskCachePolicy (..), Range (..), RawBytes,
-                     ResolveAsFirst (..), SerialiseKey (..),
+                     InvalidSnapshotNameError (..), MergeBatchSize, MergePolicy,
+                     MergeSchedule, OverrideDiskCachePolicy (..), Range (..),
+                     RawBytes, ResolveAsFirst (..), SerialiseKey (..),
                      SerialiseKeyOrderPreserving, SerialiseValue (..),
                      SessionClosedError (..), SizeRatio,
                      SnapshotCorruptedError (..),
