@@ -973,10 +973,7 @@ benchmark unions-bench
     , async
     , base
     , bytestring
-    , Chart
-    , Chart-diagrams        >=1.9.5.1
     , clock
-    , colour
     , containers
     , directory
     , lsm-tree

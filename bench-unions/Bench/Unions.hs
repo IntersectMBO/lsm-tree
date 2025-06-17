@@ -1,89 +1,105 @@
-{-# LANGUAGE CPP                   #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE CPP                      #-}
+{-# LANGUAGE DuplicateRecordFields    #-}
+{-# LANGUAGE NondecreasingIndentation #-}
+{-# LANGUAGE OverloadedStrings        #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-{- |
-Benchmarks for table unions of an LSM tree.
+{- | Benchmarks for table unions of an LSM tree.
 
 Here is a summary of the table union benchmark.
-Note that /all/ function calls are made through the 'Database.LSMTree.Simple' module's API.
+Note that /all/ function calls are made through
+the "Database.LSMTree.Simple" module's API.
 
 __Phase 1: Setup__
 
-The benchmark will setup an initial set of tables to be unioned together during "__Phase 2__."
-The number of tables create is user specified via the @--tableCount@ command line option with a default value of 'defaultTableCount' tables.
-
-The size of each generated table is the same and is user specified via the @--initial-size@ command line option with a default value of 'defautInitialSize' entries.
-Each created table has @$initial-size@ insertions operations performed on it before being written out to disk as a snapshot.
-The @initial-size@ inserted entries in each table are randomly selected from the range following range:
+The benchmark will setup an initial set of @--table-count@ tables
+to be unioned together during "__Phase 2__."
+The size of each generated table is the same
+and is equal to @--initial-size@.
+Each created table has @--initial-size@ insertions operations performed on it
+before being written out to disk as a snapshot.
+The @--initial-size@ inserted keys in each table are randomly selected
+from the following range.
+Each key is unique, meaning that keys are randomly sampled
+from the range without replacement.
 
 \[
 \left[\quad 0,\quad 2 * initialSize \quad\right)
 \]
 
-Additionally, the directory in which to isolate the benchmark environment is specified via the @--bench-dir@ command line option, with a default of 'defaultBenchDir'
-The table snapshots are saved here along with the benchmarked measurements from __Phase 2__.
-
+Additionally, the directory in which to isolate the benchmark environment
+is specified via the @--bench-dir@ command line option.
 
 __Phase 2: Measurement__
 
-When generating measurements for the table unions, the benchmark will reload the snapshots of the tables generated in __Phase 1__ from disk.
+When generating measurements for the table unions,
+the benchmark will reload the snapshots of the tables generated
+in __Phase 1__ from disk.
 Subsequently, the tables will be "incrementally unioned" together.
 
-Once the tables have been loaded and the union initiated, a series of "lookup batches" will be performed.
-A lookup batch involves performing a large number key lookups on the incrementally unioned table.
-Multiple samples of the batch looup are performed to generate /minimum/, /maximum/, and /mean/ timing values of the speed of lookup access.
-The measurement series consists of 200 batch lookups.
+Once the tables have been loaded and the union initiated,
+serveral iterations of lookups will be performed.
+One iteration involves performing a @--batch-count@ number of batches
+of @--batch-size@ lookups each.
+We measure the time spent on running an iteration,
+and we compute how many lookups per second were performed during the iteration.
 
-First, 50 batch lookups are performed /without/ supplying any credits to the unioned table.
+First, 50 iterations are performed /without/ supplying any credits to the unioned table.
 This establishes a base-line performance picture.
-Indices \( \left[ -50, 0 \right] \) measure lookups to the unioned table with \(100%\) of the debt remaining.
+Iterations \( \left[ 0, 50 \right) \) measure lookups per seconds
+on the unioned table with \(100\%\) of the debt remaining.
 
-Subsequently, 100 more batch looukps are performed.
-Before each of these 100 batch lookups, a fixed number of credits are supplied to the incremental union table.
-The number of /credits supplied remain constant/ between each batch lookup for the entire series of measurements.
-The series of measurements allows reasoning able table performance over time as the tables debt decreases (at a uniform rate).
-The number of credits supplied before each lookup batch is \(1%\) of the total starting debt. After 100 steps, \(100%\) of the debt will be paid off.
-Indices \( \left[ 1, 100 \right] \) measure lookups to the unioned table with as the remaining debt decreases.
+Subsequently, 100 more iterations are performed.
+Before each of these iterations,
+a fixed number of credits are supplied to the incremental union table.
+The series of measurements allows reasoning about table performance over time
+as the tables debt decreases (at a uniform rate).
+The number of credits supplied before each iteration is
+\(1%\) of the total starting debt.
+After 100 steps, \(100\%\) of the debt will be paid off.
+Iterations \( \left[ 50, 100 \right) \) measure lookups per second
+on the unioned table as the remaining debt decreases.
 
-Finally, 50 concluding batch looukps are performed.
+Finally, 50 concluding iterations are performed.
 Since no debt is remaining, no credits are supplied.
-Rather these meausrments create a "post-payoff" performance picture.
-Indices \( \left[ 101, 150 \right] \) measure lookups to the unioned table with \(0%\) of the debt remaining.
+Rather, these measurements create a "post-payoff" performance picture.
+Iterations \( \left[ 150, 200 \right) \) measure lookups per seconds
+on to the unioned table with \(0\%\) of the debt remaining.
 
 __Results__
 
-An informative performance plot of the benchmark measurements is generated and placed in the benchmark's @$bench-dir@ directory.
+An informative gnuplot script and data file of the benchmark measurements is
+generated and placed in the @bench-unions@ directory.
+Run the following command in a shell to generate a PNG of the graph.
+
+@
+  cd bench-unions && gnuplot unions-bench.gnuplot && cd ..
+@
+
+TODO: explain the baseline table
+
+TODO: explain the seed
+
+TODO: explain collisions analysis
 -}
 module Bench.Unions (main) where
 
 import           Control.Applicative ((<**>))
 import           Control.Concurrent.Async (forConcurrently_)
-#if MIN_VERSION_base(4,18,0)
--- Explicitly import Control.Monad with GHC >= 9.6 (base 4.18)
-import           Control.Monad (forM, forM_, void, when, (>=>))
-#endif
-import           Control.Monad.Identity (runIdentity)
-import           Control.Monad.State.Strict
+import           Control.Monad (forM_, void, (>=>))
+import           Control.Monad.State.Strict (MonadState (..), runState)
 import qualified Data.ByteString.Short as BS
-import qualified Data.Colour.Names as Color
-import qualified Data.Colour.SRGB as Color
-import qualified Data.Foldable as Fold
-import           Data.Functor ((<&>))
+import           Data.Foldable (traverse_)
 import           Data.IORef
 import qualified Data.List as List
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import           Data.Monoid
 import qualified Data.Primitive as P
-import           Data.Ratio
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import           Data.Word (Word64)
-import qualified Graphics.Rendering.Chart.Backend.Diagrams as Plot
-import           Graphics.Rendering.Chart.Easy ((.=))
-import qualified Graphics.Rendering.Chart.Easy as Plot
 import qualified Options.Applicative as O
 import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
@@ -91,6 +107,7 @@ import           System.Directory (createDirectoryIfMissing)
 import           System.IO
 import           System.Mem (performMajorGC)
 import qualified System.Random as Random
+import           System.Random (StdGen)
 import           Text.Printf (printf)
 import qualified Text.Read as Read
 
@@ -98,8 +115,6 @@ import           Database.LSMTree.Extras (groupsOfN)
 import qualified Database.LSMTree.Extras.Random as Random
 import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 
--- We should be able to write this benchmark
--- using only use public lsm-tree interface
 import qualified Database.LSMTree.Simple as LSM
 
 -------------------------------------------------------------------------------
@@ -157,7 +172,7 @@ makeKey seed =
            case v of
              P.MutablePrimArray mba -> do
                _ <- P.resizeMutableByteArray (P.MutableByteArray mba) 34
-               return v
+               pure v
 
       of (P.PrimArray ba :: P.PrimArray Word64) ->
            byteArrayToSBS (P.ByteArray ba)
@@ -181,8 +196,8 @@ data GlobalOpts = GlobalOpts
   deriving stock Show
 
 data RunOpts = RunOpts
-    { batchSamplesPerTick :: !Int -- ^ Increase for greater measurement fidelity
-    , batchSizeOfSample   :: !Int -- ^ Tune for your deisred use case.
+    { batchCount :: !Int
+    , batchSize  :: !Int
     }
   deriving stock Show
 
@@ -222,8 +237,7 @@ cmdP = O.subparser $ mconcat
         (O.progDesc "Setup benchmark by generating required tables")
     , O.command "collisions" $ O.info
         (CmdCollisions <$ O.helper)
-        (O.progDesc "Collision analysis, compute theoretical and actual shared keys between tables")
-
+        (O.progDesc "Collision analysis, compute shared keys between tables")
     , O.command "run" $ O.info
         (CmdRun <$> runOptsP <**> O.helper)
         (O.progDesc "Proper run, measuring performance and generating a benchmark report")
@@ -238,18 +252,20 @@ runOptsP = pure RunOpts
 -- measurements
 -------------------------------------------------------------------------------
 
-timed :: IO a -> IO (a, Integer)
+
+-- | Returns number of seconds elapsed
+timed :: IO a -> IO (a, Double)
 timed action = do
     performMajorGC
     t1 <- Clock.getTime Clock.Monotonic
     x  <- action
     t2 <- Clock.getTime Clock.Monotonic
     performMajorGC
-    let !ms = Clock.toNanoSecs (Clock.diffTimeSpec t2 t1) `div` 1_000
-    return (x, ms)
+    let !t = fromIntegral (Clock.toNanoSecs (Clock.diffTimeSpec t2 t1)) * 1e-9
+    pure (x, t)
 
--- | The 'Integer' is the number of /microseconds/ elapsed.
-timed_ :: IO () -> IO Integer
+-- | Returns number of seconds elapsed
+timed_ :: IO () -> IO Double
 timed_ action = do
     ((), t) <- timed action
     pure t
@@ -260,10 +276,6 @@ timed_ action = do
 
 doSetup :: GlobalOpts -> IO ()
 doSetup gopts = do
-    void $ timed_ $ doSetup' gopts
-
-doSetup' :: GlobalOpts -> IO ()
-doSetup' gopts = do
     -- Define some constants
     let populationBatchSize = 256
         entryCount = initialSize gopts
@@ -316,8 +328,7 @@ makeTableName n = LSM.toSnapshotName $ "bench_" <> show n
 tableRange :: GlobalOpts -> NonEmpty Int
 tableRange gopts =
     let n1 = succ baselineTableID
-        n2 = succ n1
-    in  n1 :| [ n2 .. tableCount gopts + baselineTableID ]
+    in  NE.fromList [ n1 .. tableCount gopts + baselineTableID ]
 
 -------------------------------------------------------------------------------
 -- Collision analysis
@@ -341,8 +352,10 @@ doCollisionAnalysis gopts = do
               else
                 modifyIORef seenRef $ Set.insert k
 
+      seen <- readIORef seenRef
       dups <- readIORef dupRef
-      printf "True duplicates: %d\n" $ Set.size dups
+      printf "Keys seen at least once: %d\n" $ Set.size seen
+      printf "Keys seen at least twice: %d\n" $ Set.size dups
 
 streamCursor :: LSM.Cursor K V -> ((K, V) -> IO ()) -> IO ()
 streamCursor cursor f = go
@@ -357,247 +370,81 @@ streamCursor cursor f = go
 
 doRun :: GlobalOpts -> RunOpts -> IO ()
 doRun gopts opts = do
-    -- Setup RNG for randomized lookups
-    refRNG <- newIORef $ deriveRunRNG gopts
-
     -- Perform 3 measurement phases
     --   * Phase 1: Measure performance before supplying any credits.
     --   * Phase 2: Measure performance as credits are incrementally supplied and debt is repaid.
     --   * Phase 3: Measure performance when debt is 0.
-    let tickCountPrefix = 50
-        tickCountMiddle = 100
-        tickCountSuffix = 50
-        tickCountEnding = maximum indicesPhase3
-        samplingLookups = batchSizeOfSample opts
-        samplesEachTick = batchSamplesPerTick opts
-        queriesEachTick = samplesEachTick * samplingLookups
-        indicesPhase1 = [ negate tickCountPrefix .. 0 ]
-        indicesPhase2 = [ 1 .. tickCountMiddle ]
-        indicesPhase3 = [ tickCountMiddle + 1 .. tickCountMiddle + tickCountSuffix ]
-        indicesDomain = indicesPhase1 <> indicesPhase2 <> indicesPhase3
 
-    measurements <- LSM.withSession (rootDir gopts) $ \session -> do
-        -- Load the baseline table
-        table_0 <- LSM.openTableFromSnapshot session baselineTableName label
+    let rng = deriveRunRNG gopts
+        dataPath = "bench-unions/unions-bench.dat"
 
-        -- Load the union tables
-        tables <- forM (tableRange gopts) $ \tID ->
-            LSM.openTableFromSnapshot session (makeTableName tID) label
+    withFile dataPath WriteMode $ \h -> do
+    hPutStrLn h "# iteration \t baseline (ops/sec) \t union (ops/sec) \t union debt"
 
-        LSM.withIncrementalUnions tables $ \table -> do
-          LSM.UnionDebt totalDebt <- LSM.remainingUnionDebt table
-          -- Determine the number of credits to supply per tick in order to
-          -- all debt repaid at the time specified by the rpayment rate.
-          -- Each tick should supply credits equal to:
-          --     paymentRate * totalDebt / tickCountMiddle
-          let paymentPerTick = ceiling $ toInteger totalDebt % tickCountMiddle
-          let measurePerformance :: Integer -> IO (Int, Int, TimingResult, TimingResult)
-              measurePerformance tickIndex = do
-                -- Note this tick's debt for subsequent measurement purposes.
-                LSM.UnionDebt currDebt <- LSM.remainingUnionDebt table
-                -- Note the cumulative credits supplied through this tick.
-                let currPaid = max 0 $ totalDebt - fromInteger (max 0 tickIndex) * paymentPerTick
-                -- Get the current RNG (same for both tables)
-                currRNG <- readIORef refRNG
-                -- Generate the randomized lookup batches.
-                -- There are two important aspects to consider when preparing for the measurements.
-                --   1. Generate all the lookup keys *before* starting the measurement!
-                --      This ensures that the benchmark does not include RNG latency in the results.
-                --   2. Use these exact same lookups for both the baseline table and the unioned table.
-                --      This ensures that the comparison between a monolithic table and union of tables
-                --      are appropriately comparable.
-                let thisMeasurement =
-                      measureSampleSeriesUsingRNG samplesEachTick samplingLookups (initialSize gopts) currRNG
-                -- Perform measurement of batched lookups
-                -- First, benchmark the baseline table
-                (base, nextRNG) <- thisMeasurement table_0
-                -- Next, benchmark the union table using the cloned RNG
-                (time@(timeMean, _, _, _), _sameRNG) <- thisMeasurement table
-                -- Update RNG for the next measurement
-                writeIORef refRNG nextRNG
-                -- Save the result for later to be included in the performance plot
-                let rate :: Double
-                    rate = fromRational $ fromIntegral queriesEachTick * 1_000 % timeMean
-                -- Print a status report while running the benchmark
-                printf
-                  (Fold.fold [
-                    "    [%",
-                    show . length $ show tickCountEnding,
-                    "d/",
-                    show tickCountEnding,
-                    "]:    %9.01f ops/sec",
-                    "    with debt = %8d\n"
-                  ])
-                  tickIndex
-                  rate
-                  currDebt
-                pure (currDebt, currPaid, base, time)
+    LSM.withSession (rootDir gopts) $ \session -> do
+    -- Load the baseline table
+    LSM.withTableFromSnapshot session baselineTableName label
+      $ \baselineTable -> do
+    -- Load the union tables
+    withTablesFromSnapshots session label (makeTableName <$> tableRange gopts)
+      $ \inputTables -> do
+    -- Start the incremental union
+    LSM.withIncrementalUnions inputTables $ \unionedTable -> do
+      let measurePerformance :: Int -> Maybe LSM.UnionCredits -> IO ()
+          measurePerformance iteration mayCredits = do
+            LSM.supplyUnionCredits unionedTable `traverse_` mayCredits
+            LSM.UnionDebt currDebt <- LSM.remainingUnionDebt unionedTable
 
-          -- Phase 1 measurements: Debt = 100%
-          resultsPhase1 <- forM indicesPhase1 $ \step -> do
-            measurePerformance step
+            baselineOpsSec <- timeOpsPerSecond gopts opts baselineTable rng
+            unionOpsSec <- timeOpsPerSecond gopts opts unionedTable rng
 
-          -- Phase 2 measurements: Debt ∈ [0%, 99%]
-          resultsPhase2 <- forM indicesPhase2 $ \step -> do
-            measurePerformance step
+            printf "iteration: %d, baseline: %7.01f ops/sec, union: %7.01f ops/sec, debt: %d\n"
+              iteration baselineOpsSec unionOpsSec currDebt
 
-          -- Phase 3 measurements: Debt = 0%
-          resultsPhase3 <- forM indicesPhase3 $ \step -> do
-            measurePerformance step
+            hPutStrLn h $ unwords [ show iteration, show baselineOpsSec
+                                  , show unionOpsSec, show currDebt ]
 
-          pure $ mconcat [ resultsPhase1, resultsPhase2, resultsPhase3 ]
+      LSM.UnionDebt totalDebt <- LSM.remainingUnionDebt unionedTable
 
-    let (balances', payments', baseline, operations) = List.unzip4 measurements
-        maxValue = maximum $ getMeanTiming <$> operations
-        standardize xs =
-          let maxInput = toInteger $ maximum xs
-              scale :: Integral i=> i -> Integer
-              scale x = ceiling $ (fromIntegral x * maxValue) % maxInput
-          in  scale <$> xs
-        balances = standardize balances'
-        payments = standardize payments'
-        noDebtIndex = fst . head . dropWhile ((> 0) . snd) $ zip indicesDomain balances
+      -- Phase 1 measurements: Debt = 100%
+      forM_ [0..50-1] $ \step -> do
+        measurePerformance step Nothing
 
-        getMeanTiming (x,_,_,_) = x
+      -- Phase 2 measurements: Debt ∈ [0%, 99%]
+      forM_ [50..150-1] $ \step -> do
+        let creditsPerIteration = LSM.UnionCredits ((totalDebt + 99) `div` 100)
+        measurePerformance step (Just creditsPerIteration)
 
-        labelX = "Percent of debt repaid: \"clamped\" to range [0%, 100%]"
-        labelY = "Time to perform " <> sep1000th ',' samplingLookups <> " lookups (μs)"
-        labelP = unwords
-          [ "Measuring Incremental Union of"
-          , show $ tableCount gopts
-          , "Tables Containing"
-          , sep1000th ',' $ initialSize gopts
-          , "Entries Each"
-          ]
+      -- Phase 3 measurements: Debt = 0%
+      forM_ [150..200-1] $ \step -> do
+        measurePerformance step Nothing
 
-    -- Generate a performance plot based on the benchmark results.
-    Plot.toFile Plot.def (rootDir gopts <> "/" <> deriveFileNameForPlot gopts) $ do
-      let colorD = Color.sRGB 1.000 0.625 0.5 `Plot.withOpacity` 0.500
-      let colorE = Color.sRGB 0.875 1.000 0.125 `Plot.withOpacity` 0.625
-
-      Plot.layout_x_axis . Plot.laxis_override .= Plot.axisGridHide
-      Plot.layout_x_axis . Plot.laxis_title    .= labelX
-      Plot.layout_y_axis . Plot.laxis_title    .= labelY
-      Plot.layout_title  .= labelP
-      Plot.layout_margin .= 30
-      Plot.layout_legend . Plot._Just . Plot.legend_margin .= 30
-
-      Plot.setColors $ Plot.opaque <$> [ Color.royalblue ]
-      Plot.plot $ Plot.line "Timing of Baseline Table (identical table without unions)"
-        [ zip indicesDomain $ getMeanTiming <$> baseline ]
-
-      Plot.setColors $ Plot.opaque <$> [ Color.red ]
-      Plot.plot $ "Start Supplying Credits" `plotAsymptoteAt` (000 :: Integer)
-
-      Plot.setColors $ Plot.opaque <$> [ Color.green ]
-      Plot.plot $ "Debt Fully Repaid" `plotAsymptoteAt` noDebtIndex
-
-      Plot.plot $ fillBetween colorD "Debt Balance Repaid (%)"
-        [ (d, (0,v)) | (d, v) <- zip indicesDomain balances ]
-
-      when (noDebtIndex /= 100) $ do
-        Plot.setColors $ Plot.opaque <$> [ Color.blue ]
-        Plot.plot $ "All Credits Supplied" `plotAsymptoteAt` (100 :: Integer)
-
-      let notAllEqual = any (uncurry (/=)) $ zip balances payments
-      when notAllEqual $ do
-        Plot.plot $ fillBetween colorE "Excess Credits (%)"
-          [ (d, (v,w)) | (d, v, w) <- zip3 indicesDomain balances payments ]
-
-      Plot.setColors $ Plot.opaque <$> [ Color.black ]
-      Plot.plot $ Plot.line "Timing of Unioned Table"
-        [ zip indicesDomain $ getMeanTiming <$> operations ]
-
--------------------------------------------------------------------------------
--- Plotting results
--------------------------------------------------------------------------------
-
-plotAsymptoteAt :: (Integral i, Num x) => String -> i -> Plot.EC l20 (Plot.PlotLines x y)
-plotAsymptoteAt str i = do
-      let x = makeValue $ fromIntegral i
-      vLines <- Plot.line str [[]]
-      pure $ vLines { Plot._plot_lines_limit_values = [[(x, Plot.LMin), (x, Plot.LMax)]] }
-
-makeValue :: a -> Plot.Limit a
-makeValue x = Plot.LValue x
-
-fillBetween :: Plot.AlphaColour Double -> String -> [(x, (y, y))] -> Plot.EC l20 (Plot.PlotFillBetween x y)
-fillBetween color title vs = Plot.liftEC $ do
-  Plot.plot_fillbetween_title .= title
-  Plot.plot_fillbetween_style .= Plot.solidFillStyle color
-  Plot.plot_fillbetween_values .= vs
-
-deriveFileNameForPlot :: GlobalOpts -> FilePath
-deriveFileNameForPlot gOpts =
-    let partTable = show $ tableCount gOpts
-        partWidth = sep1000th '_' $ initialSize gOpts
-        partLabel = printf "SEED_%016x" $ seed gOpts
-    in  List.intercalate "-"
-          [ "benchmark"
-          , partTable <> "x" <> partWidth
-          , partLabel
-          ] <> ".png"
-
-sep1000th :: Integral i => Char -> i -> String
-sep1000th sep = reverse . List.intercalate [sep] . fmap Fold.toList . groupsOfN 3 . reverse . show . toInteger
-
--------------------------------------------------------------------------------
--- Sampling generation & measurements
--------------------------------------------------------------------------------
-
--- | The tuple of measured timings over a sample series @(mean, min, max, variance)@.
-type TimingResult = (Integer, Integer, Integer, Integer)
-
--- | Generate operation inputs
-{-# INLINE toOperations #-}
-toOperations :: V.Vector Word64 -> V.Vector K
-toOperations lookups = batch1
+-- | Exception-safe opening of multiple snapshots
+withTablesFromSnapshots ::
+     LSM.Session
+  -> LSM.SnapshotLabel
+  -> (NonEmpty LSM.SnapshotName)
+  -> (NonEmpty (LSM.Table K V) -> IO a)
+  -> IO a
+withTablesFromSnapshots session snapLabel (x0 :| xs0) k = do
+    LSM.withTableFromSnapshot session x0 snapLabel $ \t0 -> go' (NE.singleton t0) xs0
   where
-    batch1 :: V.Vector K
-    batch1 = V.map makeKey lookups
+    go' acc []     = k (NE.reverse acc)
+    go' acc (x:xs) =
+        LSM.withTableFromSnapshot session x snapLabel $ \t ->
+          go' (t NE.<| acc) xs
 
--- | Measure a series of of batched lookups.
-measureSampleSeriesUsingRNG ::
-       Int       -- ^ Number of batches
-    -> Int       -- ^ batch size
-    -> Int       -- ^ initial size of the collection
-    -> Random.StdGen -- ^ RNG
-    -> LSM.Table K V
-    -> IO (TimingResult, Random.StdGen)
-measureSampleSeriesUsingRNG samplesEachTick samplingSize tableSize rng table =
-    let -- | Sample a single batch of randomly generated keys
-        sampler :: Random.StdGen -> Int -> IO (Integer, Random.StdGen)
-        sampler gen = const $ measureSamplingUsingRNG samplingSize tableSize table gen
-    in  traverseWithRNG rng sampler [1 .. samplesEachTick] <&> \(sampledTimings, lastRNG) ->
-            let !popSize = toInteger samplesEachTick
-                !timingMean = round $ sum sampledTimings % popSize
-                !timingMax  = maximum sampledTimings
-                !timingMin  = minimum sampledTimings
-                !timingVariance =
-                    let diffMeanSquared =
-                            (\x -> let diff = (x - timingMean) in diff * diff) <$> sampledTimings
-                    in  round $ sum diffMeanSquared % popSize
-            in  ((timingMean, timingMax, timingMin, timingVariance), lastRNG)
+-- | Returns operations per second
+timeOpsPerSecond :: GlobalOpts -> RunOpts -> LSM.Table K V -> StdGen -> IO Double
+timeOpsPerSecond gopts opts table g = do
+    t <- timed_ $
+            sequentialIterations
+                (initialSize gopts) (batchSize opts) (batchCount opts) table g
 
--- | A single batch to be sampled as part of a sampling series for a measurement.
-{-# INLINE measureSamplingUsingRNG #-}
-measureSamplingUsingRNG ::
-       Int -- ^ Size of batch
-    -> Int -- ^ Size of table
-    -> LSM.Table K V
-    -> Random.StdGen
-    -> IO (Integer, Random.StdGen)
-measureSamplingUsingRNG batchSize tableSize table rng =
-    let randomKey :: Monad m => Random.StdGen -> () -> m (Word64, Random.StdGen)
-        randomKey g _ = pure $ Random.randomR (0, 2 * fromIntegral tableSize - 1) g
-        (keyBatch, nextRNG) = runIdentity . traverseWithRNG rng (randomKey) $ V.replicate batchSize ()
-    in  do  result <- measureBatchedLookup table $ toOperations keyBatch
-            pure (result, nextRNG)
+    let ops = batchCount opts * batchSize opts
+        opsPerSec = fromIntegral ops / t
 
--- | Measure the time to perform the batch of lookups on the supplied table.
-{-# INLINE measureBatchedLookup #-}
-measureBatchedLookup :: LSM.Table K V -> V.Vector K -> IO Integer
-measureBatchedLookup table = timed_ . void . LSM.lookups table
+    pure opsPerSec
 
 -------------------------------------------------------------------------------
 -- PRNG initialisation
@@ -611,28 +458,72 @@ deriveSetupRNGs gOpts amount =
 
 deriveRunRNG :: GlobalOpts -> Random.StdGen
 deriveRunRNG gOpts =
-    let  -- g and its splits are reserved for the setup command
+    let  -- g2 and its splits are reserved for the setup command
         (!g1, _g2) = deriveInitialForkedRNGs gOpts
     in  g1
 
 deriveInitialForkedRNGs :: GlobalOpts -> (Random.StdGen, Random.StdGen)
 deriveInitialForkedRNGs = Random.splitGen . Random.mkStdGen . seed
 
-traverseWithRNG :: forall a b g m t.
-       ( Monad m,
-         Traversable t)
-    => g
-    -> (g -> a -> m (b, g))
-    -> t a
-    -> m (t b, g)
-traverseWithRNG openRNG f xs =
-    let step :: a -> StateT g m b
-        step x = do
-            currRNG <- get
-            (v, nextRNG) <- lift $ f currRNG x
-            put nextRNG
-            pure v
-    in  runStateT (traverse step xs) openRNG
+-------------------------------------------------------------------------------
+-- Batch generation
+-------------------------------------------------------------------------------
+
+generateBatch  ::
+       Int       -- ^ initial size of the table
+    -> Int       -- ^ batch size
+    -> StdGen
+    -> (StdGen, V.Vector K)
+generateBatch initialSize batchSize g =
+    (g', V.map makeKey lookups)
+  where
+    (!g', lookups) = generateBatch' initialSize batchSize g
+
+{-# INLINE generateBatch' #-}
+generateBatch' ::
+       Int       -- ^ initial size of the table
+    -> Int       -- ^ batch size
+    -> StdGen
+    -> (StdGen, V.Vector Word64)
+generateBatch' initialSize batchSize g = (g', lookups)
+  where
+    randomKey :: StdGen -> (Word64, StdGen)
+    randomKey = Random.uniformR (0, 2 * fromIntegral initialSize - 1)
+
+    lookups :: V.Vector Word64
+    (lookups, !g') =
+       runState (V.replicateM batchSize (state randomKey)) g
+
+-------------------------------------------------------------------------------
+-- sequential
+-------------------------------------------------------------------------------
+
+{-# INLINE sequentialIteration #-}
+sequentialIteration ::
+     Int -- ^ initial size of the table
+  -> Int -- ^ batch size
+  -> LSM.Table K V
+  -> StdGen
+  -> IO StdGen
+sequentialIteration !initialSize !batchSize !tbl !g = do
+    let (!g', ls) = generateBatch initialSize batchSize g
+
+    -- lookups
+    !_ <- LSM.lookups tbl ls
+
+    -- continue to the next batch
+    pure g'
+
+sequentialIterations ::
+     Int -- ^ initial size of the table
+  -> Int -- ^ batch size
+  -> Int -- ^ batch count
+  -> LSM.Table K V
+  -> StdGen
+  -> IO ()
+sequentialIterations !initialSize !batchSize !batchCount !tbl !g0 = do
+    void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \_b g ->
+      sequentialIteration initialSize batchSize tbl g
 
 -------------------------------------------------------------------------------
 -- main
@@ -656,3 +547,15 @@ main = do
   where
     cliP = O.info ((,) <$> globalOptsP <*> cmdP <**> O.helper) O.fullDesc
     prefs = O.prefs $ O.showHelpOnEmpty <> O.helpShowGlobals <> O.subparserInline
+
+-------------------------------------------------------------------------------
+-- general utils
+-------------------------------------------------------------------------------
+
+forFoldM_ :: Monad m => s -> [a] -> (a -> s -> m s) -> m s
+forFoldM_ !s0 xs0 f = go s0 xs0
+  where
+    go !s []     = pure s
+    go !s (x:xs) = do
+      !s' <- f x s
+      go s' xs
