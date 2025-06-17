@@ -386,7 +386,7 @@ instance Encode RunBloomFilterAlloc where
   encode (RunAllocFixed bits) =
          encodeListLen 2
       <> encodeWord 0
-      <> encodeIntOrDouble bits
+      <> encodeDouble bits
   encode (RunAllocRequestFPR fpr) =
          encodeListLen 2
       <> encodeWord 1
@@ -397,7 +397,7 @@ instance DecodeVersioned RunBloomFilterAlloc where
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (2, 0) -> RunAllocFixed      <$> decodeIntOrDouble
+        (2, 0) -> RunAllocFixed      <$> decodeDouble
         (2, 1) -> RunAllocRequestFPR <$> decodeDouble
         _ -> fail ("[RunBloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
 
@@ -407,7 +407,7 @@ instance Encode BloomFilterAlloc where
   encode (AllocFixed x) =
          encodeListLen 2
       <> encodeWord 0
-      <> encodeIntOrDouble x
+      <> encodeDouble x
   encode (AllocRequestFPR x) =
          encodeListLen 2
       <> encodeWord 1
@@ -418,27 +418,9 @@ instance DecodeVersioned BloomFilterAlloc where
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (2, 0) -> AllocFixed      <$> decodeIntOrDouble
+        (2, 0) -> AllocFixed      <$> decodeDouble
         (2, 1) -> AllocRequestFPR <$> decodeDouble
         _ -> fail ("[BloomFilterAlloc] Unexpected combination of list length and tag: " <> show (n, tag))
-
--- Avoid a format change when the value is an integer: int or double encoding.
-encodeIntOrDouble :: Double -> Encoding
-encodeIntOrDouble x
-  | let x' = floor x
-  , x == fromIntegral x' = encodeInt x'
-  | otherwise            = encodeDouble x
-
-decodeIntOrDouble :: Decoder s Double
-decodeIntOrDouble = do
-    tok <- peekTokenType
-    if isTokInt tok
-      then fromIntegral <$> decodeInt
-      else decodeDouble
-  where
-    isTokInt TypeUInt = True
-    isTokInt TypeNInt = True
-    isTokInt _        = False
 
 -- FencePointerIndexType
 
