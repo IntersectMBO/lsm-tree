@@ -963,11 +963,12 @@ library mcg
     , base    <5
     , primes
 
-benchmark lsm-tree-bench-unions
+benchmark unions-bench
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
-  hs-source-dirs: bench/macro
-  main-is:        lsm-tree-bench-unions.hs
+  hs-source-dirs: bench-unions
+  main-is:        Main.hs
+  other-modules:  Bench.Unions
   build-depends:
     , async
     , base

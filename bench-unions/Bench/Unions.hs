@@ -56,7 +56,7 @@ __Results__
 
 An informative performance plot of the benchmark measurements is generated and placed in the benchmark's @$bench-dir@ directory.
 -}
-module Main (main) where
+module Bench.Unions (main) where
 
 import           Control.Applicative ((<**>))
 import           Control.Concurrent.Async (forConcurrently_)
