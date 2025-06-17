@@ -659,6 +659,9 @@ deriving anyclass instance NoThunks DiskCachePolicy
 deriving stock instance Generic MergeSchedule
 deriving anyclass instance NoThunks MergeSchedule
 
+deriving stock instance Generic MergeBatchSize
+deriving anyclass instance NoThunks MergeBatchSize
+
 {-------------------------------------------------------------------------------
   RWVar
 -------------------------------------------------------------------------------}

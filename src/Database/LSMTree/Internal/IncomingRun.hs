@@ -218,13 +218,6 @@ supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
     -- use atomic operations for its counters). We could potentially simplify
     -- MergingRun by dispensing with batching for the MergeCredits counters.
 
--- TODO: the thresholds for doing merge work should be different for each level,
--- maybe co-prime?
-creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
-creditThresholdForLevel conf (LevelNo _i) =
-    let AllocNumEntries x = confWriteBufferAlloc conf
-    in  MR.CreditThreshold (MR.UnspentCredits (MergeCredits x))
-
 -- | Deposit nominal credits in the local credits var, ensuring the total
 -- credits does not exceed the total debt.
 --
