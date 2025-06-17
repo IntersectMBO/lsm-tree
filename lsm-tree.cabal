@@ -963,6 +963,29 @@ library mcg
     , base    <5
     , primes
 
+benchmark unions-bench
+  import:         language, warnings, wno-x-partial
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench-unions
+  main-is:        Main.hs
+  other-modules:  Bench.Unions
+  build-depends:
+    , async
+    , base
+    , bytestring
+    , clock
+    , containers
+    , directory
+    , lsm-tree
+    , lsm-tree:extras
+    , mtl
+    , optparse-applicative
+    , primitive
+    , random
+    , vector
+
+  ghc-options:    -rtsopts -with-rtsopts=-T -threaded
+
 flag measure-batch-latency
   description:
     Measure the latency for individual batches of updates and lookups
