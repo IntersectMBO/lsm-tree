@@ -123,7 +123,8 @@ module Database.LSMTree (
   MergeBatchSize (..),
 
   -- ** Table Configuration Overrides #table_configuration_overrides#
-  OverrideDiskCachePolicy (..),
+  TableConfigOverride (..),
+  noTableConfigOverride,
 
   -- * Ranges #ranges#
   Range (..),
@@ -221,7 +222,7 @@ import           Database.LSMTree.Internal.Config
                      WriteBufferAlloc (..), defaultTableConfig,
                      serialiseKeyMinimalSize)
 import           Database.LSMTree.Internal.Config.Override
-                     (OverrideDiskCachePolicy (..))
+                     (TableConfigOverride (..), noTableConfigOverride)
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
 import           Database.LSMTree.Internal.Merge (LevelMergeType (..))
@@ -2403,7 +2404,7 @@ Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](
   withTableFromSnapshotWith ::
     forall k v b a.
     (ResolveValue v) =>
-    OverrideDiskCachePolicy ->
+    TableConfigOverride ->
     Session IO ->
     SnapshotName ->
     SnapshotLabel ->
@@ -2414,7 +2415,7 @@ withTableFromSnapshotWith ::
   forall m k v b a.
   (IOLike m) =>
   (ResolveValue v) =>
-  OverrideDiskCachePolicy ->
+  TableConfigOverride ->
   Session m ->
   SnapshotName ->
   SnapshotLabel ->
@@ -2478,7 +2479,7 @@ openTableFromSnapshot ::
   SnapshotLabel ->
   m (Table m k v b)
 openTableFromSnapshot session snapName snapLabel =
-  openTableFromSnapshotWith NoOverrideDiskCachePolicy session snapName snapLabel
+  openTableFromSnapshotWith noTableConfigOverride session snapName snapLabel
 
 {- |
 Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
@@ -2487,7 +2488,7 @@ Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](
   openTableFromSnapshotWith ::
     forall k v b.
     (ResolveValue v) =>
-    OverrideDiskCachePolicy ->
+    TableConfigOverride ->
     Session IO ->
     SnapshotName ->
     SnapshotLabel ->
@@ -2497,7 +2498,7 @@ openTableFromSnapshotWith ::
   forall m k v b.
   (IOLike m) =>
   (ResolveValue v) =>
-  OverrideDiskCachePolicy ->
+  TableConfigOverride ->
   Session m ->
   SnapshotName ->
   SnapshotLabel ->

@@ -185,8 +185,11 @@ mkTableConfigRun GlobalOpts{diskCachePolicy} conf = conf {
       LSM.confDiskCachePolicy = diskCachePolicy
     }
 
-mkOverrideDiskCachePolicy :: GlobalOpts -> LSM.OverrideDiskCachePolicy
-mkOverrideDiskCachePolicy GlobalOpts{diskCachePolicy} = LSM.OverrideDiskCachePolicy diskCachePolicy
+mkOverrideDiskCachePolicy :: GlobalOpts -> LSM.TableConfigOverride
+mkOverrideDiskCachePolicy GlobalOpts{diskCachePolicy} =
+  LSM.noTableConfigOverride {
+    LSM.overrideDiskCachePolicy = Just diskCachePolicy
+  }
 
 mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
 mkTracer gopts
@@ -582,8 +585,10 @@ doRun gopts opts = do
         -- reference version starts with empty (as it's not practical or
         -- necessary for testing to load the whole snapshot).
         tbl <- if check opts
-                then LSM.newTableWith @IO @K @V @B (mkTableConfigRun gopts benchTableConfig) session
-                else LSM.openTableFromSnapshotWith @IO @K @V @B (mkOverrideDiskCachePolicy gopts) session name label
+                then let conf = mkTableConfigRun gopts benchTableConfig
+                      in LSM.newTableWith @IO @K @V @B conf session
+                else let conf = mkOverrideDiskCachePolicy gopts
+                      in LSM.openTableFromSnapshotWith @IO @K @V @B conf session name label
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference
