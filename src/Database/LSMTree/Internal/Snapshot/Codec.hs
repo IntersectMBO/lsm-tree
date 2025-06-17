@@ -294,9 +294,10 @@ instance Encode TableConfig where
         , confBloomFilterAlloc = bloomFilterAlloc
         , confFencePointerIndex = fencePointerIndex
         , confDiskCachePolicy = diskCachePolicy
+        , confMergeBatchSize = mergeBatchSize
         }
       ) =
-      encodeListLen 7
+      encodeListLen 8
         <> encode mergePolicy
         <> encode mergeSchedule
         <> encode sizeRatio
@@ -304,10 +305,11 @@ instance Encode TableConfig where
         <> encode bloomFilterAlloc
         <> encode fencePointerIndex
         <> encode diskCachePolicy
+        <> encode mergeBatchSize
 
 instance DecodeVersioned TableConfig where
-  decodeVersioned v = do
-      _ <- decodeListLenOf 7
+  decodeVersioned v@V0 = do
+      decodeListLenOf 7
       confMergePolicy <- decodeVersioned v
       confMergeSchedule <- decodeVersioned v
       confSizeRatio <- decodeVersioned v
@@ -315,6 +317,21 @@ instance DecodeVersioned TableConfig where
       confBloomFilterAlloc <- decodeVersioned v
       confFencePointerIndex <- decodeVersioned v
       confDiskCachePolicy <- decodeVersioned v
+      let confMergeBatchSize = case confWriteBufferAlloc of
+                                 AllocNumEntries n -> MergeBatchSize n
+      pure TableConfig {..}
+
+  -- We introduced the confMergeBatchSize in V1
+  decodeVersioned v@V1 = do
+      decodeListLenOf 8
+      confMergePolicy <- decodeVersioned v
+      confMergeSchedule <- decodeVersioned v
+      confSizeRatio <- decodeVersioned v
+      confWriteBufferAlloc <- decodeVersioned v
+      confBloomFilterAlloc <- decodeVersioned v
+      confFencePointerIndex <- decodeVersioned v
+      confDiskCachePolicy <- decodeVersioned v
+      confMergeBatchSize <- decodeVersioned v
       pure TableConfig {..}
 
 -- MergePolicy
@@ -493,6 +510,14 @@ instance DecodeVersioned MergeSchedule where
         0 -> pure OneShot
         1 -> pure Incremental
         _ -> fail ("[MergeSchedule] Unexpected tag: " <> show tag)
+
+-- MergeBatchSize
+
+instance Encode MergeBatchSize where
+  encode (MergeBatchSize n) = encodeInt n
+
+instance DecodeVersioned MergeBatchSize where
+  decodeVersioned _v = MergeBatchSize <$> decodeInt
 
 {-------------------------------------------------------------------------------
   Encoding and decoding: SnapLevels

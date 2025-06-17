@@ -356,6 +356,12 @@ The *disk cache policy* determines if lookup operations use the OS page
 cache. Caching may improve the performance of lookups and updates if
 database access follows certain patterns.
 
+`confMergeBatchSize`  
+The merge batch size balances the maximum latency of individual update
+operations, versus the latency of a sequence of update operations.
+Bigger batches improves overall performance but some updates will take a
+lot longer than others. The default is to use a large batch size.
+
 ##### Fine-tuning: Merge Policy, Size Ratio, and Write Buffer Size <span id="fine_tuning_data_layout" class="anchor"></span>
 
 The configuration parameters `confMergePolicy`, `confSizeRatio`, and
@@ -646,6 +652,33 @@ locality if it is likely to access entries that have nearby keys.
 - Use the `DiskCacheNone` policy if the database's access pattern has
   does not have good spatial or temporal locality. For instance, if the
   access pattern is uniformly random.
+
+##### Fine-tuning: Merge Batch Size <span id="fine_tuning_merge_batch_size" class="anchor"></span>
+
+The *merge batch size* is a micro-tuning parameter, and in most cases
+you do need to think about it and can leave it at its default.
+
+When using the `Incremental` merge schedule, merging is done in batches.
+This is a trade-off: larger batches tends to mean better overall
+performance but the downside is that while most updates (inserts,
+deletes, upserts) are fast, some are slower (when a batch of merging
+work has to be done).
+
+If you care most about the maximum latency of updates, then use a small
+batch size. If you don't care about latency of individual operations,
+just the latency of the overall sequence of operations then use a large
+batch size. The default is to use a large batch size, the same size as
+the write buffer itself. The minimum batch size is 1. The maximum batch
+size is the size of the write buffer `confWriteBufferAlloc`.
+
+Note that the actual batch size is the minimum of this configuration
+parameter and the size of the batch of operations performed (e.g.
+`inserts`). So if you consistently use large batches, you can use a
+batch size of 1 and the merge batch size will always be determined by
+the operation batch size.
+
+A further reason why it may be preferable to use minimal batch sizes is
+to get good parallel work balance, when using parallelism.
 
 ### References
 

@@ -231,11 +231,11 @@ instance Arbitrary SnapshotRun where
 
 instance Arbitrary TableConfig where
   arbitrary =
-          TableConfig <$> arbitrary <*> arbitrary <*> arbitrary
-      <*> arbitrary   <*> arbitrary <*> arbitrary <*> arbitrary
-  shrink (TableConfig a b c d e f g) =
-      [ TableConfig a' b' c' d' e' f' g'
-      | (a', b', c', d', e', f', g') <- shrink (a, b, c, d, e, f, g) ]
+          TableConfig <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+                      <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+  shrink (TableConfig a b c d e f g h) =
+      [ TableConfig a' b' c' d' e' f' g' h'
+      | (a', b', c', d', e', f', g', h') <- shrink (a, b, c, d, e, f, g, h) ]
 
 instance Arbitrary MergePolicy where
   arbitrary = pure LazyLevelling
@@ -273,6 +273,10 @@ instance Arbitrary DiskCachePolicy where
 instance Arbitrary MergeSchedule where
   arbitrary = elements [OneShot, Incremental]
   shrink _ = []
+
+instance Arbitrary MergeBatchSize where
+  arbitrary = MergeBatchSize <$> arbitrary
+  shrink (MergeBatchSize n) = map MergeBatchSize (shrink n)
 
 {-------------------------------------------------------------------------------
   Arbitrary: SnapLevels

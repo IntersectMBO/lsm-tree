@@ -26,12 +26,16 @@ module Database.LSMTree.Internal.Config (
   , diskCachePolicyForLevel
     -- * Merge schedule
   , MergeSchedule (..)
+    -- * Merge batch size
+  , MergeBatchSize (..)
+  , creditThresholdForLevel
   ) where
 
 import           Control.DeepSeq (NFData (..))
 import           Database.LSMTree.Internal.Index (IndexType)
 import qualified Database.LSMTree.Internal.Index as Index
                      (IndexType (Compact, Ordinary))
+import qualified Database.LSMTree.Internal.MergingRun as MR
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.Run (RunDataCaching (..))
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
@@ -90,6 +94,12 @@ For a detailed discussion of fine-tuning the table configuration, see [Fine-tuni
 [@confDiskCachePolicy :: t'DiskCachePolicy'@]
     The /disk cache policy/ supports caching lookup operations using the OS page cache.
     Caching may improve the performance of lookups and updates if database access follows certain patterns.
+
+[@confMergeBatchSize :: t'MergeBatchSize'@]
+    The merge batch size balances the maximum latency of individual update
+    operations, versus the latency of a sequence of update operations. Bigger
+    batches improves overall performance but some updates will take a lot
+    longer than others. The default is to use a large batch size.
 -}
 data TableConfig = TableConfig {
     confMergePolicy       :: !MergePolicy
@@ -99,12 +109,14 @@ data TableConfig = TableConfig {
   , confBloomFilterAlloc  :: !BloomFilterAlloc
   , confFencePointerIndex :: !FencePointerIndexType
   , confDiskCachePolicy   :: !DiskCachePolicy
+  , confMergeBatchSize    :: !MergeBatchSize
   }
   deriving stock (Show, Eq)
 
 instance NFData TableConfig where
-  rnf (TableConfig a b c d e f g) =
-      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq` rnf f `seq` rnf g
+  rnf (TableConfig a b c d e f g h) =
+      rnf a `seq` rnf b `seq` rnf c `seq` rnf d `seq`
+      rnf e `seq` rnf f `seq` rnf g `seq` rnf h
 
 -- | The 'defaultTableConfig' defines reasonable defaults for all 'TableConfig' parameters.
 --
@@ -122,6 +134,8 @@ instance NFData TableConfig where
 -- OrdinaryIndex
 -- >>> confDiskCachePolicy defaultTableConfig
 -- DiskCacheAll
+-- >>> confMergeBatchSize defaultTableConfig
+-- MergeBatchSize 20000
 --
 defaultTableConfig :: TableConfig
 defaultTableConfig =
@@ -133,6 +147,7 @@ defaultTableConfig =
       , confBloomFilterAlloc  = AllocRequestFPR 1.0e-3
       , confFencePointerIndex = OrdinaryIndex
       , confDiskCachePolicy   = DiskCacheAll
+      , confMergeBatchSize    = MergeBatchSize 20_000 -- same as write buffer
       }
 
 data RunLevelNo = RegularLevel LevelNo | UnionLevel
@@ -238,6 +253,8 @@ data MergeSchedule =
     The 'Incremental' merge schedule spreads out the merging work over time.
     This is less efficient than the 'OneShot' merge schedule, but has a consistent workload.
     Using the 'Incremental' merge schedule, the worst-case disk I\/O complexity of the update operations is /logarithmic/ in the size of the table.
+    This 'Incremental' merge schedule still uses batching to improve performance.
+    The batch size can be controlled using the 'MergeBatchSize'.
     -}
   | Incremental
   deriving stock (Eq, Show)
@@ -385,3 +402,50 @@ diskCachePolicyForLevel policy levelNo =
         RegularLevel l | l <= LevelNo n -> CacheRunData
                        | otherwise      -> NoCacheRunData
         UnionLevel                      -> NoCacheRunData
+
+{-------------------------------------------------------------------------------
+  Merge batch size
+-------------------------------------------------------------------------------}
+
+{- |
+The /merge batch size/ is a micro-tuning parameter, and in most cases you do
+need to think about it and can leave it at its default.
+
+When using the 'Incremental' merge schedule, merging is done in batches. This
+is a trade-off: larger batches tends to mean better overall performance but the
+downside is that while most updates (inserts, deletes, upserts) are fast, some
+are slower (when a batch of merging work has to be done).
+
+If you care most about the maximum latency of updates, then use a small batch
+size. If you don't care about latency of individual operations, just the
+latency of the overall sequence of operations then use a large batch size. The
+default is to use a large batch size, the same size as the write buffer itself.
+The minimum batch size is 1. The maximum batch size is the size of the write
+buffer 'confWriteBufferAlloc'.
+
+Note that the actual batch size is the minimum of this configuration
+parameter and the size of the batch of operations performed (e.g. 'inserts').
+So if you consistently use large batches, you can use a batch size of 1 and
+the merge batch size will always be determined by the operation batch size.
+
+A further reason why it may be preferable to use minimal batch sizes is to get
+good parallel work balance, when using parallelism.
+-}
+newtype MergeBatchSize = MergeBatchSize Int
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (NFData)
+
+-- TODO: the thresholds for doing merge work should be different for each level,
+-- and ideally all-pairs co-prime.
+creditThresholdForLevel :: TableConfig -> LevelNo -> MR.CreditThreshold
+creditThresholdForLevel TableConfig {
+                           confMergeBatchSize   = MergeBatchSize mergeBatchSz,
+                           confWriteBufferAlloc = AllocNumEntries writeBufferSz
+                         }
+                        (LevelNo _i) =
+    MR.CreditThreshold
+  . MR.UnspentCredits
+  . MR.MergeCredits
+  . max 1
+  . min writeBufferSz
+  $ mergeBatchSz

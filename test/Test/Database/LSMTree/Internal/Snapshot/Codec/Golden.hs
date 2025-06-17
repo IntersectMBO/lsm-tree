@@ -15,8 +15,8 @@ import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config (BloomFilterAlloc (..),
                      DiskCachePolicy (..), FencePointerIndexType (..),
-                     MergePolicy (..), MergeSchedule (..), SizeRatio (..),
-                     TableConfig (..), WriteBufferAlloc (..))
+                     MergeBatchSize (..), MergePolicy (..), MergeSchedule (..),
+                     SizeRatio (..), TableConfig (..), WriteBufferAlloc (..))
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),
                      NominalDebt (..))
@@ -143,6 +143,7 @@ forallSnapshotTypes f = [
     , f (Proxy @FencePointerIndexType)
     , f (Proxy @DiskCachePolicy)
     , f (Proxy @MergeSchedule)
+    , f (Proxy @MergeBatchSize)
       -- SnapLevels
     , f (Proxy @(SnapLevels SnapshotRun))
     , f (Proxy @(SnapLevel SnapshotRun))
@@ -276,7 +277,8 @@ instance EnumGolden SnapshotLabel where
         SnapshotLabel{} -> ()
 
 instance EnumGolden TableConfig where
-  singGolden = TableConfig singGolden singGolden singGolden singGolden singGolden singGolden singGolden
+  singGolden = TableConfig singGolden singGolden singGolden singGolden
+                           singGolden singGolden singGolden singGolden
     where
       _coveredAllCases = \case
         TableConfig{} -> ()
@@ -328,6 +330,10 @@ instance EnumGolden MergeSchedule where
       _coveredAllCases = \case
         OneShot{} -> ()
         Incremental{} -> ()
+
+instance EnumGolden MergeBatchSize where
+  enumGolden = map MergeBatchSize [ 1, 1000 ]
+  supportedVersions _ = [V1]
 
 instance EnumGolden (SnapLevels SnapshotRun) where
   singGolden = SnapLevels singGolden
