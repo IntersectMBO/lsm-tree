@@ -177,18 +177,8 @@ module Database.LSMTree (
   LSMTreeTrace (..),
   TableTrace (..),
   CursorTrace (..),
-  MergeTrace (..),
-  CursorId (..),
-  TableId (..),
-  AtLevel (..),
-  LevelNo (..),
-  NumEntries (..),
-  RunNumber (..),
-  MergePolicyForLevel (..),
-  LevelMergeType (..),
-  RunParams (..),
-  RunDataCaching (..),
-  IndexType (..),
+  TableId,
+  CursorId,
 ) where
 
 import           Control.Concurrent.Class.MonadMVar.Strict (MonadMVar)
@@ -214,24 +204,18 @@ import qualified Database.LSMTree.Internal.BlobRef as Internal
 import           Database.LSMTree.Internal.Config
                      (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
                      DiskCachePolicy (..), FencePointerIndexType (..),
-                     LevelNo (..), MergePolicy (..), MergeSchedule (..),
-                     SizeRatio (..), TableConfig (..), WriteBufferAlloc (..),
+                     MergePolicy (..), MergeSchedule (..), SizeRatio (..),
+                     TableConfig (..), WriteBufferAlloc (..),
                      defaultTableConfig, serialiseKeyMinimalSize)
 import           Database.LSMTree.Internal.Config.Override
                      (OverrideDiskCachePolicy (..))
-import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import qualified Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Merge (LevelMergeType (..))
-import           Database.LSMTree.Internal.MergeSchedule (AtLevel (..),
-                     MergePolicyForLevel (..), MergeTrace (..))
 import           Database.LSMTree.Internal.Paths (SnapshotName,
                      isValidSnapshotName, toSnapshotName)
 import           Database.LSMTree.Internal.Range (Range (..))
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
-import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
-                     RunDataCaching (..), RunParams (..))
 import           Database.LSMTree.Internal.RunNumber (CursorId (..),
-                     RunNumber (..), TableId (..))
+                     TableId (..))
 import qualified Database.LSMTree.Internal.Serialise as Internal
 import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
                      SerialiseKeyOrderPreserving, SerialiseValue (..),
