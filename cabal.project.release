@@ -1,7 +1,7 @@
 index-state:
   -- Bump this if you need newer packages from Hackage
-  -- unix-2.8.7.0
-  , hackage.haskell.org 2025-06-11T07:49:45Z
+  -- current date: blockio-uring-0.1.0.0
+  , hackage.haskell.org 2025-06-09T10:11:34Z
 
 packages:
   .
@@ -18,14 +18,6 @@ constraints: bloomfilter <0
 
 -- regression-simple is used by the bloomfilter-fpr-calc test executable
 allow-newer: regression-simple:base
-
--- comment me if you don't have liburing installed
---
--- TODO: it is slightly unfortunate that one has to manually remove this file
--- import in case they don't have liburing installed... Currently, it is not
--- possible to have conditionals on package flags in a project file. Otherwise,
--- we could add a conditional on (+serialblockio) to remove this import automatically.
-import: cabal.project.blockio-uring
 
 -- bugfix hGetBufExactly and hGetBufExactlyAt, io-classes-1.8.0.1
 source-repository-package
