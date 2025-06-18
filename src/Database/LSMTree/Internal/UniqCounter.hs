@@ -11,6 +11,7 @@ module Database.LSMTree.Internal.UniqCounter (
   uniqueToCursorId,
 ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Primitive (PrimMonad, PrimState)
 import           Data.Primitive.PrimVar as P
 import           Database.LSMTree.Internal.RunNumber
@@ -34,6 +35,9 @@ uniqueToCursorId (Unique n) = CursorId n
 -- | An atomic counter for producing 'Unique' values.
 --
 newtype UniqCounter m = UniqCounter (PrimVar (PrimState m) Int)
+
+instance NFData (UniqCounter m) where
+  rnf (UniqCounter (P.PrimVar mba)) = rnf mba
 
 {-# INLINE newUniqCounter #-}
 newUniqCounter :: PrimMonad m => Int -> m (UniqCounter m)

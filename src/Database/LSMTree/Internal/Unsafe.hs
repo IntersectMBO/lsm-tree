@@ -29,7 +29,10 @@ module Database.LSMTree.Internal.Unsafe (
   , FileCorruptedError (..)
   , Paths.InvalidSnapshotNameError (..)
     -- * Tracing
+    -- $traces
   , LSMTreeTrace (..)
+  , SessionId (..)
+  , SessionTrace (..)
   , TableTrace (..)
   , CursorTrace (..)
     -- * Session
@@ -151,46 +154,156 @@ import           System.FS.BlockIO.API (HasBlockIO)
   Traces
 -------------------------------------------------------------------------------}
 
+{- $traces
+
+  Trace messages are divided into three categories for each type of resource:
+  sessions, tables, and cursors. The trace messages are structured so that:
+
+  1. Resources have (unique) identifiers, and these are included in each
+     message.
+
+  2. Operations that modify, create, or close resources trace a start and end
+     message. The reasoning here is that it's useful for troubleshooting
+     purposes to know not only that an operation started but also that it ended.
+     To an extent this would also be useful for read-only operations like
+     lookups, but since read-only operations do not modify resources, we've left
+     out end messages for those. They could be added if asked for by users.
+
+  3. When we are in the process of creating a new resource from existing
+     resources, then the /child/ resource traces the identifier(s) of its
+     /parent/ resource(s).
+
+  These properties ensure that troubleshooting using tracers in a concurrent
+  setting is possible. Messages can be interleaved, so it's important to find
+  meaningful pairings of messages, like 'TraceCloseTable' and
+  'TraceClosedTable'.
+-}
+
 data LSMTreeTrace =
-    -- Session
-    TraceOpenSession FsPath
-  | TraceNewSession
-  | TraceRestoreSession
-  | TraceCloseSession
-    -- Table
-  | TraceNewTable
-  | TraceOpenTableFromSnapshot SnapshotName OverrideDiskCachePolicy
-  | TraceTable TableId TableTrace
-  | TraceDeleteSnapshot SnapshotName
-  | TraceListSnapshots
-    -- Cursor
-  | TraceCursor CursorId CursorTrace
-    -- Unions
-  | TraceUnions (NonEmpty TableId)
+    -- | Trace messages related to sessions.
+    TraceSession
+      -- | Sessions are identified by the path to their root directory.
+      SessionId
+      SessionTrace
+
+    -- | Trace messages related to tables.
+  | TraceTable
+      -- | Tables are identified by a unique number.
+      TableId
+      TableTrace
+
+    -- | Trace messages related to cursors.
+  | TraceCursor
+      -- | Cursors are identified by a unique number.
+      CursorId
+      CursorTrace
   deriving stock Show
 
+-- | Sessions are identified by the path to their root directory.
+newtype SessionId = SessionId FsPath
+  deriving stock (Eq, Show)
+
+-- | Trace messages related to sessions.
+data SessionTrace =
+    -- | We are opening a session in the requested session directory. A
+    -- 'TraceNewSession'\/'TraceRestoreSession' and 'TraceOpenedSession' message
+    -- should follow if succesful.
+    TraceOpenSession
+    -- | The requested session directory is empty, so we are creating a new,
+    -- fresh session.
+  | TraceNewSession
+    -- | The requested session directory is non-empty, so we are restoring a
+    -- session from the directory contents.
+  | TraceRestoreSession
+    -- | Opening a session was successful.
+  | TraceOpenedSession
+
+    -- | We are closing the session. A 'TraceClosedSession' message should
+    -- follow if succesful.
+  | TraceCloseSession
+    -- | Closing the session was successful.
+  | TraceClosedSession
+
+    -- | We are deleting the snapshot with the given name.  A
+    -- 'TraceDeletedSnapshot' message should follow if succesful.
+  | TraceDeleteSnapshot SnapshotName
+    -- | We have successfully deleted the snapshot with the given name.
+  | TraceDeletedSnapshot SnapshotName
+    -- | We are listing snapshots.
+  | TraceListSnapshots
+
+    -- | We are retrieving blobs.
+  | TraceRetrieveBlobs Int
+  deriving stock Show
+
+-- | Trace messages related to tables.
 data TableTrace =
-    -- | A table is created with the specified config.
-    --
-    -- This message is traced in addition to messages like 'TraceNewTable' and
-    -- 'TraceDuplicate'.
-    TraceCreateTable TableConfig
+    -- | A table has been successfully created with the specified config.
+    TraceCreatedTable
+      -- | The parent session
+      SessionId
+      TableConfig
+    -- | We are creating a new, fresh table with the specified config. A
+    -- 'TraceCreatedTable' message should follow if successful.
+  | TraceNewTable TableConfig
+    -- | We are closing the table. A 'TraceClosedTable' message should follow if
+    -- successful.
+
   | TraceCloseTable
-    -- Lookups
-  | TraceLookups Int
+    -- | Closing the table was succesful.
+  | TraceClosedTable
+    -- | We are performing a batch of lookups.
+
+  | TraceLookups
+      -- | The number of keys that are looked up.
+      Int
+    -- | We are performing a range lookup.
   | TraceRangeLookup (Range SerialisedKey)
-    -- Updates
-  | TraceUpdates Int
+    -- | We are performing a batch of updates.
+  | TraceUpdates
+      -- | The number of keys will be updated.
+      Int
+     -- | We have successfully performed a batch of updates.
+  | TraceUpdated
+      -- | The number of keys that are updated.
+      Int
+
+    -- | We are opening a table from a snapshot. A 'TraceCreatedTable' message
+    -- should follow if successful.
+  | TraceOpenTableFromSnapshot SnapshotName OverrideDiskCachePolicy
+    -- | We are saving a snapshot with the given name. A 'TraceSavedSnapshot'
+    -- message should follow if successful.
+  | TraceSaveSnapshot SnapshotName
+    -- | A snapshot with the given name was saved successfully.
+  | TraceSavedSnapshot SnapshotName
+
+    -- | We are creating a duplicate of a table. A 'TraceCreatedTable' message
+    -- should follow if successful.
+  | TraceDuplicate
+      -- | The parent table
+      TableId
+
+    -- | We are creating an incremental union of a list of tables. A
+    -- 'TraceCreatedTable' message should follow if successful.
+  | TraceIncrementalUnions
+      -- | Unique identifiers for the tables that are used as inputs to the
+      -- union.
+      (NonEmpty TableId)
+    -- | We are querying the remaining union debt.
+  | TraceRemainingUnionDebt
+    -- | We are supplying the given number of union credits.
+  | TraceSupplyUnionCredits UnionCredits
+    -- | We have supplied union credits.
+  | TraceSuppliedUnionCredits
+      -- | The number of input credits to supply.
+      UnionCredits
+      -- | Leftover credits.
+      UnionCredits
+
 #ifdef DEBUG_TRACES
+    -- | INTERNAL: debug traces for the merge schedule
   | TraceMerge (AtLevel MergeTrace)
 #endif
-    -- Snapshot
-  | TraceSnapshot SnapshotName
-    -- Duplicate
-  | TraceDuplicate
-    -- Unions
-  | TraceRemainingUnionDebt
-  | TraceSupplyUnionCredits UnionCredits
   deriving stock Show
 
 contramapTraceMerge :: Monad m => Tracer m TableTrace -> Tracer m (AtLevel MergeTrace)
@@ -200,10 +313,36 @@ contramapTraceMerge t = TraceMerge `contramap` t
 contramapTraceMerge t = traceMaybe (const Nothing) t
 #endif
 
+-- | Trace messages related to cursors.
 data CursorTrace =
-    TraceCreateCursor TableId
+    -- | A cursor has been successfully created.
+    TraceCreatedCursor
+      -- | The parent session
+      SessionId
+    -- | We are creating a new, fresh cursor positioned at the given offset key.
+    -- A 'TraceCreatedCursor' message should follow if successful.
+  | TraceNewCursor
+      -- | The parent table
+      TableId
+      OffsetKey
+
+    -- | We are closing the cursor. A 'TraceClosedCursor' message should follow
+    -- if successful.
   | TraceCloseCursor
-  | TraceReadCursor Int
+    -- | Closing the cursor was succesful.
+  | TraceClosedCursor
+
+    -- | We are reading from the cursor. A 'TraceReadCursor' message should
+    -- follow if successful.
+  | TraceReadingCursor
+      -- | Requested number of entries to read at most.
+      Int
+    -- | We have succesfully read from the cursor.
+  | TraceReadCursor
+      -- | Requested number of entries to read at most.
+      Int
+      -- | Actual number of entries read.
+      Int
   deriving stock Show
 
 {-------------------------------------------------------------------------------
@@ -222,12 +361,20 @@ data Session m h = Session {
       --
       -- INVARIANT: once the session state is changed from 'SessionOpen' to
       -- 'SessionClosed', it is never changed back to 'SessionOpen' again.
-      sessionState  :: !(RWVar m (SessionState m h))
-    , sessionTracer :: !(Tracer m LSMTreeTrace)
+      sessionState       :: !(RWVar m (SessionState m h))
+    , lsmTreeTracer      :: !(Tracer m LSMTreeTrace)
+    , sessionTracer      :: !(Tracer m SessionTrace)
+
+    -- | A session-wide shared, atomic counter that is used to produce unique
+    -- names, for example: run names, table IDs.
+    --
+    -- This counter lives in 'Session' instead of 'SessionEnv' because it is an
+    -- atomic counter, and so does not need to be guarded by a lock.
+    , sessionUniqCounter :: !(UniqCounter m)
     }
 
 instance NFData (Session m h) where
-  rnf (Session a b) = rnf a `seq` rwhnf b
+  rnf (Session a b c d) = rnf a `seq` rwhnf b `seq` rwhnf c `seq` rnf d
 
 data SessionState m h =
     SessionOpen !(SessionEnv m h)
@@ -243,9 +390,6 @@ data SessionEnv m h = SessionEnv {
   , sessionHasFS       :: !(HasFS m h)
   , sessionHasBlockIO  :: !(HasBlockIO m h)
   , sessionLockFile    :: !(FS.LockFileHandle m)
-    -- | A session-wide shared, atomic counter that is used to produce unique
-    -- names, for example: run names, table IDs.
-  , sessionUniqCounter :: !(UniqCounter m)
     -- | Open tables are tracked here so they can be closed once the session is
     -- closed. Tables also become untracked when they are closed manually.
     --
@@ -266,6 +410,10 @@ data SessionEnv m h = SessionEnv {
     -- once the session is closed. See 'sessionOpenTables'.
   , sessionOpenCursors :: !(StrictMVar m (Map CursorId (Cursor m h)))
   }
+
+{-# INLINE sessionId #-}
+sessionId :: SessionEnv m h -> SessionId
+sessionId = SessionId . getSessionRoot . sessionRoot
 
 -- | The session is closed.
 data SessionClosedError
@@ -346,13 +494,13 @@ openSession ::
   -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
   -> FsPath -- ^ Path to the session directory
   -> m (Session m h)
-openSession tr hfs hbio dir =
+openSession tr hfs hbio dir = do
+    traceWith sessionTracer TraceOpenSession
     -- We can not use modifyWithActionRegistry here, since there is no in-memory
     -- state to modify. We use withActionRegistry instead, which may have a tiny
     -- chance of leaking resources if openSession is not called in a masked
     -- state.
     withActionRegistry $ \reg -> do
-      traceWith tr (TraceOpenSession dir)
       dirExists <- FS.doesDirectoryExist hfs dir
       unless dirExists $
         throwIO (ErrSessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
@@ -382,6 +530,8 @@ openSession tr hfs hbio dir =
           if Set.null dirContents then newSession reg sessionFileLock
                                   else restoreSession reg sessionFileLock
   where
+    sessionTracer = TraceSession (SessionId dir) `contramap` tr
+
     root             = Paths.SessionRoot dir
     lockFilePath     = Paths.lockFile root
     activeDirPath    = Paths.getActiveDir (Paths.activeDir root)
@@ -391,7 +541,7 @@ openSession tr hfs hbio dir =
 
     releaseLock = FS.hUnlock
 
-    mkSession lockFile = do
+    mkSession reg lockFile = do
         counterVar <- newUniqCounter 0
         openTablesVar <- newMVar Map.empty
         openCursorsVar <- newMVar Map.empty
@@ -400,24 +550,34 @@ openSession tr hfs hbio dir =
           , sessionHasFS = hfs
           , sessionHasBlockIO = hbio
           , sessionLockFile = lockFile
-          , sessionUniqCounter = counterVar
           , sessionOpenTables = openTablesVar
           , sessionOpenCursors = openCursorsVar
           }
-        pure $! Session sessionVar tr
+
+        -- Note: we're "abusing" the action registry to trace the success
+        -- message as late as possible.
+        delayedCommit reg $
+          traceWith sessionTracer TraceOpenedSession
+
+        pure $! Session {
+            sessionState = sessionVar
+          , lsmTreeTracer = tr
+          , sessionTracer
+          , sessionUniqCounter = counterVar
+          }
 
     newSession reg sessionFileLock = do
-        traceWith tr TraceNewSession
+        traceWith sessionTracer TraceNewSession
         withRollback_ reg
           (FS.createDirectory hfs activeDirPath)
           (FS.removeDirectoryRecursive hfs activeDirPath)
         withRollback_ reg
           (FS.createDirectory hfs snapshotsDirPath)
           (FS.removeDirectoryRecursive hfs snapshotsDirPath)
-        mkSession sessionFileLock
+        mkSession reg sessionFileLock
 
-    restoreSession _reg sessionFileLock = do
-        traceWith tr TraceRestoreSession
+    restoreSession reg sessionFileLock = do
+        traceWith sessionTracer TraceRestoreSession
         -- If the layouts are wrong, we throw an exception
         checkTopLevelDirLayout
 
@@ -428,7 +588,7 @@ openSession tr hfs hbio dir =
 
         checkActiveDirLayout
         checkSnapshotsDirLayout
-        mkSession sessionFileLock
+        mkSession reg sessionFileLock
 
     -- Check that the active directory and snapshots directory exist. We assume
     -- the lock file already exists at this point.
@@ -500,6 +660,10 @@ closeSession Session{sessionState, sessionTracer} = do
           delayedCommit reg $ FS.close (sessionHasBlockIO seshEnv)
           delayedCommit reg $ FS.hUnlock (sessionLockFile seshEnv)
 
+        -- Note: we're "abusing" the action registry to trace the success
+        -- message as late as possible.
+          delayedCommit reg $ traceWith sessionTracer TraceClosedSession
+
           pure SessionClosed
 
 {-------------------------------------------------------------------------------
@@ -568,6 +732,11 @@ data TableEnv m h = TableEnv {
 tableSessionRoot :: TableEnv m h -> SessionRoot
 tableSessionRoot = sessionRoot . tableSessionEnv
 
+{-# INLINE tableSessionId #-}
+ -- | Inherited from session for ease of access.
+tableSessionId :: TableEnv m h -> SessionId
+tableSessionId = sessionId . tableSessionEnv
+
 {-# INLINE tableHasFS #-}
 -- | Inherited from session for ease of access.
 tableHasFS :: TableEnv m h -> HasFS m h
@@ -580,8 +749,8 @@ tableHasBlockIO = sessionHasBlockIO . tableSessionEnv
 
 {-# INLINE tableSessionUniqCounter #-}
 -- | Inherited from session for ease of access.
-tableSessionUniqCounter :: TableEnv m h -> UniqCounter m
-tableSessionUniqCounter = sessionUniqCounter . tableSessionEnv
+tableSessionUniqCounter :: Table m h -> UniqCounter m
+tableSessionUniqCounter = sessionUniqCounter . tableSession
 
 {-# INLINE tableSessionUntrackTable #-}
 {-# SPECIALISE tableSessionUntrackTable :: TableId -> TableEnv IO h -> IO () #-}
@@ -644,25 +813,30 @@ new ::
   -> TableConfig
   -> m (Table m h)
 new sesh conf = do
-    traceWith (sessionTracer sesh) TraceNewTable
+    tableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter sesh)
+    let tr = TraceTable tableId `contramap` lsmTreeTracer sesh
+    traceWith tr $ TraceNewTable conf
+
     withOpenSession sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
         am <- newArenaManager
-        tc <- newEmptyTableContent seshEnv reg
-        newWith reg sesh seshEnv conf am tc
+        tc <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
+        newWith reg sesh seshEnv conf am tr tableId tc
 
 {-# SPECIALISE newEmptyTableContent ::
-     SessionEnv IO h
+     UniqCounter IO
+  -> SessionEnv IO h
   -> ActionRegistry IO
   -> IO (TableContent IO h) #-}
 newEmptyTableContent ::
      (PrimMonad m, MonadMask m, MonadMVar m)
-  => SessionEnv m h
+  => UniqCounter m
+  -> SessionEnv m h
   -> ActionRegistry m
   -> m (TableContent m h)
-newEmptyTableContent seshEnv reg = do
+newEmptyTableContent uc seshEnv reg = do
     blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
-                  incrUniqCounter (sessionUniqCounter seshEnv)
+                  incrUniqCounter uc
     let tableWriteBuffer = WB.empty
     tableWriteBufferBlobs
       <- withRollback reg
@@ -685,6 +859,8 @@ newEmptyTableContent seshEnv reg = do
   -> SessionEnv IO h
   -> TableConfig
   -> ArenaManager RealWorld
+  -> Tracer IO TableTrace
+  -> TableId
   -> TableContent IO h
   -> IO (Table IO h) #-}
 newWith ::
@@ -694,12 +870,11 @@ newWith ::
   -> SessionEnv m h
   -> TableConfig
   -> ArenaManager (PrimState m)
+  -> Tracer m TableTrace
+  -> TableId
   -> TableContent m h
   -> m (Table m h)
-newWith reg sesh seshEnv conf !am !tc = do
-    tableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter seshEnv)
-    let tr = TraceTable tableId `contramap` sessionTracer sesh
-    traceWith tr $ TraceCreateTable conf
+newWith reg sesh seshEnv conf !am !tr !tableId !tc = do
     -- The session is kept open until we've updated the session's set of tracked
     -- tables. If 'closeSession' is called by another thread while this code
     -- block is being executed, that thread will block until it reads the
@@ -714,6 +889,12 @@ newWith reg sesh seshEnv conf !am !tc = do
     delayedCommit reg $
       modifyMVar_ (sessionOpenTables seshEnv) $
         pure . Map.insert tableId t
+
+    -- Note: we're "abusing" the action registry to trace the success
+    -- message as late as possible.
+    delayedCommit reg $
+      traceWith tr $ TraceCreatedTable (sessionId seshEnv) conf
+
     pure $! t
 
 {-# SPECIALISE close :: Table IO h -> IO () #-}
@@ -736,6 +917,12 @@ close t = do
         RW.withWriteAccess_ (tableContent tEnv) $ \tc -> do
           releaseTableContent reg tc
           pure tc
+
+        -- Note: we're "abusing" the action registry to trace the success
+        -- message as late as possible.
+        delayedCommit reg $
+          traceWith (tableTracer t) TraceClosedTable
+
         pure TableClosed
 
 {-# SPECIALISE lookups ::
@@ -866,17 +1053,26 @@ updates resolve es t = do
       let hfs = tableHasFS tEnv
       modifyWithActionRegistry_
         (RW.unsafeAcquireWriteAccess (tableContent tEnv))
-        (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv)) $ \reg -> do
-          updatesWithInterleavedFlushes
-            (contramapTraceMerge $ tableTracer t)
-            conf
-            resolve
-            hfs
-            (tableHasBlockIO tEnv)
-            (tableSessionRoot tEnv)
-            (tableSessionUniqCounter tEnv)
-            es
-            reg
+        (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv)) $ \reg tc -> do
+          tc' <-
+            updatesWithInterleavedFlushes
+              (contramapTraceMerge $ tableTracer t)
+              conf
+              resolve
+              hfs
+              (tableHasBlockIO tEnv)
+              (tableSessionRoot tEnv)
+              (tableSessionUniqCounter t)
+              es
+              reg
+              tc
+
+          -- Note: we're "abusing" the action registry to trace the success
+          -- message as late as possible.
+          delayedCommit reg $
+            traceWith (tableTracer t) $ TraceUpdated (V.length es)
+
+          pure tc'
 
 {-------------------------------------------------------------------------------
   Blobs
@@ -906,7 +1102,8 @@ retrieveBlobs ::
   => Session m h
   -> V.Vector (WeakBlobRef m h)
   -> m (V.Vector SerialisedBlob)
-retrieveBlobs sesh wrefs =
+retrieveBlobs sesh wrefs = do
+    traceWith (sessionTracer sesh) $ TraceRetrieveBlobs (V.length wrefs)
     withOpenSession sesh $ \seshEnv ->
       let hbio = sessionHasBlockIO seshEnv in
       handle (\(BlobRef.WeakBlobRefInvalid i) ->
@@ -1017,9 +1214,9 @@ newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
     let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv tEnv
     cursorId <- uniqueToCursorId <$>
-      incrUniqCounter (sessionUniqCounter cursorSessionEnv)
-    let cursorTracer = TraceCursor cursorId `contramap` sessionTracer cursorSession
-    traceWith cursorTracer $ TraceCreateCursor (tableId t)
+      incrUniqCounter (tableSessionUniqCounter t)
+    let cursorTracer = TraceCursor cursorId `contramap` lsmTreeTracer cursorSession
+    traceWith cursorTracer $ TraceNewCursor (tableId t) offsetKey
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
@@ -1049,6 +1246,12 @@ newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
         delayedCommit reg $
           modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
             pure . Map.insert cursorId cursor
+
+        -- Note: we're "abusing" the action registry to trace the success
+        -- message as late as possible.
+        delayedCommit reg $
+          traceWith cursorTracer $ TraceCreatedCursor (tableSessionId tEnv)
+
         pure $! cursor
   where
     -- The table contents escape the read access, but we just duplicate
@@ -1105,6 +1308,12 @@ closeCursor Cursor {..} = do
         V.forM_ cursorRuns $ delayedCommit reg . releaseRef
         forM_ cursorUnion $ releaseUnionCache reg
         delayedCommit reg (releaseRef cursorWBB)
+
+        -- Note: we're "abusing" the action registry to trace the success
+        -- message as late as possible.
+        delayedCommit reg $
+          traceWith cursorTracer $ TraceClosedCursor
+
         pure CursorClosed
 
 {-# SPECIALISE readCursor ::
@@ -1158,8 +1367,8 @@ readCursorWhile ::
      -- ^ How to map to a query result
   -> m (V.Vector res)
 readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
-    traceWith cursorTracer $ TraceReadCursor n
-    modifyMVar cursorState $ \case
+    traceWith cursorTracer $ TraceReadingCursor n
+    res <- modifyMVar cursorState $ \case
       CursorClosed -> throwIO ErrCursorClosed
       state@(CursorOpen cursorEnv) -> do
         case cursorReaders cursorEnv of
@@ -1173,6 +1382,10 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
                   Readers.HasMore -> state
                   Readers.Drained -> CursorOpen (cursorEnv {cursorReaders = Nothing})
             pure (state', vec)
+
+    traceWith cursorTracer $ TraceReadCursor n (V.length res)
+
+    pure res
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -1197,12 +1410,12 @@ saveSnapshot ::
   -> Table m h
   -> m ()
 saveSnapshot snap label t = do
-    traceWith (tableTracer t) $ TraceSnapshot snap
+    traceWith (tableTracer t) $ TraceSaveSnapshot snap
     withOpenTable t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
         let hfs  = tableHasFS tEnv
             hbio = tableHasBlockIO tEnv
-            activeUc = tableSessionUniqCounter tEnv
+            activeUc = tableSessionUniqCounter t
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (tableSessionRoot tEnv) snap
@@ -1260,6 +1473,11 @@ saveSnapshot snap label t = do
         -- Make the directory and its contents durable.
         FS.synchroniseDirectoryRecursive hfs hbio (Paths.getNamedSnapshotDir snapDir)
 
+        -- Note: we're "abusing" the action registry to trace the success
+        -- message as late as possible.
+        delayedCommit reg $
+          traceWith (tableTracer t) $ TraceSavedSnapshot snap
+
 -- | The named snapshot does not exist.
 data SnapshotDoesNotExistError
     = ErrSnapshotDoesNotExist !SnapshotName
@@ -1302,14 +1520,17 @@ openTableFromSnapshot ::
   -> SnapshotLabel -- ^ Expected label
   -> ResolveSerialisedValue
   -> m (Table m h)
-openTableFromSnapshot policyOveride sesh snap label resolve =
+openTableFromSnapshot policyOveride sesh snap label resolve = do
+  tableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter sesh)
+  let tr = TraceTable tableId `contramap` lsmTreeTracer sesh
+  traceWith tr $ TraceOpenTableFromSnapshot snap policyOveride
+
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
-    traceWith (sessionTracer sesh) $ TraceOpenTableFromSnapshot snap policyOveride
     withOpenSession sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
         let hfs     = sessionHasFS seshEnv
             hbio    = sessionHasBlockIO seshEnv
-            uc      = sessionUniqCounter seshEnv
+            uc      = sessionUniqCounter sesh
 
         -- Guard that the snapshot exists
         let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
@@ -1356,7 +1577,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve =
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
-        newWith reg sesh seshEnv conf am $! TableContent {
+        newWith reg sesh seshEnv conf am tr tableId $! TableContent {
             tableWriteBuffer
           , tableWriteBufferBlobs
           , tableLevels
@@ -1413,6 +1634,7 @@ deleteSnapshot sesh snap = do
       snapshotExists <- doesSnapshotDirExist snap seshEnv
       unless snapshotExists $ throwIO (ErrSnapshotDoesNotExist snap)
       FS.removeDirectoryRecursive (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
+      traceWith (sessionTracer sesh) $ TraceDeletedSnapshot snap
 
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.listSnapshots'.
@@ -1449,7 +1671,11 @@ duplicate ::
   => Table m h
   -> m (Table m h)
 duplicate t@Table{..} = do
-    traceWith tableTracer TraceDuplicate
+    childTableId <- uniqueToTableId <$> incrUniqCounter (tableSessionUniqCounter t)
+    let childTableTracer = TraceTable childTableId `contramap` lsmTreeTracer tableSession
+        parentTableId = tableId
+    traceWith childTableTracer $ TraceDuplicate parentTableId
+
     withOpenTable t $ \TableEnv{..} -> do
       -- We acquire a read-lock on the session open-state to prevent races, see
       -- 'sessionOpenTables'.
@@ -1464,6 +1690,8 @@ duplicate t@Table{..} = do
             tableSessionEnv
             tableConfig
             tableArenaManager
+            childTableTracer
+            childTableId
             content
 
 {-------------------------------------------------------------------------------
@@ -1502,7 +1730,9 @@ unions ::
 unions ts = do
     sesh <- ensureSessionsMatch ts
 
-    traceWith (sessionTracer sesh) $ TraceUnions (NE.map tableId ts)
+    childTableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter sesh)
+    let childTableTracer = TraceTable childTableId `contramap` lsmTreeTracer sesh
+    traceWith childTableTracer $ TraceIncrementalUnions (NE.map tableId ts)
 
     -- The TableConfig for the new table is taken from the last table in the
     -- union. This corresponds to the "Data.Map.union updates baseMap" order,
@@ -1523,7 +1753,7 @@ unions ts = do
       \reg -> \case
         SessionClosed -> throwIO ErrSessionClosed
         seshState@(SessionOpen seshEnv) -> do
-          t <- unionsInOpenSession reg sesh seshEnv conf ts
+          t <- unionsInOpenSession reg sesh seshEnv conf childTableTracer childTableId ts
           pure (seshState, t)
 
 {-# SPECIALISE unionsInOpenSession ::
@@ -1531,6 +1761,8 @@ unions ts = do
   -> Session IO h
   -> SessionEnv IO h
   -> TableConfig
+  -> Tracer IO TableTrace
+  -> TableId
   -> NonEmpty (Table IO h)
   -> IO (Table IO h) #-}
 unionsInOpenSession ::
@@ -1539,9 +1771,11 @@ unionsInOpenSession ::
   -> Session m h
   -> SessionEnv m h
   -> TableConfig
+  -> Tracer m TableTrace
+  -> TableId
   -> NonEmpty (Table m h)
   -> m (Table m h)
-unionsInOpenSession reg sesh seshEnv conf ts = do
+unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
     mts <- forM (NE.toList ts) $ \t ->
       withOpenTable t $ \tEnv ->
         RW.withReadAccess (tableContent tEnv) $ \tc ->
@@ -1549,7 +1783,7 @@ unionsInOpenSession reg sesh seshEnv conf ts = do
           -- so the ones from the tableContent here do not escape
           -- the read access.
           withRollback reg
-            (tableContentToMergingTree seshEnv conf tc)
+            (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
             releaseRef
     mt <- withRollback reg (newPendingUnionMerge mts) releaseRef
 
@@ -1562,9 +1796,9 @@ unionsInOpenSession reg sesh seshEnv conf ts = do
       True -> do
         -- no need to have an empty merging tree
         delayedCommit reg (releaseRef mt)
-        newEmptyTableContent seshEnv reg
+        newEmptyTableContent ((sessionUniqCounter sesh)) seshEnv reg
       False -> do
-        empty <- newEmptyTableContent seshEnv reg
+        empty <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
         cache <- mkUnionCache reg mt
         pure empty { tableUnionLevel = Union mt cache }
 
@@ -1573,26 +1807,28 @@ unionsInOpenSession reg sesh seshEnv conf ts = do
     -- by reusing the arena manager from the last one.
     let am = tableArenaManager (NE.last ts)
 
-    newWith reg sesh seshEnv conf am content
+    newWith reg sesh seshEnv conf am tr tableId content
 
 {-# SPECIALISE tableContentToMergingTree ::
-     SessionEnv IO h
+     UniqCounter IO
+  -> SessionEnv IO h
   -> TableConfig
   -> TableContent IO h
   -> IO (Ref (MergingTree IO h)) #-}
 tableContentToMergingTree ::
      forall m h.
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => SessionEnv m h
+  => UniqCounter m
+  -> SessionEnv m h
   -> TableConfig
   -> TableContent m h
   -> m (Ref (MergingTree m h))
-tableContentToMergingTree seshEnv conf
+tableContentToMergingTree uc seshEnv conf
                           tc@TableContent {
                             tableLevels,
                             tableUnionLevel
                           } =
-    bracket (writeBufferToNewRun seshEnv conf tc)
+    bracket (writeBufferToNewRun uc seshEnv conf tc)
             (mapM_ releaseRef) $ \mwbr ->
       let runs :: [PreExistingRun m h]
           runs = maybeToList (fmap PreExistingRun mwbr)
@@ -1613,21 +1849,23 @@ tableContentToMergingTree seshEnv conf
 
 --TODO: can we share this or move it to MergeSchedule?
 {-# SPECIALISE writeBufferToNewRun ::
-     SessionEnv IO h
+     UniqCounter IO
+  -> SessionEnv IO h
   -> TableConfig
   -> TableContent IO h
   -> IO (Maybe (Ref (Run IO h))) #-}
 writeBufferToNewRun ::
      (MonadMask m, MonadST m, MonadSTM m)
-  => SessionEnv m h
+  => UniqCounter m
+  -> SessionEnv m h
   -> TableConfig
   -> TableContent m h
   -> m (Maybe (Ref (Run m h)))
-writeBufferToNewRun SessionEnv {
+writeBufferToNewRun uc
+                    SessionEnv {
                       sessionRoot        = root,
                       sessionHasFS       = hfs,
-                      sessionHasBlockIO  = hbio,
-                      sessionUniqCounter = uc
+                      sessionHasBlockIO  = hbio
                     }
                     conf
                     TableContent{
@@ -1741,9 +1979,12 @@ supplyUnionCredits resolve t credits = do
                 (runParamsForLevel conf UnionLevel)
                 thresh
                 (tableSessionRoot tEnv)
-                (tableSessionUniqCounter tEnv)
+                (tableSessionUniqCounter t)
                 mt
                 (let UnionCredits c = credits in MergeCredits c)
+
+            traceWith (tableTracer t) $ TraceSuppliedUnionCredits credits (UnionCredits leftovers)
+
             pure (UnionCredits leftovers)
       -- TODO: don't go into this section if we know there is NoUnion
       modifyWithActionRegistry_

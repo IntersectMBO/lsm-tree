@@ -90,6 +90,7 @@ data RunReader m h = RunReader {
     }
 
 data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
+  deriving stock Show
 
 {-# SPECIALISE new ::
      OffsetKey
