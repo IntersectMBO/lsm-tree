@@ -28,7 +28,8 @@ import           Database.LSMTree.Internal.Entry (Entry (Insert),
 import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import           Database.LSMTree.Internal.Lookup
-import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths))
+import           Database.LSMTree.Internal.Paths (RunFsPaths (RunFsPaths),
+                     SessionSalt (SessionSalt))
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc (RunBloomFilterAlloc (..))
@@ -128,6 +129,9 @@ entryBitsWithOverhead = entryBits -- key and value size
 -- 41.53494282083863
 numEntriesFitInPage :: Fractional a => a
 numEntriesFitInPage = fromIntegral unusedPageBits / fromIntegral entryBitsWithOverhead
+
+sessionSalt :: SessionSalt
+sessionSalt = SessionSalt 4
 
 benchmarks :: Run.RunDataCaching -> IO ()
 benchmarks !caching = withFS $ \hfs hbio -> do
@@ -351,7 +355,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
 
     -- create the runs
     rbs <- sequence
-            [ RunBuilder.new hfs hbio
+            [ RunBuilder.new hfs hbio sessionSalt
                 RunParams {
                   runParamCaching = caching,
                   runParamAlloc   = RunAllocFixed benchmarkNumBitsPerEntry,
@@ -428,7 +432,7 @@ benchBloomQueries !bs !keyRng !n
   | n <= 0 = ()
   | otherwise =
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      in  bloomQueries bs ks `seq`
+      in  bloomQueries sessionSalt bs ks `seq`
           benchBloomQueries bs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, performing
@@ -445,7 +449,7 @@ benchIndexSearches !arenaManager !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
     let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-        !rkixs = bloomQueries bs ks
+        !rkixs = bloomQueries sessionSalt bs ks
     !_ioops <- withArena arenaManager $ \arena -> stToIO $ indexSearches arena ics hs ks rkixs
     benchIndexSearches arenaManager bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
@@ -463,7 +467,7 @@ benchPrepLookups !arenaManager !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      (!_rkixs, !_ioops) <- withArena arenaManager $ \arena -> stToIO $ prepLookups arena bs ics hs ks
+      (!_rkixs, !_ioops) <- withArena arenaManager $ \arena -> stToIO $ prepLookups arena sessionSalt bs ics hs ks
       benchPrepLookups arenaManager bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, and
@@ -489,7 +493,7 @@ benchLookupsIO !hbio !arenaManager !resolve !wb !wbblobs !rs !bs !ics !hs =
       | otherwise = do
           let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
           !_ <- lookupsIOWithWriteBuffer
-                  hbio arenaManager resolve wb wbblobs rs bs ics hs ks
+                  hbio arenaManager resolve sessionSalt wb wbblobs rs bs ics hs ks
           go keyRng' (n-benchmarkGenBatchSize)
 
 {-------------------------------------------------------------------------------
@@ -524,7 +528,7 @@ classifyLookups !bs !keyRng0 !n0 =
       | otherwise =
           unsafePerformIO (putStr ".") `seq`
           let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-              !rkixs = bloomQueries bs ks
+              !rkixs = bloomQueries sessionSalt bs ks
           in  loop (positives + VP.length rkixs) keyRng' (n-benchmarkGenBatchSize)
 
 -- | Fill a mutable vector with uniformly random values.

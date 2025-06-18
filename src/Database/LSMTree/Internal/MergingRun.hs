@@ -70,7 +70,7 @@ import           Database.LSMTree.Internal.Merge (IsMergeType (..),
                      LevelMergeType (..), Merge, RunParams (..),
                      StepResult (..), TreeMergeType (..))
 import qualified Database.LSMTree.Internal.Merge as Merge
-import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
+import           Database.LSMTree.Internal.Paths (RunFsPaths (..), SessionSalt)
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue)
@@ -132,6 +132,7 @@ instance NFData MergeKnownCompleted where
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> SessionSalt
   -> RunParams
   -> t
   -> RunFsPaths
@@ -149,12 +150,13 @@ new ::
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
+  -> SessionSalt
   -> RunParams
   -> t
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
-new hfs hbio resolve runParams ty runPaths inputRuns =
+new hfs hbio resolve sessionSalt runParams ty runPaths inputRuns =
     assert (V.length inputRuns > 0) $ do
     -- there can be empty runs, which we don't want to include in the merge
     -- TODO: making runs non-empty would involve introducing a constructor
@@ -172,7 +174,7 @@ new hfs hbio resolve runParams ty runPaths inputRuns =
           -- as we do in the prototype. but that would mean that the result
           -- doesn't follow the supplied @runParams@.
           -- TODO: decide whether that optimisation is okay
-          r <- Run.newEmpty hfs hbio runParams runPaths
+          r <- Run.newEmpty hfs hbio sessionSalt runParams runPaths
           unsafeNew
             (MergeDebt 0)
             (SpentCredits 0)
@@ -181,7 +183,7 @@ new hfs hbio resolve runParams ty runPaths inputRuns =
         _ -> do
           rs <- V.mapM dupRun nonEmptyRuns
           merge <- fromMaybe (error "newMerge: merges can not be empty")
-            <$> Merge.new hfs hbio runParams ty resolve runPaths rs
+            <$> Merge.new hfs hbio sessionSalt runParams ty resolve runPaths rs
           unsafeNew
             (numEntriesToMergeDebt (V.foldMap' Run.size rs))
             (SpentCredits 0)

@@ -13,7 +13,7 @@ module Data.BloomFilter.Classic.Calc (
     policyForBits,
 ) where
 
-import           Numeric
+import           Numeric (Floating (expm1, log1mexp))
 
 type FPR          = Double
 type BitsPerEntry = Double
