@@ -526,6 +526,21 @@ assert p x = Exc.assert p (const x callStack)
 assertST :: HasCallStack => Bool -> ST s ()
 assertST p = assert p $ pure ()
 
+assertWithMsg :: HasCallStack => Maybe String -> a -> a
+assertWithMsg = assert . p
+  where
+    p Nothing    = True
+    p (Just msg) = error $ "Assertion failed: " <> msg
+
+assertWithMsgM :: (HasCallStack, Monad m) => Maybe String -> m ()
+assertWithMsgM mmsg = assertWithMsg mmsg $ pure ()
+
+leq :: (Show a, Ord a) => a -> a -> Maybe String
+leq x y = if x <= y then Nothing else Just $
+    printf "Expected x <= y, but got %s > %s"
+      (show x)
+      (show y)
+
 -------------------------------------------------------------------------------
 -- Run sizes
 --
@@ -1461,7 +1476,7 @@ newLevelMerge _ _ _ _ _ [r] = pure (Single r)
 newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
     assertST (length rs `elem` [configSizeRatio, configSizeRatio + 1])
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
-    assertST (totalDebt physicalDebt <= maxPhysicalDebt)
+    assertWithMsgM $ leq (totalDebt physicalDebt) maxPhysicalDebt
     traceWith tr MergeStartedEvent {
                    mergePolicy,
                    mergeType,
