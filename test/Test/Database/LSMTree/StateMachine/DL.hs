@@ -43,7 +43,7 @@ tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
     , test_noSwallowedExceptions
     ]
 
-instance DynLogicModel (Lockstep (ModelState R.Table))
+instance DynLogicModel (Lockstep (ModelState RealImplMockFS))
 
 -- | An example of how dynamic logic formulas can be run.
 --
@@ -65,7 +65,7 @@ prop_example =
     tr = nullTracer
 
 -- | Create an initial "large" table
-dl_example :: DL (Lockstep (ModelState R.Table)) ()
+dl_example :: DL (Lockstep (ModelState RealImplMockFS)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
     var3 <- action $ Action Nothing $ NewTableWith (PrettyProxy @((Key, Value, Blob))) (R.TableConfig {
@@ -151,7 +151,7 @@ prop_noSwallowedExceptions = forAllDL dl_noSwallowExceptions runner
 
 -- | Run any number of actions using the default actions generator, and finally
 -- run a single action with errors *definitely* enabled.
-dl_noSwallowExceptions :: DL (Lockstep (ModelState R.Table)) ()
+dl_noSwallowExceptions :: DL (Lockstep (ModelState RealImplMockFS)) ()
 dl_noSwallowExceptions = do
     -- Run any number of actions as normal
     anyActions_
