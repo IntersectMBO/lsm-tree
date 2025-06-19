@@ -58,22 +58,23 @@ import           Text.Printf
 -- for more. Forwards compatibility is not provided at all: snapshots with a
 -- later version than the current version for the library release will always
 -- fail.
-data SnapshotVersion = V0
-  deriving stock (Show, Eq)
+data SnapshotVersion = V0 | V1
+  deriving stock (Show, Eq, Ord)
 
 -- | Pretty-print a snapshot version
 --
 -- >>> prettySnapshotVersion currentSnapshotVersion
--- "v0"
+-- "v1"
 prettySnapshotVersion :: SnapshotVersion -> String
 prettySnapshotVersion V0 = "v0"
+prettySnapshotVersion V1 = "v1"
 
 -- | The current snapshot version
 --
 -- >>> currentSnapshotVersion
 -- V0
 currentSnapshotVersion :: SnapshotVersion
-currentSnapshotVersion = V0
+currentSnapshotVersion = V1
 
 -- | All snapshot versions that the current snapshpt version is compatible with.
 --
@@ -83,7 +84,7 @@ currentSnapshotVersion = V0
 -- >>> last allCompatibleSnapshotVersions == currentSnapshotVersion
 -- True
 allCompatibleSnapshotVersions :: [SnapshotVersion]
-allCompatibleSnapshotVersions = [V0]
+allCompatibleSnapshotVersions = [V0, V1]
 
 isCompatible :: SnapshotVersion -> Either String ()
 isCompatible otherVersion
@@ -214,6 +215,7 @@ instance Encode SnapshotVersion where
          encodeListLen 1
       <> case ver of
            V0 -> encodeWord 0
+           V1 -> encodeWord 1
 
 instance Decode SnapshotVersion where
   decode = do
@@ -221,6 +223,7 @@ instance Decode SnapshotVersion where
       ver <- decodeWord
       case ver of
         0 -> pure V0
+        1 -> pure V1
         _ -> fail ("Unknown snapshot format version number: " <>  show ver)
 
 {-------------------------------------------------------------------------------
@@ -239,7 +242,7 @@ instance Encode SnapshotMetaData where
       <> encodeMaybe mergingTree
 
 instance DecodeVersioned SnapshotMetaData where
-  decodeVersioned ver@V0 = do
+  decodeVersioned ver = do
       _ <- decodeListLenOf 5
       SnapshotMetaData
         <$> decodeVersioned ver
@@ -254,7 +257,7 @@ instance Encode SnapshotLabel where
   encode (SnapshotLabel s) = encodeString s
 
 instance DecodeVersioned SnapshotLabel where
-  decodeVersioned V0 = SnapshotLabel <$> decodeString
+  decodeVersioned _v = SnapshotLabel <$> decodeString
 
 instance Encode SnapshotRun where
   encode SnapshotRun { snapRunNumber, snapRunCaching, snapRunIndex } =
@@ -265,7 +268,7 @@ instance Encode SnapshotRun where
       <> encode snapRunIndex
 
 instance DecodeVersioned SnapshotRun where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -303,7 +306,7 @@ instance Encode TableConfig where
         <> encode diskCachePolicy
 
 instance DecodeVersioned TableConfig where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       _ <- decodeListLenOf 7
       confMergePolicy <- decodeVersioned v
       confMergeSchedule <- decodeVersioned v
@@ -320,7 +323,7 @@ instance Encode MergePolicy where
   encode LazyLevelling = encodeWord 0
 
 instance DecodeVersioned MergePolicy where
-  decodeVersioned V0 =  do
+  decodeVersioned _v =  do
       tag <- decodeWord
       case tag of
         0 -> pure LazyLevelling
@@ -332,7 +335,7 @@ instance Encode SizeRatio where
   encode Four = encodeInt 4
 
 instance DecodeVersioned SizeRatio where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       x <- decodeWord64
       case x of
         4 -> pure Four
@@ -347,7 +350,7 @@ instance Encode WriteBufferAlloc where
       <> encodeInt numEntries
 
 instance DecodeVersioned WriteBufferAlloc where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       _ <- decodeListLenOf 2
       tag <- decodeWord
       case tag of
@@ -365,7 +368,7 @@ instance Encode RunParams where
       <> encode runParamIndex
 
 instance DecodeVersioned RunParams where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -380,7 +383,7 @@ instance Encode RunDataCaching where
   encode NoCacheRunData = encodeWord 1
 
 instance DecodeVersioned RunDataCaching where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
     tag <- decodeWord
     case tag of
       0 -> pure CacheRunData
@@ -392,7 +395,7 @@ instance Encode IndexType where
   encode Compact  = encodeWord 1
 
 instance DecodeVersioned IndexType where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
     tag <- decodeWord
     case tag of
       0 -> pure Ordinary
@@ -410,7 +413,7 @@ instance Encode RunBloomFilterAlloc where
       <> encodeDouble fpr
 
 instance DecodeVersioned RunBloomFilterAlloc where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -431,7 +434,7 @@ instance Encode BloomFilterAlloc where
       <> encodeDouble x
 
 instance DecodeVersioned BloomFilterAlloc where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -446,7 +449,7 @@ instance Encode FencePointerIndexType where
   encode OrdinaryIndex = encodeWord 1
 
 instance DecodeVersioned FencePointerIndexType where
-   decodeVersioned V0 = do
+   decodeVersioned _v = do
       tag <- decodeWord
       case tag of
         0 -> pure CompactIndex
@@ -468,7 +471,7 @@ instance Encode DiskCachePolicy where
       <> encodeWord 2
 
 instance DecodeVersioned DiskCachePolicy where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -484,7 +487,7 @@ instance Encode MergeSchedule where
   encode Incremental = encodeWord 1
 
 instance DecodeVersioned MergeSchedule where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       tag <- decodeWord
       case tag of
         0 -> pure OneShot
@@ -501,7 +504,7 @@ instance Encode r => Encode (SnapLevels r) where
   encode (SnapLevels levels) = encode levels
 
 instance DecodeVersioned r => DecodeVersioned (SnapLevels r) where
-  decodeVersioned v@V0 = SnapLevels <$> decodeVersioned v
+  decodeVersioned v = SnapLevels <$> decodeVersioned v
 
 -- SnapLevel
 
@@ -513,7 +516,7 @@ instance Encode r => Encode (SnapLevel r) where
 
 
 instance DecodeVersioned r => DecodeVersioned (SnapLevel r) where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       _ <- decodeListLenOf 2
       SnapLevel <$> decodeVersioned v <*> decodeVersioned v
 
@@ -531,7 +534,7 @@ instance Encode RunNumber where
   encode (RunNumber x) = encodeInt x
 
 instance DecodeVersioned RunNumber where
-  decodeVersioned V0 = RunNumber <$> decodeInt
+  decodeVersioned _v = RunNumber <$> decodeInt
 
 -- SnapIncomingRun
 
@@ -549,7 +552,7 @@ instance Encode r => Encode (SnapIncomingRun r) where
     <> encode x
 
 instance DecodeVersioned r => DecodeVersioned (SnapIncomingRun r) where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -566,7 +569,7 @@ instance Encode MergePolicyForLevel where
   encode LevelLevelling = encodeWord 1
 
 instance DecodeVersioned MergePolicyForLevel where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       tag <- decodeWord
       case tag of
         0 -> pure LevelTiering
@@ -590,7 +593,7 @@ instance (Encode t, Encode r) => Encode (SnapMergingRun t r) where
       <> encode mt
 
 instance (DecodeVersioned t, DecodeVersioned r) => DecodeVersioned (SnapMergingRun t r) where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -606,25 +609,25 @@ instance Encode NominalDebt where
   encode (NominalDebt x) = encodeInt x
 
 instance DecodeVersioned NominalDebt where
-  decodeVersioned V0 = NominalDebt <$> decodeInt
+  decodeVersioned _v = NominalDebt <$> decodeInt
 
 instance Encode NominalCredits where
   encode (NominalCredits x) = encodeInt x
 
 instance DecodeVersioned NominalCredits where
-  decodeVersioned V0 = NominalCredits <$> decodeInt
+  decodeVersioned _v = NominalCredits <$> decodeInt
 
 instance Encode MergeDebt where
   encode (MergeDebt (MergeCredits x)) = encodeInt x
 
 instance DecodeVersioned MergeDebt where
-  decodeVersioned V0 = (MergeDebt . MergeCredits) <$> decodeInt
+  decodeVersioned _v = (MergeDebt . MergeCredits) <$> decodeInt
 
 instance Encode MergeCredits where
   encode (MergeCredits x) = encodeInt x
 
 instance DecodeVersioned MergeCredits where
-  decodeVersioned V0 = MergeCredits <$> decodeInt
+  decodeVersioned _v = MergeCredits <$> decodeInt
 
 -- MergeType
 
@@ -633,7 +636,7 @@ instance Encode MR.LevelMergeType  where
   encode MR.MergeLastLevel = encodeWord 1
 
 instance DecodeVersioned MR.LevelMergeType where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       tag <- decodeWord
       case tag of
         0 -> pure MR.MergeMidLevel
@@ -655,7 +658,7 @@ instance Encode MR.TreeMergeType  where
   encode MR.MergeUnion = encodeWord 2
 
 instance DecodeVersioned MR.TreeMergeType where
-  decodeVersioned V0 = do
+  decodeVersioned _v = do
       tag <- decodeWord
       case tag of
         1 -> pure MR.MergeLevel
@@ -672,7 +675,7 @@ instance Encode r => Encode (SnapMergingTree r) where
   encode (SnapMergingTree tState) = encode tState
 
 instance DecodeVersioned r => DecodeVersioned (SnapMergingTree r) where
-  decodeVersioned ver@V0 = SnapMergingTree <$> decodeVersioned ver
+  decodeVersioned ver = SnapMergingTree <$> decodeVersioned ver
 
 -- SnapMergingTreeState
 
@@ -691,7 +694,7 @@ instance Encode r => Encode (SnapMergingTreeState r) where
     <> encode smrs
 
 instance DecodeVersioned r => DecodeVersioned (SnapMergingTreeState r) where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -714,7 +717,7 @@ instance Encode r => Encode (SnapPendingMerge r) where
    <> encodeList mts
 
 instance DecodeVersioned r => DecodeVersioned (SnapPendingMerge r) where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -735,7 +738,7 @@ instance Encode r => Encode (SnapPreExistingRun r) where
     <> encode smrs
 
 instance DecodeVersioned r => DecodeVersioned (SnapPreExistingRun r) where
-  decodeVersioned v@V0 = do
+  decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
@@ -753,7 +756,7 @@ encodeMaybe = \case
   Just en -> encode en
 
 decodeMaybe :: DecodeVersioned a => SnapshotVersion -> Decoder s (Maybe a)
-decodeMaybe v@V0 = do
+decodeMaybe v = do
     tok <- peekTokenType
     case tok of
       TypeNull -> Nothing <$ decodeNull
