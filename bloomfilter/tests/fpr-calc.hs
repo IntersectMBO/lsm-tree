@@ -12,7 +12,6 @@ import qualified Data.IntSet as IntSet
 import           Data.List (unfoldr)
 import           Math.Regression.Simple
 import           System.Environment (getArgs)
-import           System.Exit (exitFailure)
 import           System.IO
 import           System.Random
 
@@ -29,7 +28,8 @@ main = do
       ["Regression"] -> main_regression
       _   -> do
         putStrLn "Usage: bloomfilter-fpr-calc [Generate|Regression]"
-        exitFailure
+        -- NOTE: we expicitly don't use exitFailure here because
+        -- @bloomfilter-fpr-calc@ is a cabal @test-suite@.
 
 main_regression :: IO ()
 main_regression = do

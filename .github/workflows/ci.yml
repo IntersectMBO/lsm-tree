@@ -343,6 +343,26 @@ jobs:
         run: ./scripts/lint-shellcheck.sh
 
   ################################################################################
+  # Check release builds
+  ################################################################################
+  check-release-builds:
+    name: Check release builds
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Check release builds
+      uses: ./.github/actions/check-release-builds
+      with:
+        ghc-version: ${{ env.DEFAULT_GHC_VERSION }}
+        cabal-version: ${{ env.DEFAULT_CABAL_VERSION }}
+        hackage-index-state: "2025-06-16T00:00:00Z"
+        # Run without supplying any cabal files just to verify whether the
+        # script runs without problems.
+        cli-args: "Default"
+
+  ################################################################################
   # Publish documentation
   ################################################################################
   publish-documentation:
