@@ -191,8 +191,9 @@ testAll test = [
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotVersion where
-  arbitrary = elements [V0]
+  arbitrary = elements [V0, V1]
   shrink V0 = []
+  shrink V1 = [V0]
 
 deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 
