@@ -353,7 +353,7 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
         -- levelling run becomes too large and is promoted, in that case
         -- initially there's no merge, but it is still represented as an
         -- 'IncomingRun', using 'Single'. Thus there are no other resident runs.
-        MergePolicyLevelling -> assertST $ null rs
+        MergePolicyLevelling -> assertST $ null rs && null ls
         -- Runs in tiering levels usually fit that size, but they can be one
         -- larger, if a run has been held back (creating a (T+1)-way merge).
         MergePolicyTiering   -> assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r `elem` [ln, ln+1]) rs
@@ -383,18 +383,19 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
             (_, CompletedMerge r) ->
               assertST $ runToLevelNumber MergePolicyLevelling conf r <= ln+1
 
-            -- An ongoing merge for levelling should have T incoming runs of
-            -- the right size for the level below (or slightly larger due to
-            -- holding back underfull runs), and 1 run from this level,
-            -- but the run from this level can be of almost any size for the
-            -- same reasons as above. Although if this is the first merge for
-            -- a new level, it'll have only T runs.
+            -- An ongoing merge for levelling should have T incoming runs of the
+            -- right size for the level below (or slightly larger due to holding
+            -- back underfull runs), and at most 1 run from this level. The run
+            -- from this level can be of almost any size for the same reasons as
+            -- above. Although if this is the first merge for a new level, it'll
+            -- have only T runs.
             (_, OngoingMerge _ rs _) -> do
               assertST $ length rs `elem` [configSizeRatio, configSizeRatio + 1]
               assertST $ all (\r -> runSize r > 0) rs  -- don't merge empty runs
               let incoming = take configSizeRatio rs
               let resident = drop configSizeRatio rs
               assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r `elem` [ln-1, ln]) incoming
+              assertST $ length resident `elem` [0, 1]
               assertST $ all (\r -> runToLevelNumber MergePolicyLevelling conf r <= ln+1) resident
 
         MergePolicyTiering ->
@@ -421,13 +422,19 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
             (_, CompletedMerge r, MergeMidLevel) ->
               assertST $ runToLevelNumber MergePolicyTiering conf r `elem` [ln-1, ln, ln+1]
 
-            -- An ongoing merge for tiering should have T incoming runs of
-            -- the right size for the level below, and at most 1 run held back
-            -- due to being too small (which would thus also be of the size of
-            -- the level below).
+            -- An ongoing merge for tiering should have T incoming runs of the
+            -- right size for the level below (or slightly larger due to holding
+            -- back underfull runs), and at most 1 run held back due to being
+            -- too small (which would thus also be of the size of the level
+            -- below).
             (_, OngoingMerge _ rs _, _) -> do
-              assertST $ length rs == configSizeRatio || length rs == configSizeRatio + 1
-              assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r == ln-1) rs
+              assertST $ length rs `elem` [configSizeRatio, configSizeRatio + 1]
+              assertST $ all (\r -> runSize r > 0) rs  -- don't merge empty runs
+              let incoming = take configSizeRatio rs
+              let heldBack = drop configSizeRatio rs
+              assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r `elem` [ln-1, ln]) incoming
+              assertST $ length heldBack `elem` [0, 1]
+              assertST $ all (\r -> runToLevelNumber MergePolicyTiering conf r == ln-1) heldBack
 
 -- We don't make many assumptions apart from what the types already enforce.
 -- In particular, there are no invariants on the progress of the merges,
@@ -525,6 +532,21 @@ assert p x = Exc.assert p (const x callStack)
 
 assertST :: HasCallStack => Bool -> ST s ()
 assertST p = assert p $ pure ()
+
+assertWithMsg :: HasCallStack => Maybe String -> a -> a
+assertWithMsg = assert . p
+  where
+    p Nothing    = True
+    p (Just msg) = error $ "Assertion failed: " <> msg
+
+assertWithMsgM :: (HasCallStack, Monad m) => Maybe String -> m ()
+assertWithMsgM mmsg = assertWithMsg mmsg $ pure ()
+
+leq :: (Show a, Ord a) => a -> a -> Maybe String
+leq x y = if x <= y then Nothing else Just $
+    printf "Expected x <= y, but got %s > %s"
+      (show x)
+      (show y)
 
 -------------------------------------------------------------------------------
 -- Run sizes
@@ -1461,7 +1483,7 @@ newLevelMerge _ _ _ _ _ [r] = pure (Single r)
 newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
     assertST (length rs `elem` [configSizeRatio, configSizeRatio + 1])
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
-    assertST (totalDebt physicalDebt <= maxPhysicalDebt)
+    assertWithMsgM $ leq (totalDebt physicalDebt) maxPhysicalDebt
     traceWith tr MergeStartedEvent {
                    mergePolicy,
                    mergeType,
@@ -1484,15 +1506,24 @@ newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
     -- such that we pay off the physical and nominal debts at the same time.
     --
     -- We can bound the worst case physical debt: this is the maximum amount of
-    -- steps a merge at this level could need. Note that for levelling this is
-    -- includes the single run in the current level.
+    -- steps a merge at this level could need. See the
+    -- 'expectedMergingRunLengths' where-clause of the 'invariant' function for
+    -- the full reasoning.
     maxPhysicalDebt =
       case mergePolicy of
         MergePolicyLevelling ->
-          configSizeRatio * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
+          -- Incoming runs, which may be slightly overfull with respect to the
+          -- previous level
+          configSizeRatio * levelNumberToMaxRunSize MergePolicyTiering conf level
+              -- The single run that was already on this level
             + levelNumberToMaxRunSize MergePolicyLevelling conf level
         MergePolicyTiering   ->
-          length rs * levelNumberToMaxRunSize MergePolicyTiering conf (level-1)
+          -- Incoming runs, which may be slightly overfull with respect to the
+          -- previous level
+          configSizeRatio * levelNumberToMaxRunSize MergePolicyTiering conf level
+              -- Held back run that is underfull with respect to the current
+              -- level
+            + levelNumberToMaxRunSize MergePolicyTiering conf (level - 1)
 
 -------------------------------------------------------------------------------
 -- MergingTree abstraction
