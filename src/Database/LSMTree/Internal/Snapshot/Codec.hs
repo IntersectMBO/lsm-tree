@@ -7,6 +7,7 @@ module Database.LSMTree.Internal.Snapshot.Codec (
     SnapshotVersion (..)
   , prettySnapshotVersion
   , currentSnapshotVersion
+  , allCompatibleSnapshotVersions
     -- * Writing and reading files
   , writeFileSnapshotMetaData
   , readFileSnapshotMetaData
@@ -74,10 +75,22 @@ prettySnapshotVersion V0 = "v0"
 currentSnapshotVersion :: SnapshotVersion
 currentSnapshotVersion = V0
 
+-- | All snapshot versions that the current snapshpt version is compatible with.
+--
+-- >>> allCompatibleSnapshotVersions
+-- [V0]
+--
+-- >>> last allCompatibleSnapshotVersions == currentSnapshotVersion
+-- True
+allCompatibleSnapshotVersions :: [SnapshotVersion]
+allCompatibleSnapshotVersions = [V0]
+
 isCompatible :: SnapshotVersion -> Either String ()
-isCompatible otherVersion = do
-    case ( currentSnapshotVersion, otherVersion ) of
-      (V0, V0) -> Right ()
+isCompatible otherVersion
+    -- for the moment, all versions are backwards compatible:
+  | otherVersion `elem` allCompatibleSnapshotVersions
+  = Right ()
+  | otherwise = Left "forward compatibility not supported"
 
 {-------------------------------------------------------------------------------
   Writing and reading files
