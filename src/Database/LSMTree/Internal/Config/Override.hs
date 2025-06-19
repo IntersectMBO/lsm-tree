@@ -5,9 +5,10 @@
 module Database.LSMTree.Internal.Config.Override (
     -- $override-policy
 
-    -- * Override disk cache policy
-    OverrideDiskCachePolicy (..)
-  , overrideDiskCachePolicy
+    -- * Override table config
+    TableConfigOverride (..)
+  , noTableConfigOverride
+  , overrideTableConfig
   ) where
 
 import qualified Data.Vector as V
@@ -42,35 +43,75 @@ import           Database.LSMTree.Internal.Snapshot
 -- Another complicating factor is that we have thought about the possibility of
 -- restoring sharing of ongoing merges between live tables and newly opened
 -- snapshots. At that point, we run into the same challenges again... But for
--- now, changing only the disk cache policy offline should work fine.
+-- now, changing only the disk cache policy and merge batch size offline should
+-- work fine.
+
+{-------------------------------------------------------------------------------
+  Helper class
+-------------------------------------------------------------------------------}
+
+-- | This class is only here so that we can recursively call 'override' on all
+-- fields of a datatype, instead of having to invent a new name for each type
+-- that the function is called on such as @overrideTableConfig@,
+-- @overrideSnapshotRun@, etc.
+class Override o a where
+  override :: o -> a -> a
+
+instance Override a c => Override (Maybe a) c where
+  override = maybe id override
+
+{-------------------------------------------------------------------------------
+  Override table config
+-------------------------------------------------------------------------------}
+
+{- |
+The 'TableConfigOverride' can be used to override the 'TableConfig'
+when opening a table from a snapshot.
+-}
+data TableConfigOverride = TableConfigOverride {
+       overrideDiskCachePolicy :: Maybe DiskCachePolicy,
+       overrideMergeBatchSize  :: Maybe MergeBatchSize
+     }
+  deriving stock (Show, Eq)
+
+-- | No override of the 'TableConfig'. You can use this as a default value and
+-- record update to override some parameters, while being future-proof to new
+-- parameters, e.g.
+--
+-- > noTableConfigOverride { overrideDiskCachePolicy = DiskCacheNone }
+--
+noTableConfigOverride :: TableConfigOverride
+noTableConfigOverride = TableConfigOverride Nothing Nothing
+
+-- | Override the a subset of the table configuration parameters that are
+-- stored in snapshot metadata.
+--
+-- Tables opened from the new 'SnapshotMetaData' will use the new value for the
+-- table configuration.
+overrideTableConfig :: TableConfigOverride
+                    -> SnapshotMetaData -> SnapshotMetaData
+overrideTableConfig = override
+
+instance Override TableConfigOverride SnapshotMetaData where
+  override TableConfigOverride {..} =
+      override overrideMergeBatchSize
+    . override overrideDiskCachePolicy
+
+{-------------------------------------------------------------------------------
+  Override merge batch size
+-------------------------------------------------------------------------------}
+
+instance Override MergeBatchSize SnapshotMetaData where
+  override mbs smd =
+    smd { snapMetaConfig = override mbs (snapMetaConfig smd) }
+
+instance Override MergeBatchSize TableConfig where
+  override confMergeBatchSize' tc =
+    tc { confMergeBatchSize = confMergeBatchSize' }
 
 {-------------------------------------------------------------------------------
   Override disk cache policy
 -------------------------------------------------------------------------------}
-
-{- |
-The 'OverrideDiskCachePolicy' can be used to override the 'DiskCachePolicy'
-when opening a table from a snapshot.
--}
-data OverrideDiskCachePolicy =
-    NoOverrideDiskCachePolicy
-  | OverrideDiskCachePolicy DiskCachePolicy
-  deriving stock (Show, Eq)
-
--- | Override the disk cache policy that is stored in snapshot metadata.
---
--- Tables opened from the new 'SnapshotMetaData' will use the new value for the
--- disk cache policy.
-overrideDiskCachePolicy :: OverrideDiskCachePolicy -> SnapshotMetaData -> SnapshotMetaData
-overrideDiskCachePolicy (OverrideDiskCachePolicy dcp) = override dcp
-overrideDiskCachePolicy NoOverrideDiskCachePolicy     = id
-
--- | This class is only here so that we can recursively call 'override' on all
--- fields of a datatype, instead of having to invent a new name for each type
--- that the function is called on such as 'overrideTableConfig',
--- 'overrideSnapshotRun', etc.
-class Override o a where
-  override :: o -> a -> a
 
 -- NOTE: the instances below explicitly pattern match on the types of
 -- constructor fields. This makes the code more verbose, but it also makes the
@@ -91,16 +132,8 @@ instance Override DiskCachePolicy SnapshotMetaData where
         in  fmap (override rdc) smt
 
 instance Override DiskCachePolicy TableConfig where
-  override confDiskCachePolicy' TableConfig {..}
-    = TableConfig
-        { confMergePolicy,
-          confMergeSchedule,
-          confSizeRatio,
-          confWriteBufferAlloc,
-          confBloomFilterAlloc,
-          confFencePointerIndex,
-          confDiskCachePolicy = confDiskCachePolicy'
-        }
+  override confDiskCachePolicy' tc =
+    tc { confDiskCachePolicy = confDiskCachePolicy' }
 
 instance Override DiskCachePolicy (SnapLevels SnapshotRun) where
   override dcp (SnapLevels (vec :: V.Vector (SnapLevel SnapshotRun))) =
