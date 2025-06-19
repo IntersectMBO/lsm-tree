@@ -60,11 +60,15 @@ import           Text.Printf
 data SnapshotVersion = V0
   deriving stock (Show, Eq)
 
+-- | Pretty-print a snapshot version
+--
 -- >>> prettySnapshotVersion currentSnapshotVersion
 -- "v0"
 prettySnapshotVersion :: SnapshotVersion -> String
 prettySnapshotVersion V0 = "v0"
 
+-- | The current snapshot version
+--
 -- >>> currentSnapshotVersion
 -- V0
 currentSnapshotVersion :: SnapshotVersion
