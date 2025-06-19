@@ -5,6 +5,7 @@
 
 module Test.ScheduledMergesQLS (tests) where
 
+import           Control.Monad (void)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Constraint (Dict (..))
@@ -18,9 +19,11 @@ import           Prelude hiding (lookup)
 import           ScheduledMerges as LSM
 
 import           Test.QuickCheck
+import qualified Test.QuickCheck.DynamicLogic as DL
 import           Test.QuickCheck.StateModel hiding (lookUpVar)
 import           Test.QuickCheck.StateModel.Lockstep hiding (ModelOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
+import           Test.QuickCheck.StateModel.Lockstep.Op.Identity (Op (OpId))
 import qualified Test.QuickCheck.StateModel.Lockstep.Run as Lockstep
 import           Test.Tasty
 import           Test.Tasty.QuickCheck (testProperty)
@@ -28,7 +31,31 @@ import           Test.Tasty.QuickCheck (testProperty)
 tests :: TestTree
 tests = testGroup "Test.ScheduledMergesQLS" [
       testProperty "ScheduledMerges vs model" $ mapSize (*10) prop_LSM  -- still <10s
+    , testProperty "propRegression_issue755" $
+        let scenario = do
+              var1 <- DL.action $ ANew (LSMConfig {configMaxWriteBufferSize = 1, configSizeRatio = 2})
+              void $ DL.action $ AInsert (unsafeMkGVar var1 OpId) (Right (K 0)) (V 0) Nothing
+              var16 <- DL.action $ AUnions [unsafeMkGVar var1 OpId]
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 0)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 1)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 0)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 0)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 1)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 2)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 0)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 0)) (V 0) Nothing
+              void $ DL.action $ AInsert (unsafeMkGVar var16 OpId) (Right (K 0)) (V 0) Nothing
+        in DL.forAllDL scenario prop_LSM
+        {-
+          The scenario above is a manually modified version of output produced by:
+
+          cabal run prototypes-test -- \
+            --quickcheck-replay="(SMGen 3702524042292853426 14344574976030159473,92)" \
+            -p '/ScheduledMerges vs model/'
+        -}
     ]
+
+instance DL.DynLogicModel (Lockstep Model) where
 
 -- TODO: add tagging, e.g. how often ASupplyUnion makes progress or completes a
 -- union merge.
