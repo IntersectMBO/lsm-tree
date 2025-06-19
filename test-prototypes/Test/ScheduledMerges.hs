@@ -39,7 +39,7 @@ test_regression_empty_run :: IO ()
 test_regression_empty_run =
     runWithTracer $ \tracer -> do
       stToIO $ do
-        lsm <- LSM.new
+        lsm <- LSM.new tracer (LSM.TableId 0)
         let ins k = LSM.insert tracer lsm (K k) (V 0) Nothing
         let del k = LSM.delete tracer lsm (K k)
         -- run 1
@@ -114,7 +114,7 @@ test_merge_again_with_incoming :: IO ()
 test_merge_again_with_incoming =
     runWithTracer $ \tracer -> do
       stToIO $ do
-        lsm <- LSM.new
+        lsm <- LSM.new tracer (LSM.TableId 0)
         let ins k = LSM.insert tracer lsm (K k) (V 0) Nothing
         -- get something to 3rd level (so 2nd level is not levelling)
         -- (needs 5 runs to go to level 2 so the resulting run becomes too big)
@@ -181,8 +181,8 @@ prop_union :: [[(LSM.Key, LSM.Entry)]] -> Property
 prop_union kess = length (filter (not . null) kess) > 1 QC.==>
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
-        ts <- traverse (mkTable tr) kess
-        t <- LSM.unions ts
+        ts <- traverse (uncurry $ mkTable tr) (zip [LSM.TableId 0..] kess)
+        t <- LSM.unions tr (LSM.TableId (length kess)) ts
 
         debt@(UnionDebt x) <- LSM.remainingUnionDebt t
         _ <- LSM.supplyUnionCredits t (UnionCredits x)
@@ -199,9 +199,9 @@ prop_union kess = length (filter (not . null) kess) > 1 QC.==>
         MLeaf{} -> True
         MNode{} -> False
 
-mkTable :: Tracer (ST s) Event -> [(LSM.Key, LSM.Entry)] -> ST s (LSM s)
-mkTable tr ks = do
-    t <- LSM.new
+mkTable :: Tracer (ST s) Event -> LSM.TableId -> [(LSM.Key, LSM.Entry)] -> ST s (LSM s)
+mkTable tr tid ks = do
+    t <- LSM.new tr tid
     LSM.updates tr t ks
     pure t
 
