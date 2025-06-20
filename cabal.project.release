@@ -1,7 +1,7 @@
 index-state:
   -- Bump this if you need newer packages from Hackage
   -- unix-2.8.7.0
-  , hackage.haskell.org 2025-06-11T07:49:45Z
+  , hackage.haskell.org 2025-06-19T00:00:00Z
 
 packages:
   .

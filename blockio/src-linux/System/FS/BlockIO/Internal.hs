@@ -6,9 +6,8 @@ module System.FS.BlockIO.Internal (
 
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
-import qualified System.FS.BlockIO.API as FS
-import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
-                     IOCtxParams)
+import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO)
+import qualified System.FS.BlockIO.IO.Internal as FS
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
 import qualified System.Posix.Fcntl as Fcntl
@@ -23,7 +22,7 @@ import qualified System.FS.BlockIO.Async as Async
 
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> IOCtxParams
+  -> FS.IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 #if SERIALBLOCKIO
 ioHasBlockIO hfs _params =
