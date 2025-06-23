@@ -114,7 +114,7 @@ simErrorHasBlockIOLogged ::
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simErrorHasBlockIOLogged fsVar errorsVar logVar = do
     let hfs = simErrorHasFSLogged fsVar errorsVar logVar
-    hbio <- fromHasFS hfs
+    hbio <- unsafeFromHasFS hfs
     pure (hfs, hbio)
 
 -- | Produce a simulated file system with injected errors and a logger for those
