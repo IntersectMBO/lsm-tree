@@ -33,7 +33,7 @@ asyncHasBlockIO ::
   -> (FsPath -> IO ())
   -> (FsPath -> FsPath -> IO ())
   -> HasFS IO HandleIO
-  -> API.IOCtxParams
+  -> IOI.IOCtxParams
   -> IO (API.HasBlockIO IO HandleIO)
 asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hSynchronise synchroniseDirectory createHardLink hasFS ctxParams = do
   ctx <- I.initIOCtx (ctxParamsConv ctxParams)
@@ -49,8 +49,8 @@ asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hSynchronise synchroni
     , API.createHardLink
     }
 
-ctxParamsConv :: API.IOCtxParams -> I.IOCtxParams
-ctxParamsConv API.IOCtxParams{API.ioctxBatchSizeLimit, API.ioctxConcurrencyLimit} =
+ctxParamsConv :: IOI.IOCtxParams -> I.IOCtxParams
+ctxParamsConv IOI.IOCtxParams{IOI.ioctxBatchSizeLimit, IOI.ioctxConcurrencyLimit} =
     I.IOCtxParams {
         I.ioctxBatchSizeLimit   = ioctxBatchSizeLimit
       , I.ioctxConcurrencyLimit = ioctxConcurrencyLimit

@@ -260,8 +260,9 @@ import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
 import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
-import           System.FS.BlockIO.IO (ioHasBlockIO, withIOHasBlockIO)
+import           System.FS.BlockIO.API (HasBlockIO (..))
+import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO,
+                     withIOHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
 
 --------------------------------------------------------------------------------

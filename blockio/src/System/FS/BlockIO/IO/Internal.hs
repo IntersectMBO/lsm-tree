@@ -2,11 +2,14 @@
 {-# LANGUAGE UnboxedTuples #-}
 
 module System.FS.BlockIO.IO.Internal (
-    mkClosedError
+    IOCtxParams (..)
+  , defaultIOCtxParams
+  , mkClosedError
   , tryLockFileIO
   , createHardLinkIO
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
                      MonadThrow (..), bracketOnError, try)
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
@@ -18,6 +21,26 @@ import           System.FS.BlockIO.API (LockFileHandle (..))
 import           System.FS.IO (HandleIO)
 import qualified System.IO as GHC
 import           System.IO.Error (ioeSetErrorString, mkIOError)
+
+{-------------------------------------------------------------------------------
+  IO context
+-------------------------------------------------------------------------------}
+
+-- | Concurrency parameters for initialising the 'IO' context in a 'HasBlockIO'
+-- instance. Can be ignored by serial implementations.
+data IOCtxParams = IOCtxParams {
+                     ioctxBatchSizeLimit   :: !Int,
+                     ioctxConcurrencyLimit :: !Int
+                   }
+
+instance NFData IOCtxParams where
+  rnf (IOCtxParams x y) = rnf x `seq` rnf y
+
+defaultIOCtxParams :: IOCtxParams
+defaultIOCtxParams = IOCtxParams {
+      ioctxBatchSizeLimit   = 64,
+      ioctxConcurrencyLimit = 64 * 3
+    }
 
 mkClosedError :: HasCallStack => SomeHasFS m -> String -> FsError
 mkClosedError (SomeHasFS hasFS) loc = FS.ioToFsError (FS.mkFsErrorPath hasFS (FS.mkFsPath [])) ioerr

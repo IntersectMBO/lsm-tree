@@ -106,8 +106,8 @@ import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
-import           System.FS.BlockIO.IO (ioHasBlockIO)
+import           System.FS.BlockIO.API (HasBlockIO)
+import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.Error as FSSim
 import           System.FS.Sim.Error (Errors)

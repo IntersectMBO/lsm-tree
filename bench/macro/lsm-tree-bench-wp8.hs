@@ -63,7 +63,6 @@ import qualified Options.Applicative as O
 import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
 import qualified System.FS.API as FS
-import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FsIO
 import qualified System.FS.IO as FsIO
 import           System.IO
@@ -409,7 +408,7 @@ doSetup' gopts opts = do
     let hasFS :: FS.HasFS IO FsIO.HandleIO
         hasFS = FsIO.ioHasFS mountPoint
 
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
+    hasBlockIO <- FsIO.ioHasBlockIO hasFS FsIO.defaultIOCtxParams
 
     let name = LSM.toSnapshotName "bench"
 
@@ -571,7 +570,7 @@ doRun gopts opts = do
     let hasFS :: FS.HasFS IO FsIO.HandleIO
         hasFS = FsIO.ioHasFS mountPoint
 
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
+    hasBlockIO <- FsIO.ioHasBlockIO hasFS FsIO.defaultIOCtxParams
 
     let name = LSM.toSnapshotName "bench"
 
