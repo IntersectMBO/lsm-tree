@@ -1005,13 +1005,11 @@ benchmark lsm-tree-bench-wp8
   build-depends:
     , async
     , base                  <5
-    , blockio
     , bytestring
     , clock
     , containers
     , contra-tracer
     , deepseq
-    , fs-api
     , lsm-tree
     , lsm-tree:extras
     , lsm-tree:mcg

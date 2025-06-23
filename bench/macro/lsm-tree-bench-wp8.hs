@@ -62,10 +62,6 @@ import qualified MCG
 import qualified Options.Applicative as O
 import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
-import qualified System.FS.API as FS
-import qualified System.FS.BlockIO.API as FS
-import qualified System.FS.BlockIO.IO as FsIO
-import qualified System.FS.IO as FsIO
 import           System.IO
 import           System.Mem (performMajorGC)
 import qualified System.Random as Random
@@ -403,17 +399,8 @@ doSetup gopts opts = do
 
 doSetup' :: GlobalOpts -> SetupOpts -> IO ()
 doSetup' gopts opts = do
-    let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint (rootDir gopts)
-
-    let hasFS :: FS.HasFS IO FsIO.HandleIO
-        hasFS = FsIO.ioHasFS mountPoint
-
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
-
     let name = LSM.toSnapshotName "bench"
-
-    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session -> do
+    LSM.withSessionIO (mkTracer gopts) (rootDir gopts) $ \session -> do
         tbl <- LSM.newTableWith @IO @K @V @B (mkTableConfigSetup gopts opts benchTableConfig) session
 
         forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
@@ -565,17 +552,9 @@ toOperations lookups inserts = (batch1, batch2)
 
 doRun :: GlobalOpts -> RunOpts -> IO ()
 doRun gopts opts = do
-    let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint (rootDir gopts)
-
-    let hasFS :: FS.HasFS IO FsIO.HandleIO
-        hasFS = FsIO.ioHasFS mountPoint
-
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
-
     let name = LSM.toSnapshotName "bench"
 
-    LSM.withSession (mkTracer gopts) hasFS hasBlockIO (FS.mkFsPath []) $ \session ->
+    LSM.withSessionIO (mkTracer gopts) (rootDir gopts) $ \session ->
       withLatencyHandle $ \h -> do
         -- open snapshot
         -- In checking mode we start with an empty table, since our pure
