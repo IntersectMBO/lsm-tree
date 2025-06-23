@@ -27,7 +27,17 @@ import           System.IO.Error (ioeSetErrorString, mkIOError)
 -------------------------------------------------------------------------------}
 
 -- | Concurrency parameters for initialising the 'IO' context in a 'HasBlockIO'
--- instance. Can be ignored by serial implementations.
+-- instance.
+--
+-- [IO context parameters]: These parameters are interpreted differently based
+--  on the underlying platform:
+--
+--  * Linux: Pass the parameters to 'initIOCtx' in the @blockio-uring@ package
+--  * MacOS: Ignore the parameters
+--  * Windows: Ignore the parameters
+--
+--  For more information about what these parameters mean and how to configure
+--  them, see the @blockio-uring@ package.
 data IOCtxParams = IOCtxParams {
                      ioctxBatchSizeLimit   :: !Int,
                      ioctxConcurrencyLimit :: !Int
@@ -36,6 +46,8 @@ data IOCtxParams = IOCtxParams {
 instance NFData IOCtxParams where
   rnf (IOCtxParams x y) = rnf x `seq` rnf y
 
+-- | Default parameters. Some manual tuning of parameters might be required to
+-- achieve higher performance targets (see 'IOCtxParams').
 defaultIOCtxParams :: IOCtxParams
 defaultIOCtxParams = IOCtxParams {
       ioctxBatchSizeLimit   = 64,
