@@ -4,8 +4,6 @@
 module System.FS.BlockIO.API (
     -- * HasBlockIO
     HasBlockIO (..)
-  , IOCtxParams (..)
-  , defaultIOCtxParams
   , IOOp (..)
   , ioopHandle
   , ioopFileOffset
@@ -153,22 +151,6 @@ instance NFData (HasBlockIO m h) where
       rwhnf a `seq` rwhnf b `seq` rnf c `seq`
       rwhnf d `seq` rwhnf e `seq` rwhnf f `seq`
       rwhnf g `seq` rwhnf h `seq` rwhnf i
-
--- | Concurrency parameters for initialising a 'HasBlockIO. Can be ignored by
--- serial implementations.
-data IOCtxParams = IOCtxParams {
-                     ioctxBatchSizeLimit   :: !Int,
-                     ioctxConcurrencyLimit :: !Int
-                   }
-
-instance NFData IOCtxParams where
-  rnf (IOCtxParams x y) = rnf x `seq` rnf y
-
-defaultIOCtxParams :: IOCtxParams
-defaultIOCtxParams = IOCtxParams {
-      ioctxBatchSizeLimit   = 64,
-      ioctxConcurrencyLimit = 64 * 3
-    }
 
 data IOOp s h =
     IOOpRead  !(Handle h) !FileOffset !(MutableByteArray s) !BufferOffset !ByteCount

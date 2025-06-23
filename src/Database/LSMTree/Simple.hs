@@ -188,8 +188,8 @@ import qualified Database.LSMTree.Internal.Types as LSMT
 import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
-import           System.FS.BlockIO.IO (ioHasBlockIO)
+import           System.FS.BlockIO.API (HasBlockIO (..))
+import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO)
 import           System.FS.IO (ioHasFS)
 import           System.Random (randomIO)
 

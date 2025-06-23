@@ -2,11 +2,14 @@
 {-# LANGUAGE UnboxedTuples #-}
 
 module System.FS.BlockIO.IO.Internal (
-    mkClosedError
+    IOCtxParams (..)
+  , defaultIOCtxParams
+  , mkClosedError
   , tryLockFileIO
   , createHardLinkIO
   ) where
 
+import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
                      MonadThrow (..), bracketOnError, try)
 import           GHC.IO.Exception (IOErrorType (ResourceVanished))
@@ -18,6 +21,38 @@ import           System.FS.BlockIO.API (LockFileHandle (..))
 import           System.FS.IO (HandleIO)
 import qualified System.IO as GHC
 import           System.IO.Error (ioeSetErrorString, mkIOError)
+
+{-------------------------------------------------------------------------------
+  IO context
+-------------------------------------------------------------------------------}
+
+-- | Concurrency parameters for initialising the 'IO' context in a 'HasBlockIO'
+-- instance.
+--
+-- [IO context parameters]: These parameters are interpreted differently based
+--  on the underlying platform:
+--
+--  * Linux: Pass the parameters to 'initIOCtx' in the @blockio-uring@ package
+--  * MacOS: Ignore the parameters
+--  * Windows: Ignore the parameters
+--
+--  For more information about what these parameters mean and how to configure
+--  them, see the @blockio-uring@ package.
+data IOCtxParams = IOCtxParams {
+                     ioctxBatchSizeLimit   :: !Int,
+                     ioctxConcurrencyLimit :: !Int
+                   }
+
+instance NFData IOCtxParams where
+  rnf (IOCtxParams x y) = rnf x `seq` rnf y
+
+-- | Default parameters. Some manual tuning of parameters might be required to
+-- achieve higher performance targets (see 'IOCtxParams').
+defaultIOCtxParams :: IOCtxParams
+defaultIOCtxParams = IOCtxParams {
+      ioctxBatchSizeLimit   = 64,
+      ioctxConcurrencyLimit = 64 * 3
+    }
 
 mkClosedError :: HasCallStack => SomeHasFS m -> String -> FsError
 mkClosedError (SomeHasFS hasFS) loc = FS.ioToFsError (FS.mkFsErrorPath hasFS (FS.mkFsPath [])) ioerr
