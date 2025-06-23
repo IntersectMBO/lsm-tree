@@ -18,7 +18,7 @@ import qualified System.FS.API.Lazy as API
 import qualified System.FS.API.Strict as API
 import           System.FS.BlockIO.API (HasBlockIO (..), LockFileHandle (..),
                      LockMode (..))
-import           System.FS.BlockIO.Serial
+import           System.FS.BlockIO.Serial.Internal
 import           System.FS.CallStack (prettyCallStack)
 import           System.FS.Sim.Error
 import           System.FS.Sim.MockFS hiding (hClose, hOpen)
