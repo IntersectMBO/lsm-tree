@@ -18,7 +18,7 @@ license-files:
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:      TODO: MAINTAINER EMAIL
+maintainer:      joris@well-typed.com
 copyright:
   (c) 2023 Input Output Global, Inc. (IOG)
   (c) 2023-2025 INTERSECT
@@ -33,13 +33,11 @@ source-repository head
   location: https://github.com/IntersectMBO/lsm-tree
   subdir:   blockio
 
--- TODO: this tag obviously does not exist yet because the package has not
--- been published
 source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
-  tag:      blockio-0.1.0.0
   subdir:   blockio
+  tag:      blockio-0.1.0.0
 
 common warnings
   ghc-options:
@@ -117,7 +115,7 @@ test-suite test
     , bytestring
     , fs-api
     , primitive
-    , QuickCheck        ^>=2.15.0.1
+    , QuickCheck        >=2.15.0.1
     , tasty
     , tasty-hunit
     , tasty-quickcheck
@@ -132,12 +130,12 @@ library sim
   hs-source-dirs:  src-sim
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
-    , base                   >=4.16      && <4.22
+    , base                   >=4.16  && <4.22
     , blockio
-    , bytestring             ^>=0.11.4.0 || ^>=0.12.1.0
+    , bytestring             ^>=0.11 || ^>=0.12
     , fs-api                 ^>=0.4
     , fs-sim                 ^>=0.4
-    , io-classes             ^>=1.6      || ^>=1.7      || ^>=1.8.0.1
+    , io-classes             ^>=1.6  || ^>=1.7  || ^>=1.8.0.1
     , io-classes:strict-stm
     , primitive              ^>=0.9
 
