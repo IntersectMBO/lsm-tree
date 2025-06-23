@@ -1,10 +1,18 @@
+-- | Simulated instances of 'HasBlockIO' and 'HasFS'.
 module System.FS.BlockIO.Sim (
-    fromHasFS
-    -- * Initialisation helpers
+    -- * Implementation details #impl#
+    -- $impl
+
+    -- * Runners
+    runSimHasBlockIO
+  , runSimErrorHasBlockIO
+    -- * Initialisation
   , simHasBlockIO
   , simHasBlockIO'
   , simErrorHasBlockIO
   , simErrorHasBlockIO'
+    -- ** Unsafe
+  , unsafeFromHasFS
   ) where
 
 import           Control.Concurrent.Class.MonadMVar
@@ -24,11 +32,55 @@ import           System.FS.Sim.Error
 import           System.FS.Sim.MockFS hiding (hClose, hOpen)
 import           System.FS.Sim.STM
 
-fromHasFS ::
+{- $impl
+
+  We include below some documentation about the effects of calling the interface
+  functions on the simulated instance of the 'HasBlockIO' interface.
+
+  [IO context]: For uniform behaviour across implementations, the simulation
+    creates and stores a mocked IO context that has the open/closed behaviour
+    that is specified by the interface.
+
+  ['close']: Close the mocked context
+
+  ['submitIO']: Submit a batch of I\/O operations using serial I\/O using a
+      'HasFS'
+
+  ['hSetNoCache']: No-op
+
+  ['hAdvise']: No-op
+
+  ['hAllocate']: No-op
+
+  ['tryLockFile']: Simulate a lock by putting the lock state into the file
+      contents
+
+  ['hSynchronise']: No-op
+
+  ['synchroniseDirectory']: No-op
+
+  ['createHardLink']: Copy all file contents from the source path to the target
+      path. Therefore, this is currently only correctly simulating hard links
+      for /immutable/ files.
+-}
+
+-- | Simulate a 'HasBlockIO' using the given 'HasFS'.
+--
+-- === Unsafe
+--
+-- You will probably want to use one of the safe functions like
+-- 'runSimHasBlockIO' or 'simErrorHasBlockIO' instead.
+--
+-- Only a simulated 'HasFS', like the 'simHasFS' and 'simErrorHasFS'
+-- simulations, should be passed to 'unsafeFromHasFS'. Technically, one could
+-- pass a 'HasFS' for the /real/ file system, but then the resulting
+-- 'HasBlockIO' would contain a mix of simulated functions and real functions,
+-- which is probably not what you want.
+unsafeFromHasFS ::
      forall m. (MonadCatch m, MonadMVar m, PrimMonad m)
   => HasFS m HandleMock
   -> m (HasBlockIO m HandleMock)
-fromHasFS hfs =
+unsafeFromHasFS hfs =
     serialHasBlockIO
       hSetNoCache
       hAdvise
@@ -142,27 +194,104 @@ simCreateHardLink hfs sourcePath targetPath =
       void $ API.hPutAll hfs targetHandle bs
 
 {-------------------------------------------------------------------------------
-  Initialisation helpers
+  Runners
 -------------------------------------------------------------------------------}
 
+-- | @'runSimHasBlockIO' mockFS action@ runs an @action@ using a pair of
+-- simulated 'HasFS' and 'HasBlockIO'.
+--
+-- The pair of interfaces share the same mocked file system. The initial state
+-- of the mocked file system is set to @mockFs@. The final state of the mocked
+-- file system is returned with the result of @action@.
+--
+-- If you want to have access to the current state of the mocked file system,
+-- use 'simHasBlockIO' instead.
+runSimHasBlockIO ::
+     (MonadSTM m, PrimMonad m, MonadCatch m, MonadMVar m)
+  => MockFS
+  -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m a)
+  -> m (a, MockFS)
+runSimHasBlockIO mockFS k = do
+    runSimFS mockFS $ \hfs -> do
+      hbio <- unsafeFromHasFS hfs
+      k hfs hbio
+
+-- | @'runSimErrorHasBlockIO' mockFS errors action@ runs an @action@ using a
+-- pair of simulated 'HasFS' and 'HasBlockIO' that allow fault injection.
+--
+-- The pair of interfaces share the same mocked file system. The initial state
+-- of the mocked file system is set to @mockFs@. The final state of the mocked
+-- file system is returned with the result of @action@.
+--
+-- The pair of interfaces share the same stream of errors. The initial state of
+-- the stream of errors is set to @errors@. The final state of the stream of
+-- errors is returned with the result of @action@.
+--
+-- If you want to have access to the current state of the mocked file system
+-- or stream of errors, use 'simErrorHasBlockIO' instead.
+runSimErrorHasBlockIO ::
+     (MonadSTM m, PrimMonad m, MonadCatch m, MonadMVar m)
+  => MockFS
+  -> Errors
+  -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m a)
+  -> m (a, MockFS, Errors)
+runSimErrorHasBlockIO mockFS errs k = do
+    fsVar <- newTMVarIO mockFS
+    errorsVar <- newTVarIO errs
+    (hfs, hbio) <- simErrorHasBlockIO fsVar errorsVar
+    a <- k hfs hbio
+    fs' <- atomically $ takeTMVar fsVar
+    errs' <- readTVarIO errorsVar
+    pure (a, fs', errs')
+
+{-------------------------------------------------------------------------------
+  Initialisation
+-------------------------------------------------------------------------------}
+
+-- | @'simHasBlockIO' mockFsVar@ creates a pair of simulated 'HasFS' and
+-- 'HasBlockIO'.
+--
+-- The pair of interfaces share the same mocked file system, which is stored in
+-- @mockFsVar@. The current state of the mocked file system can be accessed by
+-- the user by reading @mockFsVar@, but note that the user should not leave
+-- @mockFsVar@ empty.
 simHasBlockIO ::
      (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
   => StrictTMVar m MockFS
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simHasBlockIO var = do
     let hfs = simHasFS var
-    hbio <- fromHasFS hfs
+    hbio <- unsafeFromHasFS hfs
     pure (hfs, hbio)
 
+-- | @'simHasBlockIO' mockFs@ creates a pair of simulated 'HasFS' and
+-- 'HasBlockIO' that allow fault injection.
+--
+-- The pair of interfaces share the same mocked file system. The initial state
+-- of the mocked file system is set to @mockFs@.
+--
+-- If you want to have access to the current state of the mocked file system,
+-- use 'simHasBlockIO' instead.
 simHasBlockIO' ::
      (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
   => MockFS
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simHasBlockIO' mockFS = do
     hfs <- simHasFS' mockFS
-    hbio <- fromHasFS hfs
+    hbio <- unsafeFromHasFS hfs
     pure (hfs, hbio)
 
+-- | @'simErrorHasBlockIO' mockFsVar errorsVar@ creates a pair of simulated
+-- 'HasFS' and 'HasBlockIO' that allow fault injection.
+--
+-- The pair of interfaces share the same mocked file system, which is stored in
+-- @mockFsVar@. The current state of the mocked file system can be accessed by
+-- the user by reading @mockFsVar@, but note that the user should not leave
+-- @mockFsVar@ empty.
+--
+-- The pair of interfaces share the same stream of errors, which is stored in
+-- @errorsVar@. The current state of the stream of errors can be accessed by the
+-- user by reading @errorsVar@.
 simErrorHasBlockIO ::
      forall m. (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
   => StrictTMVar m MockFS
@@ -170,9 +299,20 @@ simErrorHasBlockIO ::
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simErrorHasBlockIO fsVar errorsVar = do
     let hfs = simErrorHasFS fsVar errorsVar
-    hbio <- fromHasFS hfs
+    hbio <- unsafeFromHasFS hfs
     pure (hfs, hbio)
 
+-- | @'simErrorHasBlockIO' mockFs errors@ creates a pair of simulated 'HasFS'
+-- and 'HasBlockIO' that allow fault injection.
+--
+-- The pair of interfaces share the same mocked file system. The initial state
+-- of the mocked file system is set to @mockFs@.
+--
+-- The pair of interfaces share the same stream of errors. The initial state of
+-- the stream of errors is set to @errors@.
+--
+-- If you want to have access to the current state of the mocked file system
+-- or stream of errors, use 'simErrorHasBlockIO' instead.
 simErrorHasBlockIO' ::
      (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
   => MockFS
@@ -180,5 +320,5 @@ simErrorHasBlockIO' ::
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simErrorHasBlockIO' mockFS errs = do
     hfs <- simErrorHasFS' mockFS errs
-    hbio <- fromHasFS hfs
+    hbio <- unsafeFromHasFS hfs
     pure (hfs, hbio)

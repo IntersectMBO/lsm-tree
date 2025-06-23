@@ -39,7 +39,6 @@ import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.Sim as FsSim
 import qualified System.FS.Sim.MockFS as MockFS
-import qualified System.FS.Sim.STM as FsSim
 import qualified Test.QuickCheck as QC
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
@@ -55,8 +54,7 @@ tests = testGroup "Database.LSMTree.Internal.Readers"
     [ testProperty "prop_lockstep" $
         Lockstep.runActionsBracket (Proxy @ReadersState)
           mempty mempty $ \act () -> do
-          (prop, mockFS) <- FsSim.runSimFS MockFS.empty $ \hfs -> do
-            hbio <- FsSim.fromHasFS hfs
+          (prop, mockFS) <- FsSim.runSimHasBlockIO MockFS.empty $ \hfs hbio -> do
             (prop, RealState _ mCtx) <- runRealMonad hfs hbio
                                                      (RealState 0 Nothing) act
             traverse_ closeReadersCtx mCtx  -- close current readers

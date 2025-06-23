@@ -75,7 +75,7 @@ import           System.FS.API as FS
 import qualified System.FS.API.Lazy as FSL
 import           System.FS.BlockIO.API
 import           System.FS.BlockIO.IO hiding (unsafeFromHasFS)
-import           System.FS.BlockIO.Sim (fromHasFS)
+import           System.FS.BlockIO.Sim (unsafeFromHasFS)
 import           System.FS.IO
 import           System.FS.Sim.Error
 import           System.FS.Sim.MockFS (HandleMock, MockFS, numOpenHandles,
@@ -136,7 +136,7 @@ withSimHasBlockIO ::
   -> m Property
 withSimHasBlockIO post fs k = do
     withSimHasFS post fs $ \hfs fsVar -> do
-      hbio <- fromHasFS hfs
+      hbio <- unsafeFromHasFS hfs
       k hfs hbio fsVar
 
 {-------------------------------------------------------------------------------
@@ -180,7 +180,7 @@ withSimErrorHasBlockIO ::
   -> m Property
 withSimErrorHasBlockIO post fs errs k =
     withSimErrorHasFS post fs errs $ \hfs fsVar errsVar -> do
-      hbio <- fromHasFS hfs
+      hbio <- unsafeFromHasFS hfs
       k hfs hbio fsVar errsVar
 
 {-------------------------------------------------------------------------------
