@@ -263,7 +263,7 @@ import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..))
 import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO,
                      withIOHasBlockIO)
-import           System.FS.IO (HandleIO, ioHasFS)
+import           System.FS.IO (HandleIO)
 
 --------------------------------------------------------------------------------
 -- Usage Notes
@@ -453,8 +453,7 @@ withSessionIO ::
 withSessionIO tracer sessionDir action = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
-  let hasFS = ioHasFS mountPoint
-  withIOHasBlockIO hasFS defaultIOCtxParams $ \hasBlockIO ->
+  withIOHasBlockIO mountPoint defaultIOCtxParams $ \hasFS hasBlockIO ->
     withSession tracer hasFS hasBlockIO sessionDirFsPath action
 
 {- |
@@ -506,10 +505,9 @@ openSessionIO ::
 openSessionIO tracer sessionDir = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
-  let hasFS = ioHasFS mountPoint
-  let acquireHasBlockIO = ioHasBlockIO hasFS defaultIOCtxParams
-  let releaseHasBlockIO HasBlockIO{close} = close
-  bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
+  let acquireHasBlockIO = ioHasBlockIO mountPoint defaultIOCtxParams
+  let releaseHasBlockIO (_, HasBlockIO{close}) = close
+  bracketOnError acquireHasBlockIO releaseHasBlockIO $ \(hasFS, hasBlockIO) ->
     openSession tracer hasFS hasBlockIO sessionDirFsPath
 
 {- |
