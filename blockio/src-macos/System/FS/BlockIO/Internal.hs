@@ -4,9 +4,9 @@ module System.FS.BlockIO.Internal (
 
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
-import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
                      IOCtxParams)
+import qualified System.FS.BlockIO.IO.Internal as IOI
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
@@ -28,10 +28,10 @@ ioHasBlockIO hfs _params =
       hSetNoCache
       hAdvise
       hAllocate
-      (FS.tryLockFileIO hfs)
+      (IOI.tryLockFileIO hfs)
       hSynchronise
       (synchroniseDirectory hfs)
-      (FS.createHardLinkIO hfs Unix.createLink)
+      (IOI.createHardLinkIO hfs Unix.createLink)
       hfs
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()

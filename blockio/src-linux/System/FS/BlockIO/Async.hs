@@ -16,6 +16,7 @@ import           System.FS.API (BufferOffset (..), FsErrorPath, FsPath,
 import qualified System.FS.BlockIO.API as API
 import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode,
                      ioopHandle)
+import qualified System.FS.BlockIO.IO.Internal as IOI
 import           System.FS.IO (HandleIO)
 import           System.FS.IO.Handle
 import qualified System.IO.BlockIO as I
@@ -72,7 +73,7 @@ submitIO hasFS ioctx ioops = do
         -- the exception might change between versions of @blockio-uring@.
         -- Nonetheless, it's better than nothing.
         if isResourceVanishedError e && ioe_location e == "IOCtx closed"
-          then throwIO (API.mkClosedError (SomeHasFS hasFS) "submitIO")
+          then throwIO (IOI.mkClosedError (SomeHasFS hasFS) "submitIO")
           else throwIO e
 
     rethrowErrno ::
