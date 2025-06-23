@@ -433,8 +433,7 @@ mkFiles ::
 mkFiles = do
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "full"
-    let hfs = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    hbio <- FS.ioHasBlockIO hfs FS.defaultIOCtxParams
+    (hfs, hbio) <- FS.ioHasBlockIO (FS.MountPoint benchTmpDir) FS.defaultIOCtxParams
     pure (benchTmpDir, hfs, hbio)
 
 cleanupFiles ::

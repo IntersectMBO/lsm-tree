@@ -107,7 +107,7 @@ import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO, close)
 import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO)
-import           System.FS.IO (HandleIO, ioHasFS)
+import           System.FS.IO (HandleIO)
 import qualified System.FS.Sim.Error as FSSim
 import           System.FS.Sim.Error (Errors)
 import qualified System.FS.Sim.MockFS as MockFS
@@ -469,8 +469,7 @@ createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBloc
 createSystemTempDirectory prefix = do
     systemTempDir <- getCanonicalTemporaryDirectory
     tempDir <- createTempDirectory systemTempDir prefix
-    let hasFS = ioHasFS (MountPoint tempDir)
-    hasBlockIO <- ioHasBlockIO hasFS defaultIOCtxParams
+    (hasFS, hasBlockIO) <- ioHasBlockIO (MountPoint tempDir) defaultIOCtxParams
     pure (tempDir, hasFS, hasBlockIO)
 
 {-------------------------------------------------------------------------------

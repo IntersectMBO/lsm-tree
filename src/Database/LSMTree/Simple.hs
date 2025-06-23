@@ -190,7 +190,6 @@ import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..))
 import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO)
-import           System.FS.IO (ioHasFS)
 import           System.Random (randomIO)
 
 --------------------------------------------------------------------------------
@@ -458,11 +457,10 @@ openSession dir = do
     _convertSessionDirErrors dir $ do
       let mountPoint = MountPoint dir
       let sessionDirFsPath = mkFsPath []
-      let hasFS = ioHasFS mountPoint
       sessionSalt <- randomIO
-      let acquireHasBlockIO = ioHasBlockIO hasFS defaultIOCtxParams
-      let releaseHasBlockIO HasBlockIO{close} = close
-      bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
+      let acquireHasBlockIO = ioHasBlockIO mountPoint defaultIOCtxParams
+      let releaseHasBlockIO (_, HasBlockIO{close}) = close
+      bracketOnError acquireHasBlockIO releaseHasBlockIO $ \(hasFS, hasBlockIO) ->
         Session <$> LSMT.openSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath
 
 {- |

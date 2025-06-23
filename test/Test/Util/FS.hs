@@ -74,7 +74,7 @@ import           GHC.Stack
 import           System.FS.API as FS
 import qualified System.FS.API.Lazy as FSL
 import           System.FS.BlockIO.API
-import           System.FS.BlockIO.IO
+import           System.FS.BlockIO.IO hiding (unsafeFromHasFS)
 import           System.FS.BlockIO.Sim (fromHasFS)
 import           System.FS.IO
 import           System.FS.Sim.Error
@@ -99,9 +99,8 @@ withTempIOHasFS path action = withSystemTempDirectory path $ \dir -> do
     action hfs
 
 withTempIOHasBlockIO :: FilePath -> (HasFS IO HandleIO -> HasBlockIO IO HandleIO -> IO a) -> IO a
-withTempIOHasBlockIO path action =
-    withTempIOHasFS path $ \hfs -> do
-      withIOHasBlockIO hfs defaultIOCtxParams (action hfs)
+withTempIOHasBlockIO path action = withSystemTempDirectory path $ \dir -> do
+    withIOHasBlockIO (MountPoint dir) defaultIOCtxParams action
 
 {-------------------------------------------------------------------------------
   Simulated file system
