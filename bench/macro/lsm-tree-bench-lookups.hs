@@ -310,11 +310,10 @@ totalNumEntriesSanityCheck l1 runSizes =
 withFS ::
      (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)
   -> IO a
-withFS action = do
-    let hfs = FS.ioHasFS (FS.MountPoint "_bench_lookups")
-    exists <- FS.doesDirectoryExist hfs (FS.mkFsPath [""])
-    unless exists $ error ("_bench_lookups directory does not exist")
-    FS.withIOHasBlockIO hfs FS.defaultIOCtxParams $ \hbio ->
+withFS action =
+    FS.withIOHasBlockIO (FS.MountPoint "_bench_lookups") FS.defaultIOCtxParams $ \hfs hbio -> do
+      exists <- FS.doesDirectoryExist hfs (FS.mkFsPath [""])
+      unless exists $ error ("_bench_lookups directory does not exist")
       action hfs hbio
 
 -- | Input environment for benchmarking lookup functions.

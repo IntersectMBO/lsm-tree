@@ -373,8 +373,7 @@ mergeEnv ::
 mergeEnv config = do
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "mergeEnv"
-    let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    hasBlockIO <- FS.ioHasBlockIO hasFS FS.defaultIOCtxParams
+    (hasFS, hasBlockIO) <- FS.ioHasBlockIO (FS.MountPoint benchTmpDir) FS.defaultIOCtxParams
     runs <- randomRuns hasFS hasBlockIO config (mkStdGen 17)
     pure (benchTmpDir, hasFS, hasBlockIO, runs)
 

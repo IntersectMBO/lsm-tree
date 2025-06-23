@@ -277,7 +277,7 @@ import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..))
 import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO,
                      withIOHasBlockIO)
-import           System.FS.IO (HandleIO, ioHasFS)
+import           System.FS.IO (HandleIO)
 import           System.Random (randomIO)
 
 --------------------------------------------------------------------------------
@@ -472,9 +472,8 @@ withOpenSessionIO ::
 withOpenSessionIO tracer sessionDir action = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
-  let hasFS = ioHasFS mountPoint
   sessionSalt <- randomIO
-  withIOHasBlockIO hasFS defaultIOCtxParams $ \hasBlockIO ->
+  withIOHasBlockIO mountPoint defaultIOCtxParams $ \hasFS hasBlockIO ->
     withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
 
 {- |
@@ -632,11 +631,10 @@ openSessionIO ::
 openSessionIO tracer sessionDir = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
-  let hasFS = ioHasFS mountPoint
   sessionSalt <- randomIO
-  let acquireHasBlockIO = ioHasBlockIO hasFS defaultIOCtxParams
-  let releaseHasBlockIO HasBlockIO{close} = close
-  bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
+  let acq = ioHasBlockIO mountPoint defaultIOCtxParams
+  let rel (_, HasBlockIO{close}) = close
+  bracketOnError acq rel $ \(hasFS, hasBlockIO) ->
     openSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath
 
 {- |

@@ -24,8 +24,6 @@ import           System.FS.API.Strict (hPutAllStrict)
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API
 import qualified System.FS.BlockIO.IO as IO
-import           System.FS.BlockIO.IO
-import qualified System.FS.IO as IO
 import           System.FS.IO
 import           System.IO.Temp
 import           Test.QuickCheck
@@ -68,15 +66,12 @@ toByteString n mba = do
 example_initClose :: Assertion
 example_initClose = withSystemTempDirectory "example_initClose" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
-        hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
-    close hbio
+    IO.withIOHasBlockIO mount IO.defaultIOCtxParams $ \_ _ -> pure ()
 
 example_closeIsIdempotent :: Assertion
 example_closeIsIdempotent = withSystemTempDirectory "example_closeIsIdempotent" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
-        hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
+    hbio <- IO.withIOHasBlockIO mount IO.defaultIOCtxParams $ \_ hbio -> pure hbio
     close hbio
     eith <- try @SomeException (close hbio)
     case eith of
@@ -88,61 +83,48 @@ example_closeIsIdempotent = withSystemTempDirectory "example_closeIsIdempotent" 
 prop_readWrite :: ByteString -> Property
 prop_readWrite bs = ioProperty $ withSystemTempDirectory "prop_readWrite" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
-        hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
-    prop <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
-      let n = BS.length bs
-      writeBuf <- fromByteStringPinned bs
-      [IOResult m] <- VU.toList <$> submitIO hbio (V.singleton (IOOpWrite h 0 writeBuf 0 (fromIntegral n)))
-      let writeTest = n === fromIntegral m
-      readBuf <- newPinnedByteArray n
-      [IOResult o] <- VU.toList <$> submitIO hbio (V.singleton (IOOpRead h 0 readBuf 0 (fromIntegral n)))
-      let readTest = o === m
-      bs' <- toByteString n readBuf
-      let cmpTest = bs === bs'
-      pure $ writeTest .&&. readTest .&&. cmpTest
-    close hbio
-    pure prop
+    IO.withIOHasBlockIO mount IO.defaultIOCtxParams $ \hfs hbio -> do
+      FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
+        let n = BS.length bs
+        writeBuf <- fromByteStringPinned bs
+        [IOResult m] <- VU.toList <$> submitIO hbio (V.singleton (IOOpWrite h 0 writeBuf 0 (fromIntegral n)))
+        let writeTest = n === fromIntegral m
+        readBuf <- newPinnedByteArray n
+        [IOResult o] <- VU.toList <$> submitIO hbio (V.singleton (IOOpRead h 0 readBuf 0 (fromIntegral n)))
+        let readTest = o === m
+        bs' <- toByteString n readBuf
+        let cmpTest = bs === bs'
+        pure $ writeTest .&&. readTest .&&. cmpTest
 
 prop_submitToClosedCtx :: ByteString -> Property
 prop_submitToClosedCtx bs = ioProperty $ withSystemTempDirectory "prop_a" $ \dir -> do
     let mount = FS.MountPoint dir
-        hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
-
-    props <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
-      void $ hPutAllStrict hfs h bs
-      syncVar <- newMVar False
-      forConcurrently [0 .. BS.length bs - 1] $ \i ->
-        if i == 0 then do
-          threadDelay 15
-          modifyMVar_ syncVar $ \_ -> do
-            close hbio
-            pure True
-          pure Nothing
-        else do
-          readBuf <- newPinnedByteArray (BS.length bs)
-          withMVar syncVar $ \b -> do
-            eith <- try @SomeException $ submitIO hbio (V.singleton (IOOpRead h 0 readBuf (fromIntegral i) 1))
-            pure $ case eith of
-              Left _  -> Just $ tabulate "submitIO successful" [show False] $ counterexample "expected failure, but got success" (b === True)
-              Right _ -> Just $ tabulate "submitIO successful" [show True]  $ counterexample "expected success, but got failure" (b === False)
-    pure $ conjoin (catMaybes props)
-
+    IO.withIOHasBlockIO mount IO.defaultIOCtxParams $ \hfs hbio -> do
+      FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
+        void $ hPutAllStrict hfs h bs
+        syncVar <- newMVar False
+        fmap (conjoin . catMaybes) $ forConcurrently [0 .. BS.length bs - 1] $ \i ->
+          if i == 0 then do
+            threadDelay 15
+            modifyMVar_ syncVar $ \_ -> do
+              close hbio
+              pure True
+            pure Nothing
+          else do
+            readBuf <- newPinnedByteArray (BS.length bs)
+            withMVar syncVar $ \b -> do
+              eith <- try @SomeException $ submitIO hbio (V.singleton (IOOpRead h 0 readBuf (fromIntegral i) 1))
+              pure $ case eith of
+                Left _  -> Just $ tabulate "submitIO successful" [show False] $ counterexample "expected failure, but got success" (b === True)
+                Right _ -> Just $ tabulate "submitIO successful" [show True]  $ counterexample "expected success, but got failure" (b === False)
 
 {-------------------------------------------------------------------------------
   File locks
 -------------------------------------------------------------------------------}
 
-withTempIOHasFS :: FilePath -> (HasFS IO HandleIO -> IO a) -> IO a
-withTempIOHasFS path action = withSystemTempDirectory path $ \dir -> do
-    let hfs = ioHasFS (MountPoint dir)
-    action hfs
-
 withTempIOHasBlockIO :: FilePath -> (HasFS IO HandleIO -> HasBlockIO IO HandleIO -> IO a) -> IO a
-withTempIOHasBlockIO path action =
-    withTempIOHasFS path $ \hfs -> do
-      withIOHasBlockIO hfs defaultIOCtxParams (action hfs)
+withTempIOHasBlockIO path action = withSystemTempDirectory path $ \dir -> do
+    IO.withIOHasBlockIO (MountPoint dir) IO.defaultIOCtxParams action
 
 showLeft :: Show a => String -> Either a b -> String
 showLeft x = \case
