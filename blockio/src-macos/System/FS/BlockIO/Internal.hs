@@ -4,8 +4,7 @@ module System.FS.BlockIO.Internal (
 
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
-import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
-                     IOCtxParams)
+import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO)
 import qualified System.FS.BlockIO.IO.Internal as IOI
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
@@ -21,7 +20,7 @@ import qualified System.Posix.Unistd as Unix
 -- The recommended choice would be to use the POSIX AIO API.
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> IOCtxParams
+  -> IOI.IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 ioHasBlockIO hfs _params =
     Serial.serialHasBlockIO

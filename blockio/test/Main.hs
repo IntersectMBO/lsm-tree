@@ -69,14 +69,14 @@ example_initClose :: Assertion
 example_initClose = withSystemTempDirectory "example_initClose" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
+    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
     close hbio
 
 example_closeIsIdempotent :: Assertion
 example_closeIsIdempotent = withSystemTempDirectory "example_closeIsIdempotent" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
+    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
     close hbio
     eith <- try @SomeException (close hbio)
     case eith of
@@ -89,7 +89,7 @@ prop_readWrite :: ByteString -> Property
 prop_readWrite bs = ioProperty $ withSystemTempDirectory "prop_readWrite" $ \dirPath -> do
     let mount = FS.MountPoint dirPath
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
+    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
     prop <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
       let n = BS.length bs
       writeBuf <- fromByteStringPinned bs
@@ -108,7 +108,7 @@ prop_submitToClosedCtx :: ByteString -> Property
 prop_submitToClosedCtx bs = ioProperty $ withSystemTempDirectory "prop_a" $ \dir -> do
     let mount = FS.MountPoint dir
         hfs = IO.ioHasFS mount
-    hbio <- IO.ioHasBlockIO hfs FS.defaultIOCtxParams
+    hbio <- IO.ioHasBlockIO hfs IO.defaultIOCtxParams
 
     props <- FS.withFile hfs (FS.mkFsPath ["temp"]) (FS.WriteMode FS.MustBeNew) $ \h -> do
       void $ hPutAllStrict hfs h bs
