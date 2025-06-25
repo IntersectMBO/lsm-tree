@@ -56,7 +56,8 @@ ctxParamsConv API.IOCtxParams{API.ioctxBatchSizeLimit, API.ioctxConcurrencyLimit
       }
 
 submitIO ::
-     HasFS IO HandleIO
+     HasCallStack
+  => HasFS IO HandleIO
   -> I.IOCtx
   -> V.Vector (IOOp RealWorld HandleIO)
   -> IO (VU.Vector IOResult)
