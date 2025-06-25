@@ -85,7 +85,9 @@ import qualified Database.LSMTree as LSM
 
 benchTableConfig :: LSM.TableConfig
 benchTableConfig =
-    LSM.defaultTableConfig {LSM.confFencePointerIndex = LSM.CompactIndex}
+    LSM.defaultTableConfig {
+        LSM.confFencePointerIndex = LSM.CompactIndex
+      }
 
 -------------------------------------------------------------------------------
 -- Keys and values
@@ -150,6 +152,7 @@ data GlobalOpts = GlobalOpts
 
 data SetupOpts = SetupOpts {
     bloomFilterAlloc :: !LSM.BloomFilterAlloc
+  , mergeSchedule    :: !LSM.MergeSchedule
   }
   deriving stock Show
 
@@ -175,9 +178,10 @@ data Cmd
   deriving stock Show
 
 mkTableConfigSetup :: GlobalOpts -> SetupOpts -> LSM.TableConfig -> LSM.TableConfig
-mkTableConfigSetup GlobalOpts{diskCachePolicy} SetupOpts{bloomFilterAlloc} conf = conf {
+mkTableConfigSetup GlobalOpts{diskCachePolicy} SetupOpts{bloomFilterAlloc, mergeSchedule} conf = conf {
       LSM.confDiskCachePolicy = diskCachePolicy
     , LSM.confBloomFilterAlloc = bloomFilterAlloc
+    , LSM.confMergeSchedule = mergeSchedule
     }
 
 mkTableConfigRun :: GlobalOpts -> LSM.TableConfig -> LSM.TableConfig
@@ -228,6 +232,7 @@ cmdP = O.subparser $ mconcat
 setupOptsP :: O.Parser SetupOpts
 setupOptsP = pure SetupOpts
     <*> O.option O.auto (O.long "bloom-filter-alloc" <> O.value (LSM.confBloomFilterAlloc LSM.defaultTableConfig) <> O.showDefault <> O.help "Bloom filter allocation method [AllocFixed n | AllocRequestFPR d]")
+    <*> O.option O.auto (O.long "merge-schedule" <> O.value LSM.Incremental <> O.showDefault <> O.help "Merge schedule [OneShot | Incremental | Greedy]")
 
 runOptsP :: O.Parser RunOpts
 runOptsP = pure RunOpts
@@ -239,6 +244,7 @@ runOptsP = pure RunOpts
     <*> O.switch (O.long "lookup-only" <> O.help "Use lookup only mode")
 
 deriving stock instance Read LSM.DiskCachePolicy
+deriving stock instance Read LSM.MergeSchedule
 deriving stock instance Read LSM.BloomFilterAlloc
 
 -------------------------------------------------------------------------------
@@ -930,6 +936,9 @@ createGnuplotExampleFileSequential
         , ""
         , "set logscale y"
         , "set ylabel \"Time (nanoseconds)\""
+        , ""
+        , "set terminal png size 1200,800"
+        , "set output \"latency.png\""
         , ""
         , "plot \"latency.dat\" using 1:2 title 'lookups' axis x1y1, \\"
         , "     \"latency.dat\" using 1:3 title 'updates' axis x1y1"

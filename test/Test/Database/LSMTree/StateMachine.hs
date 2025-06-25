@@ -222,7 +222,8 @@ instance Arbitrary R.TableConfig where
   arbitrary = do
     confMergeSchedule <- QC.frequency [
           (1, pure R.OneShot)
-        , (4, pure R.Incremental)
+        , (2, pure R.Incremental)
+        , (2, pure R.Greedy)
         ]
     confWriteBufferAlloc <- QC.arbitrary
     confFencePointerIndex <- QC.arbitrary

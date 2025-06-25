@@ -340,6 +340,10 @@ releaseLevels reg levels =
       delayedCommit reg (releaseIncomingRun incomingRun)
       V.mapM_ (delayedCommit reg . releaseRef) residentRuns
 
+{-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
+iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
+iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
+
 {-------------------------------------------------------------------------------
   Union level
 -------------------------------------------------------------------------------}
@@ -737,6 +741,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root uc r0 reg levels ul
       V.forM_ rs $ \r -> delayedCommit reg (releaseRef r)
       case confMergeSchedule of
         Incremental -> pure ()
+        Greedy      -> pure ()
         OneShot     ->
           bracket
             (immediatelyCompleteIncomingRun conf ln ir)
@@ -948,7 +953,7 @@ supplyCredits ::
   -> NominalCredits
   -> Levels m h
   -> m ()
-supplyCredits conf (NominalCredits depositPerLevel) levels0 = do
+supplyCredits conf depositPerLevel levels0 = do
     -- EXPERIMENT: instead of supplying the same amount of nominal credits to
     -- each level, we supply all these credits the smallest levels first. Only
     -- when the smallest level is fully merged, do we use the leftover credits
@@ -958,8 +963,16 @@ supplyCredits conf (NominalCredits depositPerLevel) levels0 = do
     -- credits, so if shared merges have already been progressed by another
     -- table, we still end up doing fewer physical merge steps than we would
     -- have.
-    let !deposit = NominalCredits (depositPerLevel * V.length levels0)
-    () <$ go 1 deposit levels0
+    if confMergeSchedule conf == Greedy
+      then do
+        let !deposit = NominalCredits (unNominalCredits depositPerLevel * V.length levels0)
+        () <$ go 1 deposit levels0
+      else
+        iforLevelM_ levels0 $ \ln (Level ir _rs) ->
+          () <$ supplyCreditsIncomingRun conf ln ir depositPerLevel
+          --TODO: consider tracing supply of credits,
+          -- supplyCreditsIncomingRun could easily return the supplied credits
+          -- before & after, which may be useful for tracing.
   where
     go !ln !credits levels
       | Just (Level ir _rs, ls) <- V.uncons levels

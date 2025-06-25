@@ -270,7 +270,7 @@ instance Arbitrary DiskCachePolicy where
   shrink _                       = []
 
 instance Arbitrary MergeSchedule where
-  arbitrary = elements [OneShot, Incremental]
+  arbitrary = elements [OneShot, Incremental, Greedy]
   shrink _ = []
 
 {-------------------------------------------------------------------------------

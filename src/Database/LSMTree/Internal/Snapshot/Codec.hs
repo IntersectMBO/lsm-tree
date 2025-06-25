@@ -483,6 +483,7 @@ instance DecodeVersioned DiskCachePolicy where
 instance Encode MergeSchedule where
   encode OneShot     = encodeWord 0
   encode Incremental = encodeWord 1
+  encode Greedy      = encodeWord 2
 
 instance DecodeVersioned MergeSchedule where
   decodeVersioned V0 = do
@@ -490,6 +491,7 @@ instance DecodeVersioned MergeSchedule where
       case tag of
         0 -> pure OneShot
         1 -> pure Incremental
+        2 -> pure Greedy
         _ -> fail ("[MergeSchedule] Unexpected tag: " <> show tag)
 
 {-------------------------------------------------------------------------------

@@ -239,11 +239,13 @@ data MergeSchedule =
     Using the 'Incremental' merge schedule, the worst-case disk I\/O complexity of the update operations is /logarithmic/ in the size of the table.
     -}
   | Incremental
+  | Greedy
   deriving stock (Eq, Show)
 
 instance NFData MergeSchedule where
   rnf OneShot     = ()
   rnf Incremental = ()
+  rnf Greedy      = ()
 
 {-------------------------------------------------------------------------------
   Bloom filter allocation
