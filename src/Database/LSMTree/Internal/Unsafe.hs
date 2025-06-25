@@ -36,7 +36,7 @@ module Database.LSMTree.Internal.Unsafe (
   , Session (..)
   , SessionState (..)
   , SessionEnv (..)
-  , withOpenSession
+  , withKeepSessionOpen
     -- ** Implementation of public API
   , withSession
   , openSession
@@ -45,7 +45,7 @@ module Database.LSMTree.Internal.Unsafe (
   , Table (..)
   , TableState (..)
   , TableEnv (..)
-  , withOpenTable
+  , withKeepTableOpen
     -- ** Implementation of public API
   , ResolveSerialisedValue
   , withTable
@@ -217,7 +217,7 @@ data CursorTrace =
 data Session m h = Session {
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a session when multiple threads require access
-      -- to the session's fields (see 'withOpenSession'). We use more
+      -- to the session's fields (see 'withKeepSessionOpen'). We use more
       -- fine-grained synchronisation for various mutable parts of an open
       -- session.
       --
@@ -280,21 +280,21 @@ data SessionClosedError
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# INLINE withOpenSession #-}
-{-# SPECIALISE withOpenSession ::
+{-# INLINE withKeepSessionOpen #-}
+{-# SPECIALISE withKeepSessionOpen ::
      Session IO h
   -> (SessionEnv IO h -> IO a)
   -> IO a #-}
--- | 'withOpenSession' ensures that the session stays open for the duration of the
--- provided continuation.
+-- | 'withKeepSessionOpen' ensures that the session stays open for the duration of
+-- the provided continuation.
 --
 -- NOTE: any operation except 'sessionClose' can use this function.
-withOpenSession ::
+withKeepSessionOpen ::
      (MonadSTM m, MonadThrow m)
   => Session m h
   -> (SessionEnv m h -> m a)
   -> m a
-withOpenSession sesh action = RW.withReadAccess (sessionState sesh) $ \case
+withKeepSessionOpen sesh action = RW.withReadAccess (sessionState sesh) $ \case
     SessionClosed -> throwIO ErrSessionClosed
     SessionOpen seshEnv -> action seshEnv
 
@@ -527,7 +527,7 @@ data Table m h = Table {
       tableConfig       :: !TableConfig
       -- | The primary purpose of this 'RWVar' is to ensure consistent views of
       -- the open-/closedness of a table when multiple threads require access to
-      -- the table's fields (see 'withOpenTable'). We use more fine-grained
+      -- the table's fields (see 'withKeepTableOpen'). We use more fine-grained
       -- synchronisation for various mutable parts of an open table.
     , tableState        :: !(RWVar m (TableState m h))
     , tableArenaManager :: !(ArenaManager (PrimState m))
@@ -616,21 +616,21 @@ data TableClosedError
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
--- | 'withOpenTable' ensures that the table stays open for the duration of the
+-- | 'withKeepTableOpen' ensures that the table stays open for the duration of the
 -- provided continuation.
 --
 -- NOTE: any operation except 'close' can use this function.
-{-# INLINE withOpenTable #-}
-{-# SPECIALISE withOpenTable ::
+{-# INLINE withKeepTableOpen #-}
+{-# SPECIALISE withKeepTableOpen ::
      Table IO h
   -> (TableEnv IO h -> IO a)
   -> IO a #-}
-withOpenTable ::
+withKeepTableOpen ::
      (MonadSTM m, MonadThrow m)
   => Table m h
   -> (TableEnv m h -> m a)
   -> m a
-withOpenTable t action = RW.withReadAccess (tableState t) $ \case
+withKeepTableOpen t action = RW.withReadAccess (tableState t) $ \case
     TableClosed -> throwIO ErrTableClosed
     TableOpen tEnv -> action tEnv
 
@@ -664,7 +664,7 @@ new ::
   -> m (Table m h)
 new sesh conf = do
     traceWith (sessionTracer sesh) TraceNewTable
-    withOpenSession sesh $ \seshEnv ->
+    withKeepSessionOpen sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
         am <- newArenaManager
         tc <- newEmptyTableContent seshEnv reg
@@ -771,7 +771,7 @@ lookups ::
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
 lookups resolve ks t = do
     traceWith (tableTracer t) $ TraceLookups (V.length ks)
-    withOpenTable t $ \tEnv ->
+    withKeepTableOpen t $ \tEnv ->
       RW.withReadAccess (tableContent tEnv) $ \tc -> do
         case tableUnionLevel tc of
           NoUnion -> lookupsRegular tEnv tc
@@ -883,7 +883,7 @@ updates ::
 updates resolve es t = do
     traceWith (tableTracer t) $ TraceUpdates (V.length es)
     let conf = tableConfig t
-    withOpenTable t $ \tEnv -> do
+    withKeepTableOpen t $ \tEnv -> do
       let hfs = tableHasFS tEnv
       modifyWithActionRegistry_
         (RW.unsafeAcquireWriteAccess (tableContent tEnv))
@@ -929,7 +929,7 @@ retrieveBlobs ::
   -> V.Vector (WeakBlobRef m h)
   -> m (V.Vector SerialisedBlob)
 retrieveBlobs sesh wrefs =
-    withOpenSession sesh $ \seshEnv ->
+    withKeepSessionOpen sesh $ \seshEnv ->
       let hbio = sessionHasBlockIO seshEnv in
       handle (\(BlobRef.WeakBlobRefInvalid i) ->
                 throwIO (ErrBlobRefInvalid i)) $
@@ -1035,7 +1035,7 @@ newCursor ::
   -> OffsetKey
   -> Table m h
   -> m (Cursor m h)
-newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
+newCursor !resolve !offsetKey t = withKeepTableOpen t $ \tEnv -> do
     let cursorSession = tableSession t
     let cursorSessionEnv = tableSessionEnv tEnv
     cursorId <- uniqueToCursorId <$>
@@ -1045,7 +1045,7 @@ newCursor !resolve !offsetKey t = withOpenTable t $ \tEnv -> do
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
-    withOpenSession cursorSession $ \_ -> do
+    withKeepSessionOpen cursorSession $ \_ -> do
       withActionRegistry $ \reg -> do
         (wb, wbblobs, cursorRuns, cursorUnion) <-
           dupTableContent reg (tableContent tEnv)
@@ -1220,7 +1220,7 @@ saveSnapshot ::
   -> m ()
 saveSnapshot snap label t = do
     traceWith (tableTracer t) $ TraceSnapshot snap
-    withOpenTable t $ \tEnv ->
+    withKeepTableOpen t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
         let hfs  = tableHasFS tEnv
             hbio = tableHasBlockIO tEnv
@@ -1327,7 +1327,7 @@ openTableFromSnapshot ::
 openTableFromSnapshot policyOveride sesh snap label resolve =
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
     traceWith (sessionTracer sesh) $ TraceOpenTableFromSnapshot snap policyOveride
-    withOpenSession sesh $ \seshEnv -> do
+    withKeepSessionOpen sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
         let hfs     = sessionHasFS seshEnv
             hbio    = sessionHasBlockIO seshEnv
@@ -1411,7 +1411,7 @@ doesSnapshotExist ::
   => Session m h
   -> SnapshotName
   -> m Bool
-doesSnapshotExist sesh snap = withOpenSession sesh (doesSnapshotDirExist snap)
+doesSnapshotExist sesh snap = withKeepSessionOpen sesh (doesSnapshotDirExist snap)
 
 -- | Internal helper: Variant of 'doesSnapshotExist' that does not take a session lock.
 doesSnapshotDirExist :: SnapshotName -> SessionEnv m h -> m Bool
@@ -1431,7 +1431,7 @@ deleteSnapshot ::
   -> m ()
 deleteSnapshot sesh snap = do
     traceWith (sessionTracer sesh) $ TraceDeleteSnapshot snap
-    withOpenSession sesh $ \seshEnv -> do
+    withKeepSessionOpen sesh $ \seshEnv -> do
       let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
       snapshotExists <- doesSnapshotDirExist snap seshEnv
       unless snapshotExists $ throwIO (ErrSnapshotDoesNotExist snap)
@@ -1445,7 +1445,7 @@ listSnapshots ::
   -> m [SnapshotName]
 listSnapshots sesh = do
     traceWith (sessionTracer sesh) TraceListSnapshots
-    withOpenSession sesh $ \seshEnv -> do
+    withKeepSessionOpen sesh $ \seshEnv -> do
       let hfs = sessionHasFS seshEnv
           root = sessionRoot seshEnv
       contents <- FS.listDirectory hfs (Paths.snapshotsDir (sessionRoot seshEnv))
@@ -1473,10 +1473,10 @@ duplicate ::
   -> m (Table m h)
 duplicate t@Table{..} = do
     traceWith tableTracer TraceDuplicate
-    withOpenTable t $ \TableEnv{..} -> do
+    withKeepTableOpen t $ \TableEnv{..} -> do
       -- We acquire a read-lock on the session open-state to prevent races, see
       -- 'sessionOpenTables'.
-      withOpenSession tableSession $ \_ -> do
+      withKeepSessionOpen tableSession $ \_ -> do
         withActionRegistry $ \reg -> do
           -- The table contents escape the read access, but we just added references
           -- to each run so it is safe.
@@ -1566,7 +1566,7 @@ unionsInOpenSession ::
   -> m (Table m h)
 unionsInOpenSession reg sesh seshEnv conf ts = do
     mts <- forM (NE.toList ts) $ \t ->
-      withOpenTable t $ \tEnv ->
+      withKeepTableOpen t $ \tEnv ->
         RW.withReadAccess (tableContent tEnv) $ \tc ->
           -- tableContentToMergingTree duplicates all runs and merges
           -- so the ones from the tableContent here do not escape
@@ -1681,7 +1681,7 @@ ensureSessionsMatch ::
   -> m (Session m h)
 ensureSessionsMatch (t :| ts) = do
   let sesh = tableSession t
-  withOpenSession sesh $ \seshEnv -> do
+  withKeepSessionOpen sesh $ \seshEnv -> do
     let root = FS.mkFsErrorPath (sessionHasFS seshEnv) (getSessionRoot (sessionRoot seshEnv))
     -- Check that the session roots for all tables are the same. There can only
     -- be one *open/active* session per directory because of cooperative file
@@ -1690,7 +1690,7 @@ ensureSessionsMatch (t :| ts) = do
     -- the session roots.
     for_ (zip [1..] ts) $ \(i, t') -> do
       let sesh' = tableSession t'
-      withOpenSession sesh' $ \seshEnv' -> do
+      withKeepSessionOpen sesh' $ \seshEnv' -> do
         let root' = FS.mkFsErrorPath (sessionHasFS seshEnv') (getSessionRoot (sessionRoot seshEnv'))
         -- TODO: compare LockFileHandle instead of SessionRoot (?).
         -- We can write an Eq instance for LockFileHandle based on pointer equality,
@@ -1718,7 +1718,7 @@ remainingUnionDebt ::
   => Table m h -> m UnionDebt
 remainingUnionDebt t = do
     traceWith (tableTracer t) TraceRemainingUnionDebt
-    withOpenTable t $ \tEnv -> do
+    withKeepTableOpen t $ \tEnv -> do
       RW.withReadAccess (tableContent tEnv) $ \tableContent -> do
         case tableUnionLevel tableContent of
           NoUnion ->
@@ -1741,7 +1741,7 @@ supplyUnionCredits ::
   => ResolveSerialisedValue -> Table m h -> UnionCredits -> m UnionCredits
 supplyUnionCredits resolve t credits = do
     traceWith (tableTracer t) $ TraceSupplyUnionCredits credits
-    withOpenTable t $ \tEnv -> do
+    withKeepTableOpen t $ \tEnv -> do
       -- We also want to mutate the table content to re-build the union cache,
       -- but we don't need to hold a writer lock while we work on the tree
       -- itself.

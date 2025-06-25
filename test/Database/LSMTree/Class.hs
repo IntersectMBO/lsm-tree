@@ -27,7 +27,7 @@ import           Database.LSMTree.Class.Common as Common
 import qualified Database.LSMTree.Internal.Paths as RIP
 import qualified Database.LSMTree.Internal.Types as RT (Table (..))
 import qualified Database.LSMTree.Internal.Unsafe as RU (SessionEnv (..),
-                     Table (..), withOpenSession)
+                     Table (..), withKeepSessionOpen)
 import           Test.Util.FS (flipRandomBitInRandomFileHardlinkSafe)
 import           Test.Util.QC (Choice)
 
@@ -260,7 +260,7 @@ rCorruptSnapshot ::
    -> R.Table m k v b
    -> m ()
 rCorruptSnapshot choice name (RT.Table t) =
-   RU.withOpenSession (RU.tableSession t) $ \seshEnv ->
+   RU.withKeepSessionOpen (RU.tableSession t) $ \seshEnv ->
       let hfs = RU.sessionHasFS seshEnv
           root = RU.sessionRoot seshEnv
           namedSnapDir = RIP.getNamedSnapshotDir (RIP.namedSnapshotDir root name)

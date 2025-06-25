@@ -450,7 +450,7 @@ getAllSessionTables ::
   => R.Session m
   -> m [SomeTable m]
 getAllSessionTables (R.Types.Session s) = do
-    R.Unsafe.withOpenSession s $ \seshEnv -> do
+    R.Unsafe.withKeepSessionOpen s $ \seshEnv -> do
       ts <- readMVar (R.Unsafe.sessionOpenTables seshEnv)
       pure ((\x -> SomeTable (R.Types.Table x))  <$> Map.elems ts)
 
@@ -459,7 +459,7 @@ getAllSessionCursors ::
   => R.Session m
   -> m [SomeCursor m]
 getAllSessionCursors (R.Types.Session s) =
-    R.Unsafe.withOpenSession s $ \seshEnv -> do
+    R.Unsafe.withKeepSessionOpen s $ \seshEnv -> do
       cs <- readMVar (R.Unsafe.sessionOpenCursors seshEnv)
       pure ((\x -> SomeCursor (R.Types.Cursor x))  <$> Map.elems cs)
 
