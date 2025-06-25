@@ -16,6 +16,7 @@
 module Data.BloomFilter.Blocked (
     -- * Types
     Hash,
+    Salt,
     Hashable,
 
     -- * Immutable Bloom filters
@@ -64,7 +65,7 @@ module Data.BloomFilter.Blocked (
 
     -- * Low level variants
     Hashes,
-    hashes,
+    hashesWithSalt,
     insertHashes,
     elemHashes,
     -- ** Prefetching
@@ -92,19 +93,20 @@ import           Prelude hiding (elem, notElem)
 -- Example:
 --
 -- @
---filter = create (sizeForBits 16 2) $ \mf -> do
+-- filter = create (sizeForBits 16 2) 4 $ \mf -> do
 --           insert mf \"foo\"
 --           insert mf \"bar\"
 -- @
 --
 -- Note that the result of the setup function is not used.
 create :: BloomSize
+       -> Salt
        -> (forall s. (MBloom s a -> ST s ()))  -- ^ setup function
        -> Bloom a
 {-# INLINE create #-}
-create bloomsize body =
+create bloomsize bloomsalt body =
     runST $ do
-      mb <- new bloomsize
+      mb <- new bloomsize bloomsalt
       body mb
       unsafeFreeze mb
 
@@ -112,14 +114,14 @@ create bloomsize body =
 -- | Insert a value into a mutable Bloom filter.  Afterwards, a
 -- membership query for the same value is guaranteed to return @True@.
 insert :: Hashable a => MBloom s a -> a -> ST s ()
-insert = \ !mb !x -> insertHashes mb (hashes x)
+insert = \ !mb !x -> insertHashes mb (hashesWithSalt (mbHashSalt mb) x)
 
 {-# INLINE elem #-}
 -- | Query an immutable Bloom filter for membership.  If the value is
 -- present, return @True@.  If the value is not present, there is
 -- /still/ some possibility that @True@ will be returned.
 elem :: Hashable a => a -> Bloom a -> Bool
-elem = \ !x !b -> elemHashes b (hashes x)
+elem = \ !x !b -> elemHashes b (hashesWithSalt (hashSalt b) x)
 
 -- | Same as 'elem' but with the opposite argument order:
 --
@@ -150,12 +152,13 @@ notElem = \x b -> not (x `elem` b)
 unfold :: forall a b.
           Hashable a
        => BloomSize
+       -> Salt
        -> (b -> Maybe (a, b))       -- ^ seeding function
        -> b                         -- ^ initial seed
        -> Bloom a
 {-# INLINE unfold #-}
-unfold bloomsize f k =
-    create bloomsize body
+unfold bloomsize bloomsalt f k =
+    create bloomsize bloomsalt body
   where
     body :: forall s. MBloom s a -> ST s ()
     body mb = loop k
@@ -170,26 +173,29 @@ unfold bloomsize f k =
 -- For example
 --
 -- @
--- filt = fromList (policyForBits 10) [\"foo\", \"bar\", \"quux\"]
+-- filter = fromList (policyForBits 10) 4 [\"foo\", \"bar\", \"quux\"]
 -- @
 fromList :: (Foldable t, Hashable a)
          => BloomPolicy
+         -> Salt
          -> t a -- ^ values to populate with
          -> Bloom a
-fromList policy xs =
-    create bsize (\b -> mapM_ (insert b) xs)
+fromList policy bloomsalt xs =
+    create bsize bloomsalt (\b -> mapM_ (insert b) xs)
   where
     bsize = sizeForPolicy policy (length xs)
 
 {-# SPECIALISE deserialise :: BloomSize
+                           -> Salt
                            -> (MutableByteArray RealWorld -> Int -> Int -> IO ())
                            -> IO (Bloom a) #-}
 deserialise :: PrimMonad m
             => BloomSize
+            -> Salt
             -> (MutableByteArray (PrimState m) -> Int -> Int -> m ())
             -> m (Bloom a)
-deserialise bloomsize fill = do
-    mbloom <- stToPrim $ new bloomsize
+deserialise bloomsize bloomsalt fill = do
+    mbloom <- stToPrim $ new bloomsize bloomsalt
     Internal.deserialise mbloom fill
     stToPrim $ unsafeFreeze mbloom
 
@@ -235,7 +241,7 @@ insertMany bloom key n =
         prepareProbes !i !i_w
           | i_w < 0x0f && i < n = do
               k <- key i
-              let !kh = hashes k
+              let !kh = hashesWithSalt (mbHashSalt bloom) k
               prefetchInsert bloom kh
               P.writePrimArray buf i_w kh
               prepareProbes (i+1) (i_w+1)
@@ -258,7 +264,7 @@ insertMany bloom key n =
           -- (from the read end of the buffer).
           | i < n = do
               k <- key i
-              let !kh = hashes k
+              let !kh = hashesWithSalt (mbHashSalt bloom) k
               prefetchInsert bloom kh
               P.writePrimArray buf i_w kh
               insertProbe

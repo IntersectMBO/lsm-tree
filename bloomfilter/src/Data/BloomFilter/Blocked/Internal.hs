@@ -8,18 +8,19 @@
 -- the trusted base.
 module Data.BloomFilter.Blocked.Internal (
     -- * Mutable Bloom filters
-    MBloom,
+    MBloom (mbHashSalt),
     new,
     maxSizeBits,
 
     -- * Immutable Bloom filters
-    Bloom,
+    Bloom (hashSalt),
     bloomInvariant,
     size,
 
     -- * Hash-based operations
     Hashes,
-    hashes,
+    Salt,
+    hashesWithSalt,
     insertHashes,
     prefetchInsert,
     elemHashes,
@@ -84,6 +85,7 @@ type MBloom :: Type -> Type -> Type
 data MBloom s a = MBloom {
       mbNumBlocks :: {-# UNPACK #-} !NumBlocks  -- ^ non-zero
     , mbNumHashes :: {-# UNPACK #-} !Int
+    , mbHashSalt  :: {-# UNPACK #-} !Salt
     , mbBitArray  :: {-# UNPACK #-} !(MBitArray s)
     }
 type role MBloom nominal nominal
@@ -100,13 +102,14 @@ instance NFData (MBloom s a) where
 --
 -- The filter size is capped at 'maxSizeBits'.
 --
-new :: BloomSize -> ST s (MBloom s a)
-new BloomSize { sizeBits, sizeHashes } = do
+new :: BloomSize -> Salt -> ST s (MBloom s a)
+new BloomSize { sizeBits, sizeHashes } mbHashSalt = do
     let numBlocks = bitsToBlocks (max 1 (min maxSizeBits sizeBits))
     mbBitArray <- BitArray.new numBlocks
     pure MBloom {
       mbNumBlocks = numBlocks,
       mbNumHashes = max 1 sizeHashes,
+      mbHashSalt,
       mbBitArray
     }
 
@@ -174,6 +177,7 @@ type Bloom :: Type -> Type
 data Bloom a = Bloom {
       numBlocks :: {-# UNPACK #-} !NumBlocks  -- ^ non-zero
     , numHashes :: {-# UNPACK #-} !Int
+    , hashSalt  :: {-# UNPACK #-} !Salt
     , bitArray  :: {-# UNPACK #-} !BitArray
     }
   deriving stock Eq
@@ -239,9 +243,9 @@ prefetchElem Bloom { numBlocks, bitArray } !h =
 --
 -- See also 'formatVersion' for compatibility advice.
 --
-serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
+serialise :: Bloom a -> (BloomSize, Salt, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
-    (size b, ba, off, len)
+    (size b, hashSalt b, ba, off, len)
   where
     (ba, off, len) = BitArray.serialise bitArray
 
@@ -253,11 +257,12 @@ serialise b@Bloom{bitArray} =
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
-freeze MBloom { mbNumBlocks, mbNumHashes, mbBitArray } = do
+freeze MBloom { mbNumBlocks, mbNumHashes, mbHashSalt, mbBitArray } = do
     bitArray <- BitArray.freeze mbBitArray
     let !bf = Bloom {
                 numBlocks = mbNumBlocks,
                 numHashes = mbNumHashes,
+                hashSalt  = mbHashSalt,
                 bitArray
               }
     assert (bloomInvariant bf) $ pure bf
@@ -266,11 +271,12 @@ freeze MBloom { mbNumBlocks, mbNumHashes, mbBitArray } = do
 -- mutable filter /must not/ be modified afterwards. For a safer creation
 -- interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
-unsafeFreeze MBloom { mbNumBlocks, mbNumHashes, mbBitArray } = do
+unsafeFreeze MBloom { mbNumBlocks, mbNumHashes, mbHashSalt, mbBitArray } = do
     bitArray <- BitArray.unsafeFreeze mbBitArray
     let !bf = Bloom {
                 numBlocks = mbNumBlocks,
                 numHashes = mbNumHashes,
+                hashSalt  = mbHashSalt,
                 bitArray
               }
     assert (bloomInvariant bf) $ pure bf
@@ -278,11 +284,12 @@ unsafeFreeze MBloom { mbNumBlocks, mbNumHashes, mbBitArray } = do
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
-thaw Bloom { numBlocks, numHashes, bitArray } = do
+thaw Bloom { numBlocks, numHashes, hashSalt, bitArray } = do
     mbBitArray <- BitArray.thaw bitArray
     pure MBloom {
       mbNumBlocks = numBlocks,
       mbNumHashes = numHashes,
+      mbHashSalt  = hashSalt,
       mbBitArray
     }
 
@@ -317,9 +324,9 @@ newtype Hashes a = Hashes Hash
   deriving newtype Prim
 type role Hashes nominal
 
-{-# INLINE hashes #-}
-hashes :: Hashable a => a -> Hashes a
-hashes = Hashes . hash64
+{-# INLINE hashesWithSalt #-}
+hashesWithSalt :: Hashable a => Salt -> a -> Hashes a
+hashesWithSalt = \ !salt !x -> Hashes (hashSalt64 salt x)
 
 {-# INLINE blockIxAndBitGen #-}
 -- | The scheme for turning 'Hashes' into block and bit indexes is as follows:

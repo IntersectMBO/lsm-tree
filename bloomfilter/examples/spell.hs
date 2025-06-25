@@ -10,7 +10,10 @@ main :: IO ()
 main = do
     files <- getArgs
     dictionary <- readFile "/usr/share/dict/words"
-    let !bloom = B.fromList (B.policyForFPR 0.01) (words dictionary)
+    let !bloom = B.fromList (B.policyForFPR 0.01) bSalt (words dictionary)
     forM_ files $ \file ->
           putStrLn . unlines . filter (`B.notElem` bloom) . words
       =<< readFile file
+
+bSalt :: B.Salt
+bSalt = 4

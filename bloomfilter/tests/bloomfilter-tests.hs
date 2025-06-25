@@ -103,10 +103,10 @@ proxyBlocked = Proxy
 
 prop_elem :: forall bloom a. (BloomFilter bloom, Hashable a)
           => Proxy bloom -> Proxy a
-          -> a -> [a] -> FPR -> Property
-prop_elem proxy _ x xs (FPR q) =
+          -> B.Salt -> a -> [a] -> FPR -> Property
+prop_elem proxy _ salt x xs (FPR q) =
     let bf :: bloom a
-        bf = fromList (policyForFPR proxy q) (x:xs)
+        bf = fromList (policyForFPR proxy q) salt (x:xs)
      in elem x bf .&&. not (notElem x bf)
 
 -------------------------------------------------------------------------------
@@ -257,21 +257,23 @@ prop_insertMany (FPR fpr) keys =
      bloom_insert === bloom_insertMany
   where
     bloom_insert =
-      Bloom.Blocked.create (Bloom.Blocked.sizeForFPR fpr n) $ \mb ->
+      Bloom.Blocked.create (Bloom.Blocked.sizeForFPR fpr n) salt $ \mb ->
         mapM_ (Bloom.Blocked.insert mb) keys
 
     bloom_insertMany =
-      Bloom.Blocked.create (Bloom.Blocked.sizeForFPR fpr n) $ \mb ->
+      Bloom.Blocked.create (Bloom.Blocked.sizeForFPR fpr n) salt $ \mb ->
         Bloom.Blocked.insertMany mb (\k -> pure $ keys !! k) n
 
     !n = length keys
+
+    !salt = 4 -- https://xkcd.com/221/
 
 -------------------------------------------------------------------------------
 -- Class to allow testing two filter implementations
 -------------------------------------------------------------------------------
 
 class BloomFilter bloom where
-  fromList :: Hashable a => B.BloomPolicy -> [a] -> bloom a
+  fromList :: Hashable a => B.BloomPolicy -> B.Salt -> [a] -> bloom a
   elem     :: Hashable a => a -> bloom a -> Bool
   notElem  :: Hashable a => a -> bloom a -> Bool
 
