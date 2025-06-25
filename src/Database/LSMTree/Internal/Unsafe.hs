@@ -39,7 +39,11 @@ module Database.LSMTree.Internal.Unsafe (
   , withKeepSessionOpen
     -- ** Implementation of public API
   , withOpenSession
+  , withNewSession
+  , withRestoreSession
   , openSession
+  , newSession
+  , restoreSession
   , closeSession
     -- * Table
   , Table (..)
@@ -340,6 +344,40 @@ withOpenSession tr hfs hbio salt dir k = do
       (openSession tr hfs hbio salt dir)
       closeSession
       k
+
+{-# INLINE withNewSession #-}
+withNewSession ::
+     forall m h a.
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> Bloom.Salt
+  -> FsPath -- ^ Path to the session directory
+  -> (Session m h -> m a)
+  -> m a
+withNewSession tr hfs hbio salt dir k = do
+    bracket
+      (newSession tr hfs hbio salt dir)
+      closeSession
+      k
+
+{-# INLINE withRestoreSession #-}
+withRestoreSession ::
+     forall m h a.
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m, MonadEvaluate m)
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> FsPath -- ^ Path to the session directory
+  -> (Session m h -> m a)
+  -> m a
+withRestoreSession tr hfs hbio dir k = do
+    bracket
+      (restoreSession tr hfs hbio dir)
+      closeSession
+      k
+
 {-# SPECIALISE openSession ::
      Tracer IO LSMTreeTrace
   -> HasFS IO h

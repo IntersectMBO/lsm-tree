@@ -33,8 +33,8 @@ import           Test.Util.FS
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal" [
       testGroup "Session" [
-          testProperty "newSession" newSession
-        , testProperty "restoreSession" restoreSession
+          testProperty "prop_newSession" prop_newSession
+        , testProperty "prop_restoreSession" prop_restoreSession
         , testProperty "sessionDirLocked" sessionDirLocked
         , testCase "sessionDirCorrupted" sessionDirCorrupted
         , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
@@ -56,13 +56,13 @@ testTableConfig = defaultTableConfig {
       confWriteBufferAlloc = AllocNumEntries 3
     }
 
-newSession ::
+prop_newSession ::
      Positive (Small Int)
   -> V.Vector (Word64, Entry Word64 Word64)
   -> Property
-newSession (Positive (Small bufferSize)) es =
+prop_newSession (Positive (Small bufferSize)) es =
     ioProperty $
-    withTempIOHasBlockIO "newSession" $ \hfs hbio ->
+    withTempIOHasBlockIO "prop_newSession" $ \hfs hbio ->
     withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session ->
       withTable session conf (updates const es')
   where
@@ -71,13 +71,13 @@ newSession (Positive (Small bufferSize)) es =
       }
     es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
 
-restoreSession ::
+prop_restoreSession ::
      Positive (Small Int)
   -> V.Vector (Word64, Entry Word64 Word64)
   -> Property
-restoreSession (Positive (Small bufferSize)) es =
+prop_restoreSession (Positive (Small bufferSize)) es =
     ioProperty $
-    withTempIOHasBlockIO "restoreSession" $ \hfs hbio -> do
+    withTempIOHasBlockIO "prop_restoreSession" $ \hfs hbio -> do
       withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session1 ->
         withTable session1 conf (updates const es')
       withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session2 ->

@@ -21,8 +21,12 @@ module Database.LSMTree (
   Session,
   withOpenSession,
   withOpenSessionIO,
+  withNewSession,
+  withRestoreSession,
   openSession,
   openSessionIO,
+  newSession,
+  restoreSession,
   closeSession,
 
   -- * Tables
@@ -466,6 +470,110 @@ withOpenSessionIO tracer sessionDir action = do
     withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
 
 {- |
+Run an action with access to a new session.
+
+The session directory must be empty.
+
+If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
+Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
+The following assumes all tables in the session have the same merge policy:
+
+['LazyLevelling']:
+  \(O(o \: T \log_T \frac{n}{B})\).
+
+The variable \(o\) refers to the number of open tables and cursors in the session.
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'newSession' and 'closeSession'.
+
+Throws the following exceptions:
+
+['SessionDirDoesNotExistError']:
+    If the session directory does not exist.
+['SessionDirLockedError']:
+    If the session directory is locked by another process.
+['SessionDirCorruptedError']:
+    If the session directory is malformed.
+-}
+{-# SPECIALISE
+  withNewSession ::
+    Tracer IO LSMTreeTrace ->
+    HasFS IO HandleIO ->
+    HasBlockIO IO HandleIO ->
+    Salt ->
+    FsPath ->
+    (Session IO -> IO a) ->
+    IO a
+  #-}
+withNewSession ::
+  forall m h a.
+  (IOLike m, Typeable h) =>
+  Tracer m LSMTreeTrace ->
+  HasFS m h ->
+  HasBlockIO m h ->
+  -- | The session salt.
+  Salt ->
+  -- | The session directory.
+  FsPath ->
+  (Session m -> m a) ->
+  m a
+withNewSession tracer hasFS hasBlockIO sessionSalt sessionDir action = do
+  Internal.withNewSession tracer hasFS hasBlockIO sessionSalt sessionDir (action . Session)
+
+{- |
+Run an action with access to a restored session.
+
+The session directory must be non-empty: a session must have previously been
+opened and closed in this directory.
+
+If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
+Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
+The following assumes all tables in the session have the same merge policy:
+
+['LazyLevelling']:
+  \(O(o \: T \log_T \frac{n}{B})\).
+
+The variable \(o\) refers to the number of open tables and cursors in the session.
+
+This function is exception-safe for both synchronous and asynchronous exceptions.
+
+It is recommended to use this function instead of 'restoreSession' and 'closeSession'.
+
+Throws the following exceptions:
+
+['SessionDirDoesNotExistError']:
+    If the session directory does not exist.
+['SessionDirLockedError']:
+    If the session directory is locked by another process.
+['SessionDirCorruptedError']:
+    If the session directory is malformed.
+-}
+{-# SPECIALISE
+  withRestoreSession ::
+    Tracer IO LSMTreeTrace ->
+    HasFS IO HandleIO ->
+    HasBlockIO IO HandleIO ->
+    FsPath ->
+    (Session IO -> IO a) ->
+    IO a
+  #-}
+withRestoreSession ::
+  forall m h a.
+  (IOLike m, Typeable h) =>
+  Tracer m LSMTreeTrace ->
+  HasFS m h ->
+  HasBlockIO m h ->
+  -- | The session directory.
+  FsPath ->
+  (Session m -> m a) ->
+  m a
+withRestoreSession tracer hasFS hasBlockIO sessionDir action = do
+  Internal.withRestoreSession tracer hasFS hasBlockIO sessionDir (action . Session)
+
+{- |
 Open a session from a session directory.
 
 If the session directory is empty, a new session is created using the given salt.
@@ -522,6 +630,86 @@ openSessionIO tracer sessionDir = do
   let releaseHasBlockIO HasBlockIO{close} = close
   bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
     openSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath
+
+{- |
+Create a new session.
+
+The session directory must be empty.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+
+Throws the following exceptions:
+
+['SessionDirDoesNotExistError']:
+    If the session directory does not exist.
+['SessionDirLockedError']:
+    If the session directory is locked by another process.
+['SessionDirCorruptedError']:
+    If the session directory is malformed.
+-}
+{-# SPECIALISE
+  newSession ::
+    Tracer IO LSMTreeTrace ->
+    HasFS IO HandleIO ->
+    HasBlockIO IO HandleIO ->
+    Salt ->
+    FsPath ->
+    IO (Session IO)
+  #-}
+newSession ::
+  forall m h.
+  (IOLike m, Typeable h) =>
+  Tracer m LSMTreeTrace ->
+  HasFS m h ->
+  HasBlockIO m h ->
+  -- | The session salt.
+  Salt ->
+  -- | The session directory.
+  FsPath ->
+  m (Session m)
+newSession tracer hasFS hasBlockIO sessionSalt sessionDir =
+  Session <$> Internal.newSession tracer hasFS hasBlockIO sessionSalt sessionDir
+
+{- |
+Restore a session from a session directory.
+
+The session directory must be non-empty: a session must have previously been
+opened (and closed) in this directory.
+
+The worst-case disk I\/O complexity of this operation is \(O(1)\).
+
+__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+
+Throws the following exceptions:
+
+['SessionDirDoesNotExistError']:
+    If the session directory does not exist.
+['SessionDirLockedError']:
+    If the session directory is locked by another process.
+['SessionDirCorruptedError']:
+    If the session directory is malformed.
+-}
+{-# SPECIALISE
+  restoreSession ::
+    Tracer IO LSMTreeTrace ->
+    HasFS IO HandleIO ->
+    HasBlockIO IO HandleIO ->
+    FsPath ->
+    IO (Session IO)
+  #-}
+restoreSession ::
+  forall m h.
+  (IOLike m, Typeable h) =>
+  Tracer m LSMTreeTrace ->
+  HasFS m h ->
+  HasBlockIO m h ->
+  -- | The session directory.
+  FsPath ->
+  m (Session m)
+restoreSession tracer hasFS hasBlockIO sessionDir =
+  Session <$> Internal.restoreSession tracer hasFS hasBlockIO sessionDir
 
 {- |
 Close a session.
