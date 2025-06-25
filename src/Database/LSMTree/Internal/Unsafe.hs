@@ -512,7 +512,6 @@ closeSession Session{sessionState, sessionTracer} = do
               (void . swapMVar (sessionOpenTables seshEnv))
           mapM_ (delayedCommit reg . close) tables
 
-          delayedCommit reg $ FS.close (sessionHasBlockIO seshEnv)
           delayedCommit reg $ FS.hUnlock (sessionLockFile seshEnv)
 
           pure SessionClosed

@@ -106,7 +106,7 @@ import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
+import           System.FS.BlockIO.API (HasBlockIO, close, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.Error as FSSim
@@ -297,7 +297,7 @@ propLockstep_RealImpl_RealFS_IO tr (QC.Fixed salt) =
       CheckRefs
       acquire
       release
-      (\r (_, session, errsVar, logVar) -> do
+      (\r (_, session, _, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
               env :: RealEnv R.Table IO
@@ -314,18 +314,19 @@ propLockstep_RealImpl_RealFS_IO tr (QC.Fixed salt) =
         )
       tagFinalState'
   where
-    acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog)
+    acquire :: IO (FilePath, Class.Session R.Table IO, HasBlockIO IO HandleIO, StrictTVar IO Errors, StrictTVar IO ErrorsLog)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession tr hasFS hasBlockIO salt (mkFsPath [])
         errsVar <- newTVarIO FSSim.emptyErrors
         logVar <- newTVarIO emptyLog
-        pure (tmpDir, session, errsVar, logVar)
+        pure (tmpDir, session, hasBlockIO, errsVar, logVar)
 
-    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog) -> IO Property
-    release (tmpDir, !session, _, _) = do
+    release :: (FilePath, Class.Session R.Table IO, HasBlockIO IO HandleIO, StrictTVar IO Errors, StrictTVar IO ErrorsLog) -> IO Property
+    release (tmpDir, !session, hasBlockIO, _, _) = do
         !prop <- propNoThunks session
         R.closeSession session
+        close hasBlockIO
         removeDirectoryRecursive tmpDir
         pure prop
 
