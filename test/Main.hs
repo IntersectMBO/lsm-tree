@@ -4,6 +4,7 @@ module Main (main) where
 
 import qualified Control.RefCount
 
+import qualified Test.Database.LSMTree
 import qualified Test.Database.LSMTree.Class
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal
@@ -51,7 +52,8 @@ import           Test.Tasty
 main :: IO ()
 main = do
   defaultMain $ testGroup "lsm-tree"
-    [ Test.Database.LSMTree.Internal.Arena.tests
+    [ Test.Database.LSMTree.tests
+    , Test.Database.LSMTree.Internal.Arena.tests
     , Test.Database.LSMTree.Class.tests
     , Test.Database.LSMTree.Generators.tests
     , Test.Database.LSMTree.Internal.tests

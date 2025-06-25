@@ -771,6 +771,7 @@ test-suite lsm-tree-test
     Database.LSMTree.Model.IO
     Database.LSMTree.Model.Session
     Database.LSMTree.Model.Table
+    Test.Database.LSMTree
     Test.Database.LSMTree.Class
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal
