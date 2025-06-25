@@ -515,7 +515,7 @@ restoreSession tr hfs hbio dir = do
                     (Text.pack "Session directory is empty")
                     (FS.mkFsErrorPath hfs dir)
 
-     -- If the layouts are wrong, we throw an exception
+      -- If the layouts are wrong, we throw an exception
       checkTopLevelDirLayout
 
       salt <-
@@ -567,7 +567,7 @@ restoreSession tr hfs hbio dir = do
         contents <- FS.listDirectory hfs activeDirPath
         unless (Set.null contents) $ throwIO $
           ErrSessionDirCorrupted
-            (Text.pack "Active irectory is non-empty")
+            (Text.pack "Active directory is non-empty")
             (FS.mkFsErrorPath hfs activeDirPath)
 
     -- Nothing to check: snapshots are verified when they are loaded, not when a
