@@ -34,6 +34,7 @@ import           Data.Primitive.MutVar
 import           Data.Traversable (for)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Readers (Readers)
 import qualified Database.LSMTree.Internal.Readers as Readers
@@ -153,6 +154,7 @@ instance IsMergeType TreeMergeType where
      IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> RunParams
   -> t
   -> ResolveSerialisedValue
@@ -165,13 +167,14 @@ new ::
      (IsMergeType t, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> RunParams
   -> t
   -> ResolveSerialisedValue
   -> Run.RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Maybe (Merge t m h))
-new hfs hbio runParams mergeType mergeResolve targetPaths runs = do
+new hfs hbio salt runParams mergeType mergeResolve targetPaths runs = do
     let sources = Readers.FromRun <$> V.toList runs
     mreaders <- Readers.new mergeResolve Readers.NoOffsetKey sources
     -- TODO: Exception safety! If Readers.new fails after already creating some
@@ -180,7 +183,7 @@ new hfs hbio runParams mergeType mergeResolve targetPaths runs = do
     for mreaders $ \mergeReaders -> do
       -- calculate upper bounds based on input runs
       let numEntries = V.foldMap' Run.size runs
-      mergeBuilder <- Builder.new hfs hbio runParams targetPaths numEntries
+      mergeBuilder <- Builder.new hfs hbio salt runParams targetPaths numEntries
       mergeState <- newMutVar $! Merging
       pure Merge {
           mergeIsLastLevel = isLastLevel mergeType

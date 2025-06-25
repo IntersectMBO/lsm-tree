@@ -27,6 +27,7 @@ import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef)
 import           Database.LSMTree.Internal.BloomFilter (Bloom)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.ChecksumHandle
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
@@ -96,6 +97,7 @@ instance NFData RunDataCaching where
 {-# SPECIALISE new ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> NumEntries
@@ -107,13 +109,14 @@ new ::
      (MonadST m, MonadSTM m)
   => HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> NumEntries  -- ^ an upper bound of the number of entries to be added
   -> m (RunBuilder m h)
-new hfs hbio runBuilderParams@RunParams{..} runBuilderFsPaths numEntries = do
+new hfs hbio salt runBuilderParams@RunParams{..} runBuilderFsPaths numEntries = do
     runBuilderAcc <- ST.stToIO $
-                       RunAcc.new numEntries runParamAlloc runParamIndex
+                       RunAcc.new numEntries runParamAlloc salt runParamIndex
     runBuilderBlobOffset <- newPrimVar 0
 
     runBuilderHandles <- traverse (makeHandle hfs) (pathsForRunFiles runBuilderFsPaths)

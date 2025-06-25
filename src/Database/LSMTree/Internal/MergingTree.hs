@@ -36,6 +36,7 @@ import           Data.List (foldl')
 #endif
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.MergingRun (MergeDebt (..),
                      MergingRun)
@@ -368,6 +369,7 @@ debtOfNestedMerge debts =
      HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> Run.RunParams
   -> MR.CreditThreshold
   -> SessionRoot
@@ -381,6 +383,7 @@ supplyCredits ::
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> Run.RunParams
   -> MR.CreditThreshold
   -> SessionRoot
@@ -388,7 +391,7 @@ supplyCredits ::
   -> Ref (MergingTree m h)
   -> MR.MergeCredits
   -> m MR.MergeCredits
-supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
+supplyCredits hfs hbio resolve salt runParams threshold root uc = \mt0 c0 -> do
     if c0 <= 0
       then pure 0
       else supplyTree mt0 c0
@@ -437,7 +440,7 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
               withRollback reg
                 -- TODO: the builder's handles aren't cleaned up if we fail
                 -- before fromBuilder closes them
-                (Run.newEmpty hfs hbio runParams runPaths)
+                (Run.newEmpty hfs hbio salt runParams runPaths)
                 releaseRef
             pure (CompletedTreeMerge run, credits)
 
@@ -501,7 +504,7 @@ supplyCredits hfs hbio resolve runParams threshold root uc = \mt0 c0 -> do
         runPaths <- mkFreshRunPaths
         mr <-
           withRollback reg
-            (MR.new hfs hbio resolve runParams mergeType runPaths rs)
+            (MR.new hfs hbio resolve salt runParams mergeType runPaths rs)
             releaseRef
         -- no need for the runs anymore, 'MR.new' made duplicates
         traverse_ (\r -> delayedCommit reg (releaseRef r)) rs

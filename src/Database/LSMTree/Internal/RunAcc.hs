@@ -36,11 +36,11 @@ module Database.LSMTree.Internal.RunAcc (
 import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
-import           Data.BloomFilter.Blocked (Bloom, MBloom)
 import qualified Data.BloomFilter.Blocked as Bloom
 import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
+import           Database.LSMTree.Internal.BloomFilter (Bloom, MBloom)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexAcc, IndexType)
@@ -80,10 +80,11 @@ data RunAcc s = RunAcc {
 new ::
      NumEntries
   -> RunBloomFilterAlloc
+  -> Bloom.Salt
   -> IndexType
   -> ST s (RunAcc s)
-new nentries alloc indexType = do
-    mbloom <- newMBloom nentries alloc
+new nentries alloc salt indexType = do
+    mbloom <- newMBloom nentries alloc salt
     mindex <- Index.newWithDefaults indexType
     mpageacc <- PageAcc.newPageAcc
     entryCount <- newPrimVar 0
@@ -343,9 +344,9 @@ instance NFData RunBloomFilterAlloc where
     rnf (RunAllocFixed a)      = rnf a
     rnf (RunAllocRequestFPR a) = rnf a
 
-newMBloom :: NumEntries -> RunBloomFilterAlloc -> ST s (MBloom s a)
-newMBloom (NumEntries nentries) alloc =
-    Bloom.new (Bloom.sizeForPolicy (policy alloc) nentries)
+newMBloom :: NumEntries -> RunBloomFilterAlloc -> Bloom.Salt -> ST s (MBloom s a)
+newMBloom (NumEntries nentries) alloc salt =
+    Bloom.new (Bloom.sizeForPolicy (policy alloc) nentries) salt
   where
     --TODO: it'd be possible to turn the RunBloomFilterAlloc into a BloomPolicy
     -- without the NumEntries, and cache the policy, avoiding recalculating the

@@ -140,10 +140,11 @@ It (and remaining fields) are serialised in native byte order.
 The remainder of the header for format 1 consists of:
  1. The hash function count (32bit)
  2. The bit size of the filter (64bit)
+ 3. The hash salt of the filter (64bit)
 
 The fields of the header are serialized in native byte order.
 
-The maximum filter size is 2^48 bits, corresponding to 32 Terabytes.
+The maximum filter size is 2^41 bits, corresponding to 32 Terabytes.
 The family of hash functions to use is implied by the format version.
 
 The filter bit vector itself is organised as a whole number of 64 bit words.

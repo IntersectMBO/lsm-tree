@@ -48,6 +48,7 @@ import           Data.Foldable (sequenceA_, traverse_)
 import           Data.String (IsString)
 import           Data.Text (Text)
 import qualified Data.Vector as V
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -231,6 +232,7 @@ instance NFData r => NFData (SnapPreExistingRun r) where
 {-# SPECIALISE fromSnapMergingTree ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> UniqCounter IO
   -> ResolveSerialisedValue
   -> ActiveDir
@@ -245,13 +247,14 @@ fromSnapMergingTree ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> UniqCounter m
   -> ResolveSerialisedValue
   -> ActiveDir
   -> ActionRegistry m
   -> SnapMergingTree (Ref (Run m h))
   -> m (Ref (MT.MergingTree m h))
-fromSnapMergingTree hfs hbio uc resolve dir =
+fromSnapMergingTree hfs hbio salt uc resolve dir =
     go
   where
     -- Reference strategy:
@@ -291,7 +294,7 @@ fromSnapMergingTree hfs hbio uc resolve dir =
 
     go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
       mr <- withRollback reg
-               (fromSnapMergingRun hfs hbio uc resolve dir smrs)
+               (fromSnapMergingRun hfs hbio salt uc resolve dir smrs)
                releaseRef
       mt <- withRollback reg
               (MT.newOngoingMerge mr)
@@ -309,7 +312,7 @@ fromSnapMergingTree hfs hbio uc resolve dir =
     fromSnapPreExistingRun reg (SnapPreExistingMergingRun smrs) =
       MT.PreExistingMergingRun <$>
         withRollback reg
-          (fromSnapMergingRun hfs hbio uc resolve dir smrs)
+          (fromSnapMergingRun hfs hbio salt uc resolve dir smrs)
           releaseRef
 
     releasePER (MT.PreExistingRun         r) = releaseRef r
@@ -625,6 +628,7 @@ openRun hfs hbio uc reg
 {-# SPECIALISE fromSnapLevels ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> UniqCounter IO
   -> TableConfig
   -> ResolveSerialisedValue
@@ -638,6 +642,7 @@ fromSnapLevels ::
      forall m h. (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> UniqCounter m
   -> TableConfig
   -> ResolveSerialisedValue
@@ -645,7 +650,7 @@ fromSnapLevels ::
   -> ActiveDir
   -> SnapLevels (Ref (Run m h))
   -> m (Levels m h)
-fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
+fromSnapLevels hfs hbio salt uc conf resolve reg dir (SnapLevels levels) =
     V.iforM levels $ \i -> fromSnapLevel (LevelNo (i+1))
   where
     -- TODO: we may wish to trace the merges created during snapshot restore:
@@ -671,7 +676,7 @@ fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
     fromSnapIncomingRun ln (SnapIncomingMergingRun mergePolicy nominalDebt
                                                    nominalCredits smrs) =
       bracket
-        (fromSnapMergingRun hfs hbio uc resolve dir smrs)
+        (fromSnapMergingRun hfs hbio salt uc resolve dir smrs)
         releaseRef $ \mr -> do
 
         ir <- newIncomingMergingRun mergePolicy nominalDebt mr
@@ -685,6 +690,7 @@ fromSnapLevels hfs hbio uc conf resolve reg dir (SnapLevels levels) =
      MR.IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> UniqCounter IO
   -> ResolveSerialisedValue
   -> ActiveDir
@@ -694,20 +700,21 @@ fromSnapMergingRun ::
      (MonadMask m, MonadMVar m, MonadSTM m, MonadST m, MR.IsMergeType t)
   => HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> UniqCounter m
   -> ResolveSerialisedValue
   -> ActiveDir
   -> SnapMergingRun t (Ref (Run m h))
   -> m (Ref (MR.MergingRun t m h))
-fromSnapMergingRun _ _ _ _ _ (SnapCompletedMerge mergeDebt r) =
+fromSnapMergingRun _ _ _ _ _ _ (SnapCompletedMerge mergeDebt r) =
     MR.newCompleted mergeDebt r
 
-fromSnapMergingRun hfs hbio uc resolve dir
+fromSnapMergingRun hfs hbio salt uc resolve dir
                    (SnapOngoingMerge runParams mergeCredits rs mergeType) = do
     bracketOnError
       (do uniq <- incrUniqCounter uc
           let runPaths = runPath dir (uniqueToRunNumber uniq)
-          MR.new hfs hbio resolve runParams mergeType runPaths rs)
+          MR.new hfs hbio resolve salt runParams mergeType runPaths rs)
       releaseRef $ \mr -> do
         -- When a snapshot is created, merge progress is lost, so we have to
         -- redo merging work here. The MergeCredits in SnapMergingRun tracks
