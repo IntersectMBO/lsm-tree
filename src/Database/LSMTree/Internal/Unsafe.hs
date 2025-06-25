@@ -1541,11 +1541,11 @@ openTableFromSnapshot policyOveride sesh snap label resolve =
           openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
-        snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir) snapLevels
+        snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir salt) snapLevels
         unionLevel <- case mTreeOpt of
               Nothing -> pure NoUnion
               Just mTree -> do
-                snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir) mTree
+                snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir salt) mTree
                 mt <- fromSnapMergingTree hfs hbio salt uc resolve activeDir reg snapTree
                 isStructurallyEmpty mt >>= \case
                   True ->

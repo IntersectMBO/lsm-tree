@@ -586,9 +586,10 @@ snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
   -> ActionRegistry IO
   -> NamedSnapshotDir
   -> ActiveDir
+  -> Bloom.Salt
   -> SnapshotRun
   -> IO (Ref (Run IO h)) #-}
--- | @'openRun' _ _ uniqCounter _ sourceDir targetDir snaprun@ takes all run
+-- | @'openRun' _ _ uniqCounter _ sourceDir targetDir _ snaprun@ takes all run
 -- files that are referenced by @snaprun@, and hard links them from @sourceDir@
 -- into @targetDir@ with new, unique names (using @uniqCounter@). Each set of
 -- (hard linked) files that represents a run is opened and verified, returning
@@ -603,10 +604,12 @@ openRun ::
   -> ActionRegistry m
   -> NamedSnapshotDir
   -> ActiveDir
+  -> Bloom.Salt
   -> SnapshotRun
   -> m (Ref (Run m h))
 openRun hfs hbio uc reg
         (NamedSnapshotDir sourceDir) (ActiveDir targetDir)
+        expectedSalt
         SnapshotRun {
           snapRunNumber  = runNum,
           snapRunCaching = caching,
@@ -618,7 +621,7 @@ openRun hfs hbio uc reg
     hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
 
     withRollback reg
-      (Run.openFromDisk hfs hbio caching indexType targetPaths)
+      (Run.openFromDisk hfs hbio caching indexType expectedSalt targetPaths)
       releaseRef
 
 {-------------------------------------------------------------------------------

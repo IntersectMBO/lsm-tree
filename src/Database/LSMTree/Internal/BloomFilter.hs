@@ -29,6 +29,7 @@ import qualified Data.Primitive as P
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64, byteSwap32)
+import           Text.Printf (printf)
 
 import           Control.Exception (assert)
 import           Control.Monad (void, when)
@@ -242,6 +243,7 @@ bloomFilterToLBS bf =
 
 {-# SPECIALISE bloomFilterFromFile ::
      HasFS IO h
+  -> Bloom.Salt
   -> Handle h
   -> IO (Bloom a) #-}
 -- | Read a 'Bloom' from a file.
@@ -249,16 +251,17 @@ bloomFilterToLBS bf =
 bloomFilterFromFile ::
      (PrimMonad m, MonadCatch m)
   => HasFS m h
+  -> Bloom.Salt -- ^ Expected salt
   -> Handle h  -- ^ The open file, in read mode
   -> m (Bloom a)
-bloomFilterFromFile hfs h = do
+bloomFilterFromFile hfs expectedSalt h = do
     header <- rethrowEOFError "Doesn't contain a header" $
               hGetByteArrayExactly hfs h 24
 
     let !version = P.indexByteArray header 0 :: Word32
         !nhashes = P.indexByteArray header 1 :: Word32
         !nbits   = P.indexByteArray header 1 :: Word64
-        !salt    = P.indexByteArray header 2 :: Word64
+        !salt    = P.indexByteArray header 2 :: Bloom.Salt
 
     when (version /= bloomFilterVersion) $ throwFormatError $
       if byteSwap32 version == bloomFilterVersion
@@ -268,8 +271,12 @@ bloomFilterFromFile hfs h = do
     when (nbits <= 0) $ throwFormatError "Length is zero"
 
     -- limit to 2^48 bits
-    when (nbits >= 0x1_0000_0000_0000) $ throwFormatError "Too large bloomfilter"
-    --TODO: get max size from bloomfilter lib
+    when (nbits >= fromIntegral Bloom.maxSizeBits) $ throwFormatError "Too large bloomfilter"
+
+    when (expectedSalt /= salt) $ throwFormatError $
+      printf "Expected salt does not match actual salt: %d /= %d"
+        expectedSalt
+        salt
 
     -- read the filter data from the file directly into the bloom filter
     bloom <-

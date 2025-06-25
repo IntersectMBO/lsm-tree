@@ -216,7 +216,8 @@ prop_WriteAndOpen fs hbio wb =
           paths' = paths { runNumber = RunNumber 17}
       hardLinkRunFiles fs hbio reg paths paths'
       loaded <- openFromDisk fs hbio (runParamCaching runParams)
-                             (runParamIndex runParams) (simplePath 17)
+                             (runParamIndex runParams) testSalt
+                             (simplePath 17)
 
       Run.size written @=? Run.size loaded
       withRef written $ \written' ->

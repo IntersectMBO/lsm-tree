@@ -269,6 +269,7 @@ fromWriteBuffer fs hbio salt params fsPaths buffer blobs = do
   -> HasBlockIO IO h
   -> RunDataCaching
   -> IndexType
+  -> Bloom.Salt
   -> RunFsPaths
   -> IO (Ref (Run IO h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
@@ -294,10 +295,11 @@ openFromDisk ::
   -> HasBlockIO m h
   -> RunDataCaching
   -> IndexType
+  -> Bloom.Salt -- ^ Expected salt
   -> RunFsPaths
   -> m (Ref (Run m h))
 -- TODO: make exception safe
-openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
+openFromDisk fs hbio runRunDataCaching indexType expectedSalt runRunFsPaths = do
     expectedChecksums <-
        CRC.expectValidFile fs (runChecksumsPath runRunFsPaths) CRC.FormatChecksumsFile
            . fromChecksumsFile
@@ -312,7 +314,7 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     let filterPath = forRunFilterRaw paths
     checkCRC CacheRunData (forRunFilterRaw expectedChecksums) filterPath
     runFilter <- FS.withFile fs filterPath FS.ReadMode $
-                   bloomFilterFromFile fs
+                   bloomFilterFromFile fs expectedSalt
 
     (runNumEntries, runIndex) <-
       CRC.expectValidFile fs (forRunIndexRaw paths) CRC.FormatIndexFile
