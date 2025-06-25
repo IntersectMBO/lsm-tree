@@ -45,6 +45,9 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.BloomFilter" [
         ]
     ]
 
+benchSalt :: Bloom.Salt
+benchSalt = 4
+
 -- | Input environment for benchmarking 'Bloom.elem'.
 elemEnv ::
      Double -- ^ False positive rate
@@ -61,7 +64,7 @@ elemEnv fpr nbloom nelemsPositive nelemsNegative = do
                   $ uniformWithoutReplacement    @UTxOKey g1  (nbloom + nelemsNegative)
         ys2       = sampleUniformWithReplacement @UTxOKey g2 nelemsPositive xs
         zs        = shuffle (ys1 ++ ys2) g3
-    pure ( Bloom.fromList (Bloom.policyForFPR fpr) (fmap serialiseKey xs)
+    pure ( Bloom.fromList (Bloom.policyForFPR fpr) benchSalt (fmap serialiseKey xs)
          , fmap serialiseKey zs
          )
 
@@ -86,5 +89,5 @@ constructBloom ::
 constructBloom fpr m =
     -- For faster construction, avoid going via lists and use Bloom.create,
     -- traversing the map inserting the keys
-    Bloom.create (Bloom.sizeForFPR fpr (Map.size m)) $ \b ->
+    Bloom.create (Bloom.sizeForFPR fpr (Map.size m)) benchSalt $ \b ->
       BiFold.bifoldMap (\k -> Bloom.insert b k) (\_v -> pure ()) m

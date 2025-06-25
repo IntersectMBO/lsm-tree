@@ -20,6 +20,7 @@ import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators (BiasedKey (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
 import           Database.LSMTree.Internal.Readers (HasMore (Drained, HasMore),
@@ -73,6 +74,9 @@ runParams =
       runParamAlloc   = RunAcc.RunAllocFixed 10,
       runParamIndex   = Index.Ordinary
     }
+
+testSalt :: Bloom.Salt
+testSalt = 4
 
 --------------------------------------------------------------------------------
 
@@ -453,7 +457,7 @@ runIO act lu = case act of
           wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hfs wbblobs)) kops
           pure $ Readers.FromWriteBuffer wb wbblobs
         FromRunData rd -> do
-          r <- unsafeCreateRun hfs hbio runParams (FS.mkFsPath []) counter $ serialiseRunData rd
+          r <- unsafeCreateRun hfs hbio testSalt runParams (FS.mkFsPath []) counter $ serialiseRunData rd
           pure $ Readers.FromRun r
         FromReadersData ty rds -> do
           Readers.FromReaders ty <$> traverse (fromSourceData hfs hbio counter) rds

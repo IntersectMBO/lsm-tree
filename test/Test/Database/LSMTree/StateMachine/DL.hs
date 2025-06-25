@@ -58,7 +58,7 @@ prop_example =
     -- Run the example ...
     forAllDL dl_example $
     -- ... with the given lockstep property
-    propLockstep_RealImpl_MockFS_IO tr CheckCleanup CheckFS CheckRefs
+    propLockstep_RealImpl_MockFS_IO tr CheckCleanup CheckFS CheckRefs (QC.Fixed 17)
   where
     -- To enable tracing, use something like @show `contramap` stdoutTracer@
     -- instead
@@ -142,11 +142,11 @@ test_noSwallowedExceptions =
 -- exceptions safe. When we generate injected errors for these errors by default
 -- (in @arbitraryWithVars@), the swallowed exception assertion automatically
 -- runs for those actions as well.
-prop_noSwallowedExceptions :: Property
-prop_noSwallowedExceptions = forAllDL dl_noSwallowExceptions runner
+prop_noSwallowedExceptions :: QC.Fixed Salt -> Property
+prop_noSwallowedExceptions salt = forAllDL dl_noSwallowExceptions runner
   where
     -- disable all file system and reference checks
-    runner = propLockstep_RealImpl_MockFS_IO tr NoCheckCleanup NoCheckFS NoCheckRefs
+    runner = propLockstep_RealImpl_MockFS_IO tr NoCheckCleanup NoCheckFS NoCheckRefs salt
     tr = nullTracer
 
 -- | Run any number of actions using the default actions generator, and finally

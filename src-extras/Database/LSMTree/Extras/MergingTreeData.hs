@@ -24,6 +24,7 @@ import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.MergingRunData
 import           Database.LSMTree.Extras.RunData
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
 import qualified Database.LSMTree.Internal.MergingTree as MT
@@ -44,15 +45,16 @@ withMergingTree ::
      HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedMergingTreeData
   -> (Ref (MergingTree IO h) -> IO a)
   -> IO a
-withMergingTree hfs hbio resolve runParams path counter mrd = do
+withMergingTree hfs hbio resolve salt runParams path counter mrd = do
     bracket
-      (unsafeCreateMergingTree hfs hbio resolve runParams path counter mrd)
+      (unsafeCreateMergingTree hfs hbio resolve salt runParams path counter mrd)
       releaseRef
 
 -- | Flush serialised merging tree data to disk.
@@ -65,19 +67,20 @@ unsafeCreateMergingTree ::
      HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedMergingTreeData
   -> IO (Ref (MergingTree IO h))
-unsafeCreateMergingTree hfs hbio resolve runParams path counter = go
+unsafeCreateMergingTree hfs hbio resolve salt runParams path counter = go
   where
     go = \case
       CompletedTreeMergeData rd ->
-        withRun hfs hbio runParams path counter rd $ \run ->
+        withRun hfs hbio salt runParams path counter rd $ \run ->
           MT.newCompletedMerge run
       OngoingTreeMergeData mrd ->
-        withMergingRun hfs hbio resolve runParams path counter mrd $ \mr ->
+        withMergingRun hfs hbio resolve salt runParams path counter mrd $ \mr ->
           MT.newOngoingMerge mr
       PendingLevelMergeData prds mtd ->
         withPreExistingRuns prds $ \prs ->
@@ -100,11 +103,11 @@ unsafeCreateMergingTree hfs hbio resolve runParams path counter = go
 
     withPreExistingRuns [] act = act []
     withPreExistingRuns (PreExistingRunData rd : rest) act =
-        withRun hfs hbio runParams path counter rd $ \r ->
+        withRun hfs hbio salt runParams path counter rd $ \r ->
           withPreExistingRuns rest $ \prs ->
             act (MT.PreExistingRun r : prs)
     withPreExistingRuns (PreExistingMergingRunData mrd : rest) act =
-        withMergingRun hfs hbio resolve runParams path counter mrd $ \mr ->
+        withMergingRun hfs hbio resolve salt runParams path counter mrd $ \mr ->
           withPreExistingRuns rest $ \prs ->
             act (MT.PreExistingMergingRun mr : prs)
 

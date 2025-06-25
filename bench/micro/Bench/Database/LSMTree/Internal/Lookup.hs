@@ -21,6 +21,7 @@ import           Database.LSMTree.Extras.Random (frequency, randomByteStringR,
 import           Database.LSMTree.Extras.UTxO
 import           Database.LSMTree.Internal.Arena (ArenaManager, closeArena,
                      newArena, newArenaManager, withArena)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Lookup (bloomQueries, indexSearches,
@@ -84,6 +85,9 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Lookup" [
         }
     ]
 
+benchSalt :: Bloom.Salt
+benchSalt = 4
+
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
     withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, wbblobs, rs, ks) ->
@@ -96,23 +100,23 @@ benchLookups conf@Config{name} =
             -- The bloomfilter is queried for all lookup keys. The result is an
             -- unboxed vector, so only use @whnf@.
             bench "Bloomfilter query" $
-              whnf (\ks' -> bloomQueries blooms ks') ks
+              whnf (\ks' -> bloomQueries benchSalt blooms ks') ks
             -- The compact index is only searched for (true and false) positive
             -- lookup keys. We use whnf here because the result is
-          , env (pure $ bloomQueries blooms ks) $ \rkixs ->
+          , env (pure $ bloomQueries benchSalt blooms ks) $ \rkixs ->
               bench "Compact index search" $
                 whnfAppIO (\ks' -> withArena arenaManager $ \arena -> stToIO $ indexSearches arena indexes kopsFiles ks' rkixs) ks
             -- prepLookups combines bloom filter querying and index searching.
             -- The implementation forces the results to WHNF, so we use
             -- whnfAppIO here instead of nfAppIO.
           , bench "Lookup preparation in memory" $
-              whnfAppIO (\ks' -> withArena arenaManager $ \arena -> stToIO $ prepLookups arena blooms indexes kopsFiles ks') ks
+              whnfAppIO (\ks' -> withArena arenaManager $ \arena -> stToIO $ prepLookups arena benchSalt blooms indexes kopsFiles ks') ks
             -- Submit the IOOps we get from prepLookups to HasBlockIO. We use
             -- perRunEnv because IOOps contain mutable buffers, so we want fresh
             -- ones for each run of the benchmark. We manually evaluate the
             -- result to WHNF since it is unboxed vector.
           , bench "Submit IOOps" $
-              perRunEnv (withArena arenaManager $ \arena -> stToIO $ prepLookups arena blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
+              perRunEnv (withArena arenaManager $ \arena -> stToIO $ prepLookups arena benchSalt blooms indexes kopsFiles ks) $ \ ~(_rkixs, ioops) -> do
                 !_ioress <- FS.submitIO hasBlockIO ioops
                 pure ()
             -- When IO result have been collected, intra-page lookups searches
@@ -125,7 +129,7 @@ benchLookups conf@Config{name} =
           , bench "Perform intra-page lookups" $
               perRunEnvWithCleanup
                 ( do arena <- newArena arenaManager
-                     (rkixs, ioops) <- stToIO (prepLookups arena blooms indexes kopsFiles ks)
+                     (rkixs, ioops) <- stToIO (prepLookups arena benchSalt blooms indexes kopsFiles ks)
                      ioress <- FS.submitIO hasBlockIO ioops
                      pure (rkixs, ioops, ioress, arena)
                 )
@@ -141,7 +145,7 @@ benchLookups conf@Config{name} =
           , bench "Lookups in IO" $
               whnfAppIO (\ks' -> lookupsIOWithWriteBuffer
                                    hasBlockIO arenaManager resolveV
-                                   WB.empty wbblobs
+                                   benchSalt WB.empty wbblobs
                                    rs blooms indexes kopsFiles ks') ks
           ]
           -- TODO: consider adding benchmarks that also use the write buffer
@@ -192,7 +196,7 @@ lookupsInBatchesEnv Config {..} = do
     wbblobs <- WBB.new hasFS (FS.mkFsPath ["0.wbblobs"])
     wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hasFS wbblobs)) storedKeys
     let fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    r <- Run.fromWriteBuffer hasFS hasBlockIO runParams fsps wb wbblobs
+    r <- Run.fromWriteBuffer hasFS hasBlockIO benchSalt runParams fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
     assertEqual nentriesReal nentries $ pure ()
     -- 42 to 43 entries per page

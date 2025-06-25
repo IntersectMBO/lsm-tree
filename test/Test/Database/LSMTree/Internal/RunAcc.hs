@@ -47,6 +47,9 @@ tests = testGroup "Database.LSMTree.Internal.RunAcc" [
     ]
   where largerTestCases = localOption (QuickCheckMaxSize 500) . localOption (QuickCheckTests 10000)
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 {-------------------------------------------------------------------------------
   RunAcc
 -------------------------------------------------------------------------------}
@@ -57,7 +60,7 @@ test_singleKeyRun =  do
         !e = InsertWithBlob (SerialisedValue' (VP.fromList [48, 19])) (BlobSpan 55 77)
 
     (addRes, (mp, mc, b, ic, _numEntries)) <- stToIO $ do
-      racc <- new (NumEntries 1) (RunAllocFixed 10) Index.Ordinary
+      racc <- new (NumEntries 1) (RunAllocFixed 10) testSalt Index.Ordinary
       addRes <- addKeyOp racc k e
       (addRes,) <$> unsafeFinalise racc
 

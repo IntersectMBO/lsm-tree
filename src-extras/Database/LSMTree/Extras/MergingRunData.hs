@@ -23,6 +23,7 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.RunData
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.MergingRun (MergingRun)
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.Paths
@@ -46,15 +47,16 @@ withMergingRun ::
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> RunBuilder.RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedMergingRunData t
   -> (Ref (MergingRun t IO h) -> IO a)
   -> IO a
-withMergingRun hfs hbio resolve runParams path counter mrd = do
+withMergingRun hfs hbio resolve salt runParams path counter mrd = do
     bracket
-      (unsafeCreateMergingRun hfs hbio resolve runParams path counter mrd)
+      (unsafeCreateMergingRun hfs hbio resolve salt runParams path counter mrd)
       releaseRef
 
 -- | Flush serialised merging run data to disk.
@@ -68,24 +70,25 @@ unsafeCreateMergingRun ::
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> RunBuilder.RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedMergingRunData t
   -> IO (Ref (MergingRun t IO h))
-unsafeCreateMergingRun hfs hbio resolve runParams path counter = \case
+unsafeCreateMergingRun hfs hbio resolve salt runParams path counter = \case
     CompletedMergeData _ rd -> do
-      withRun hfs hbio runParams path counter rd $ \run -> do
+      withRun hfs hbio salt runParams path counter rd $ \run -> do
         -- slightly hacky, generally it's larger
         let totalDebt = MR.numEntriesToMergeDebt (Run.size run)
         MR.newCompleted totalDebt run
 
     OngoingMergeData mergeType rds -> do
-      withRuns hfs hbio runParams path counter (toRunData <$> rds)
+      withRuns hfs hbio salt runParams path counter (toRunData <$> rds)
         $ \runs -> do
           n <- incrUniqCounter counter
           let fsPaths = RunFsPaths path (RunNumber (uniqueToInt n))
-          MR.new hfs hbio resolve runParams mergeType
+          MR.new hfs hbio resolve salt runParams mergeType
                  fsPaths (V.fromList runs)
 
 {-------------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import           Database.LSMTree.Extras.MergingTreeData
 import           Database.LSMTree.Extras.ReferenceImpl
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef (BlobSpan)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Index as Index
 import qualified Database.LSMTree.Internal.MergingRun as MR
@@ -108,6 +109,9 @@ tests = testGroup "Test.Database.LSMTree.Generators" [
         ]
     ]
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 runParams :: Index.IndexType -> RunBuilder.RunParams
 runParams indexType =
     RunBuilder.RunParams {
@@ -162,7 +166,7 @@ prop_withRunDoesntLeak hfs hbio rd = do
     let path = FS.mkFsPath ["something-1"]
     let fsPaths = RunFsPaths path (RunNumber 0)
     FS.createDirectory hfs path
-    withRunAt hfs hbio (runParams indexType) fsPaths rd $ \_run -> do
+    withRunAt hfs hbio testSalt (runParams indexType) fsPaths rd $ \_run -> do
       pure (QC.property True)
 
 prop_withMergingRunDoesntLeak ::
@@ -175,7 +179,7 @@ prop_withMergingRunDoesntLeak hfs hbio mrd = do
     let path = FS.mkFsPath ["something-2"]
     FS.createDirectory hfs path
     counter <- newUniqCounter 0
-    withMergingRun hfs hbio resolveVal (runParams indexType) path counter mrd $
+    withMergingRun hfs hbio resolveVal testSalt (runParams indexType) path counter mrd $
       \_mr -> do
         pure (QC.property True)
 
@@ -191,7 +195,7 @@ prop_withMergingTreeDoesntLeak hfs hbio mrd = do
     let path = FS.mkFsPath ["something-3"]
     FS.createDirectory hfs path
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal (runParams indexType) path counter mrd $
+    withMergingTree hfs hbio resolveVal testSalt (runParams indexType) path counter mrd $
       \_tree -> do
         pure (QC.property True)
 

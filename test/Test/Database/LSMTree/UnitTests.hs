@@ -39,10 +39,13 @@ tests =
       , testCase      "unit_union_blobref_invalidation" unit_union_blobref_invalidation
       ]
 
+testSalt :: R.Salt
+testSalt = 4
+
 unit_blobs :: (String -> IO ()) -> Assertion
 unit_blobs info =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
       table <- newTable @_ @ByteString @(ResolveAsFirst ByteString) @ByteString sess
       inserts table [("key1", ResolveAsFirst "value1", Just "blob1")]
 
@@ -60,7 +63,7 @@ unit_blobs info =
 unit_closed_table :: Assertion
 unit_closed_table =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
       table <- newTable @_ @Key1 @Value1 @Blob1 sess
       inserts table [(Key1 42, Value1 42, Nothing)]
       r1 <- lookups table [Key1 42]
@@ -75,7 +78,7 @@ unit_closed_table =
 unit_closed_cursor :: Assertion
 unit_closed_cursor =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
       table <- newTable @_ @Key1 @Value1 @Blob1 sess
       inserts table [(Key1 42, Value1 42, Nothing), (Key1 43, Value1 43, Nothing)]
       cur <- newCursor table
@@ -93,7 +96,7 @@ unit_closed_cursor =
 unit_twoTableTypes :: Assertion
 unit_twoTableTypes =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
       let tableConfig =
             defaultTableConfig {
               confWriteBufferAlloc = AllocNumEntries 10
@@ -128,7 +131,7 @@ unit_twoTableTypes =
 unit_snapshots :: Assertion
 unit_snapshots =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
       table <- newTable @_ @Key1 @Value1 @Blob1 sess
 
       assertException (ErrSnapshotDoesNotExist snap2) $
@@ -156,7 +159,7 @@ unit_snapshots =
 unit_unions_1 :: Assertion
 unit_unions_1 =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess ->
     withTable @_ @Key1 @Value1 @Blob1 sess $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
@@ -181,7 +184,7 @@ unit_unions_1 =
 unit_union_credits :: Assertion
 unit_union_credits =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess ->
     withTable @_ @Key1 @Value1 @Blob1 sess $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
@@ -197,7 +200,7 @@ unit_union_credits =
 unit_union_credit_0 :: Assertion
 unit_union_credit_0 =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess ->
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess ->
     withTable @_ @Key1 @Value1 @Blob1 sess $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
@@ -219,7 +222,7 @@ unit_union_credit_0 =
 unit_union_blobref_invalidation :: Assertion
 unit_union_blobref_invalidation =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sess -> do
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
       t1 <- newTableWith @_ @Key1 @Value1 @Blob1 config sess
       for_ ([0..99] :: [Word64]) $ \i ->
         inserts t1 [(Key1 i, Value1 i, Just (Blob1 i))]

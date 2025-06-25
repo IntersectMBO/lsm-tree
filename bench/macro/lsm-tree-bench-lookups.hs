@@ -129,6 +129,9 @@ entryBitsWithOverhead = entryBits -- key and value size
 numEntriesFitInPage :: Fractional a => a
 numEntriesFitInPage = fromIntegral unusedPageBits / fromIntegral entryBitsWithOverhead
 
+benchSalt :: Bloom.Salt
+benchSalt = 4
+
 benchmarks :: Run.RunDataCaching -> IO ()
 benchmarks !caching = withFS $ \hfs hbio -> do
 #ifdef NO_IGNORE_ASSERTS
@@ -351,7 +354,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
 
     -- create the runs
     rbs <- sequence
-            [ RunBuilder.new hfs hbio
+            [ RunBuilder.new hfs hbio benchSalt
                 RunParams {
                   runParamCaching = caching,
                   runParamAlloc   = RunAllocFixed benchmarkNumBitsPerEntry,
@@ -428,7 +431,7 @@ benchBloomQueries !bs !keyRng !n
   | n <= 0 = ()
   | otherwise =
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      in  bloomQueries bs ks `seq`
+      in  bloomQueries benchSalt bs ks `seq`
           benchBloomQueries bs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, performing
@@ -445,7 +448,7 @@ benchIndexSearches !arenaManager !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
     let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-        !rkixs = bloomQueries bs ks
+        !rkixs = bloomQueries benchSalt bs ks
     !_ioops <- withArena arenaManager $ \arena -> stToIO $ indexSearches arena ics hs ks rkixs
     benchIndexSearches arenaManager bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
@@ -463,7 +466,7 @@ benchPrepLookups !arenaManager !bs !ics !hs !keyRng !n
   | n <= 0 = pure ()
   | otherwise = do
       let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-      (!_rkixs, !_ioops) <- withArena arenaManager $ \arena -> stToIO $ prepLookups arena bs ics hs ks
+      (!_rkixs, !_ioops) <- withArena arenaManager $ \arena -> stToIO $ prepLookups arena benchSalt bs ics hs ks
       benchPrepLookups arenaManager bs ics hs keyRng' (n-benchmarkGenBatchSize)
 
 -- | This gives us the combined cost of calculating batches of keys, and
@@ -489,7 +492,7 @@ benchLookupsIO !hbio !arenaManager !resolve !wb !wbblobs !rs !bs !ics !hs =
       | otherwise = do
           let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
           !_ <- lookupsIOWithWriteBuffer
-                  hbio arenaManager resolve wb wbblobs rs bs ics hs ks
+                  hbio arenaManager resolve benchSalt wb wbblobs rs bs ics hs ks
           go keyRng' (n-benchmarkGenBatchSize)
 
 {-------------------------------------------------------------------------------
@@ -524,7 +527,7 @@ classifyLookups !bs !keyRng0 !n0 =
       | otherwise =
           unsafePerformIO (putStr ".") `seq`
           let (!ks, !keyRng') = genLookupBatch keyRng benchmarkGenBatchSize
-              !rkixs = bloomQueries bs ks
+              !rkixs = bloomQueries benchSalt bs ks
           in  loop (positives + VP.length rkixs) keyRng' (n-benchmarkGenBatchSize)
 
 -- | Fill a mutable vector with uniformly random values.

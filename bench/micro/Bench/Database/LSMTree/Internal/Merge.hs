@@ -16,6 +16,7 @@ import           Database.LSMTree.Extras.Orphans ()
 import qualified Database.LSMTree.Extras.Random as R
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Extras.UTxO
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Compact))
 import           Database.LSMTree.Internal.Merge (MergeType (..))
@@ -220,6 +221,9 @@ benchmarks = bgroup "Bench.Database.LSMTree.Internal.Merge" [
          | w <- weights
          ]
 
+benchSalt :: Bloom.Salt
+benchSalt = 4
+
 runParams :: RunBuilder.RunParams
 runParams =
     RunBuilder.RunParams {
@@ -273,7 +277,7 @@ merge ::
 merge fs hbio Config {..} targetPaths runs = do
     let f = fromMaybe const mergeResolve
     m <- fromMaybe (error "empty inputs, no merge created") <$>
-      Merge.new fs hbio runParams mergeType f targetPaths runs
+      Merge.new fs hbio benchSalt runParams mergeType f targetPaths runs
     Merge.stepsToCompletion m stepSize
 
 fsPath :: FS.FsPath
@@ -397,7 +401,7 @@ randomRuns ::
 randomRuns hasFS hasBlockIO config@Config {..} rng0 = do
     counter <- inputRunPathsCounter
     fmap V.fromList $
-      mapM (unsafeCreateRun hasFS hasBlockIO runParams fsPath counter) $
+      mapM (unsafeCreateRun hasFS hasBlockIO benchSalt runParams fsPath counter) $
         zipWith
           (randomRunData config)
           nentries
@@ -446,5 +450,5 @@ randomRunData Config {..} runentries g0 =
 -- Each run entry needs a distinct key.
 randomWord64OutOf :: Int -> Rnd SerialisedKey
 randomWord64OutOf possibleKeys =
-      first (serialiseKey . Hash.hash64)
+      first (serialiseKey . Hash.hashSalt64 benchSalt)
     . uniformR (0, fromIntegral possibleKeys :: Word64)

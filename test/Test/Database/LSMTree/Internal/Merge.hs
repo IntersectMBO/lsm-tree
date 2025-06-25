@@ -67,6 +67,9 @@ runParams =
       runParamIndex   = Index.Ordinary
     }
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 -- | Creating multiple runs from write buffers and merging them leads to the
 -- same run as merging the write buffers and creating a run.
 --
@@ -81,13 +84,13 @@ prop_MergeDistributes ::
 prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withRuns fs hbio runParams path counter rds' $ \runs -> do
+    withRuns fs hbio testSalt runParams path counter rds' $ \runs -> do
       let stepsNeeded = sum (map (Map.size . unRunData) rds)
 
       fsPathLhs <- RunFsPaths path . uniqueToRunNumber <$> incrUniqCounter counter
       (stepsDone, lhs) <- mergeRuns fs hbio mergeType stepSize fsPathLhs runs
       let runData = RunData $ mergeWriteBuffers mergeType $ fmap unRunData rds'
-      withRun fs hbio runParams path counter runData $ \rhs -> do
+      withRun fs hbio testSalt runParams path counter runData $ \rhs -> do
 
         (lhsSize, lhsFilter, lhsIndex, lhsKOps,
          lhsKOpsFileContent, lhsBlobFileContent) <- getRunContent lhs
@@ -159,7 +162,7 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
     let path = FS.mkFsPath []
     let pathOut = RunFsPaths path (RunNumber 0)
     counter <- newUniqCounter 1
-    withRuns fs hbio runParams path counter wbs' $ \runs -> do
+    withRuns fs hbio testSalt runParams path counter wbs' $ \runs -> do
       mergeToClose <- makeInProgressMerge pathOut runs
       traverse_ Merge.abort mergeToClose
 
@@ -172,7 +175,7 @@ prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
     wbs' = fmap serialiseRunData wbs
 
     makeInProgressMerge path runs =
-      Merge.new fs hbio runParams mergeType resolveVal
+      Merge.new fs hbio testSalt runParams mergeType resolveVal
                 path (V.fromList runs) >>= \case
         Nothing -> pure Nothing  -- not in progress
         Just merge -> do
@@ -199,11 +202,11 @@ mergeRuns ::
      [Ref (Run.Run IO h)] ->
      IO (Int, Ref (Run.Run IO h))
 mergeRuns fs hbio mergeType (Positive stepSize) fsPath runs = do
-    Merge.new fs hbio runParams mergeType resolveVal
+    Merge.new fs hbio testSalt runParams mergeType resolveVal
               fsPath (V.fromList runs)
       >>= \case
         Just m  -> Merge.stepsToCompletionCounted m stepSize
-        Nothing -> (,) 0 <$> unsafeCreateRunAt fs hbio runParams fsPath
+        Nothing -> (,) 0 <$> unsafeCreateRunAt fs hbio testSalt runParams fsPath
                                (RunData Map.empty)
 
 type SerialisedEntry = Entry.Entry SerialisedValue SerialisedBlob

@@ -18,6 +18,7 @@ import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.BlobRef
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Serialise
@@ -44,6 +45,10 @@ tests = testGroup "Test.Database.LSMTree.Internal" [
         ]
     ]
 
+
+testSalt :: Bloom.Salt
+testSalt = 4
+
 testTableConfig :: TableConfig
 testTableConfig = defaultTableConfig {
       -- Write buffer size is small on purpose, so that the test actually
@@ -58,7 +63,7 @@ newSession ::
 newSession (Positive (Small bufferSize)) es =
     ioProperty $
     withTempIOHasBlockIO "newSession" $ \hfs hbio ->
-    withSession nullTracer hfs hbio (FS.mkFsPath []) $ \session ->
+    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session ->
       withTable session conf (updates const es')
   where
     conf = testTableConfig {
@@ -73,9 +78,9 @@ restoreSession ::
 restoreSession (Positive (Small bufferSize)) es =
     ioProperty $
     withTempIOHasBlockIO "restoreSession" $ \hfs hbio -> do
-      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \session1 ->
+      withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session1 ->
         withTable session1 conf (updates const es')
-      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \session2 ->
+      withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session2 ->
         withTable session2 conf (updates const es')
   where
     conf = testTableConfig {
@@ -86,8 +91,8 @@ restoreSession (Positive (Small bufferSize)) es =
 sessionDirLocked :: Property
 sessionDirLocked = ioProperty $
     withTempIOHasBlockIO "sessionDirLocked" $ \hfs hbio -> do
-      bracket (openSession nullTracer hfs hbio (FS.mkFsPath [])) closeSession $ \_sesh1 ->
-        bracket (try @SessionDirLockedError $ openSession nullTracer hfs hbio (FS.mkFsPath [])) tryCloseSession $ \case
+      bracket (openSession nullTracer hfs hbio testSalt (FS.mkFsPath [])) closeSession $ \_sesh1 ->
+        bracket (try @SessionDirLockedError $ openSession nullTracer hfs hbio testSalt (FS.mkFsPath [])) tryCloseSession $ \case
           Left (ErrSessionDirLocked _dir) -> pure ()
           x -> assertFailure $ "Opening a session twice in the same directory \
                               \should fail with an ErrSessionDirLocked error, but \
@@ -97,7 +102,7 @@ sessionDirCorrupted :: Assertion
 sessionDirCorrupted =
   withTempIOHasBlockIO "sessionDirCorrupted" $ \hfs hbio -> do
     FS.createDirectory hfs (FS.mkFsPath ["unexpected-directory"])
-    bracket (try @SessionDirCorruptedError (openSession nullTracer hfs hbio (FS.mkFsPath []))) tryCloseSession $ \case
+    bracket (try @SessionDirCorruptedError (openSession nullTracer hfs hbio testSalt (FS.mkFsPath []))) tryCloseSession $ \case
       Left (ErrSessionDirCorrupted _dir) -> pure ()
       x -> assertFailure $ "Restoring a session in a directory with a wrong \
                            \layout should fail with a ErrSessionDirCorrupted, but \
@@ -105,7 +110,7 @@ sessionDirCorrupted =
 
 sessionDirDoesNotExist :: Assertion
 sessionDirDoesNotExist = withTempIOHasBlockIO "sessionDirDoesNotExist" $ \hfs hbio -> do
-  bracket (try @SessionDirDoesNotExistError (openSession nullTracer hfs hbio (FS.mkFsPath ["missing-dir"]))) tryCloseSession $ \case
+  bracket (try @SessionDirDoesNotExistError (openSession nullTracer hfs hbio testSalt (FS.mkFsPath ["missing-dir"]))) tryCloseSession $ \case
       Left (ErrSessionDirDoesNotExist _dir) -> pure ()
       x -> assertFailure $ "Opening a session in a non-existent directory should \
                            \fail with a ErrSessionDirDoesNotExist error, but it \
@@ -140,7 +145,7 @@ prop_roundtripCursor ::
   -> Property
 prop_roundtripCursor lb ub kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
-      withSession nullTracer hfs hbio (FS.mkFsPath []) $ \sesh -> do
+      withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \t -> do
           updates resolve (coerce kops) t
           fromCursor <- withCursor resolve (toOffsetKey lb) t $ \c ->

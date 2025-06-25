@@ -77,6 +77,9 @@ withSession seshArgs = bracket (openSession seshArgs) closeSession
   Real instance
 -------------------------------------------------------------------------------}
 
+testSalt :: R.Salt
+testSalt = 4
+
 instance IsSession R.Session where
     data SessionArgs R.Session m where
       SessionArgs ::
@@ -85,7 +88,7 @@ instance IsSession R.Session where
         -> SessionArgs R.Session m
 
     openSession (SessionArgs hfs hbio dir) = do
-       R.openSession nullTracer hfs hbio dir
+       R.openSession nullTracer hfs hbio testSalt dir
     closeSession = R.closeSession
     deleteSnapshot = R.deleteSnapshot
     listSnapshots = R.listSnapshots

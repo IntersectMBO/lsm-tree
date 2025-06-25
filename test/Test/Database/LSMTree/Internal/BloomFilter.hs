@@ -43,6 +43,9 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
         prop_bloomQueries
     ]
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 roundtrip_prop :: Positive (Small Int) -> Positive Int ->  [Word64] -> Property
 roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
     counterexample (show bs) $
@@ -52,7 +55,7 @@ roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
   where
     sz  = Bloom.BloomSize { sizeBits   = limitBits bits,
                          sizeHashes = hfN }
-    lhs = Bloom.create sz (\b -> mapM_ (Bloom.insert b) ws)
+    lhs = Bloom.create sz testSalt (\b -> mapM_ (Bloom.insert b) ws)
     bs  = LBS.toStrict (bloomFilterToLBS lhs)
 
 limitBits :: Int -> Int
@@ -116,7 +119,7 @@ prop_bloomQueries :: FPR
                   -> Property
 prop_bloomQueries (FPR fpr) filters keys =
     let filters' :: [Bloom SerialisedKey]
-        filters' = map (Bloom.fromList (Bloom.policyForFPR fpr)
+        filters' = map (Bloom.fromList (Bloom.policyForFPR fpr) testSalt
                         . map (\(Small k) -> serialiseKey k))
                        filters
 
@@ -152,5 +155,4 @@ prop_bloomQueries (FPR fpr) filters keys =
         referenceResults
        ===
         map (\(RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (bloomQueries (V.fromList filters')
-                                     (V.fromList keys')))
+            (VP.toList (bloomQueries testSalt (V.fromList filters') (V.fromList keys')))

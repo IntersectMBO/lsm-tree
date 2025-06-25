@@ -4,6 +4,7 @@ module Test.Database.LSMTree.Internal.RunBuilder (tests) where
 
 import           Control.Monad.Class.MonadThrow
 import           Data.Foldable (traverse_)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import qualified Database.LSMTree.Internal.Index as Index
 import           Database.LSMTree.Internal.Paths (RunFsPaths (..))
@@ -50,13 +51,16 @@ runParams =
       runParamIndex   = Index.Ordinary
     }
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 -- | 'new' in an existing directory should be successful.
 prop_newInExistingDir :: HasFS IO h -> FS.HasBlockIO IO h -> IO Property
 prop_newInExistingDir hfs hbio = do
     let runDir = FS.mkFsPath ["a", "b", "c"]
     FS.createDirectoryIfMissing hfs True runDir
     bracket
-      (try (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
+      (try (RunBuilder.new hfs hbio testSalt runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
       (traverse_ RunBuilder.close) $ pure . \case
         Left e@FS.FsError{} ->
           counterexample ("expected a success, but got: " <> show e) $ property False
@@ -67,7 +71,7 @@ prop_newInNonExistingDir :: HasFS IO h -> FS.HasBlockIO IO h -> IO Property
 prop_newInNonExistingDir hfs hbio = do
     let runDir = FS.mkFsPath ["a", "b", "c"]
     bracket
-      (try (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
+      (try (RunBuilder.new hfs hbio testSalt runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
       (traverse_ RunBuilder.close) $ pure . \case
         Left FS.FsError{} -> property True
         Right _  ->
@@ -81,10 +85,10 @@ prop_newTwice :: HasFS IO h -> FS.HasBlockIO IO h -> IO Property
 prop_newTwice hfs hbio = do
     let runDir = FS.mkFsPath []
     bracket
-      (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0))
+      (RunBuilder.new hfs hbio testSalt runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0))
       RunBuilder.close $ \_ ->
         bracket
-          (try (RunBuilder.new hfs hbio runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
+          (try (RunBuilder.new hfs hbio testSalt runParams (RunFsPaths runDir (RunNumber 17)) (NumEntries 0)))
           (traverse_ RunBuilder.close) $ pure . \case
             Left FS.FsError{} -> property True
             Right _  ->
