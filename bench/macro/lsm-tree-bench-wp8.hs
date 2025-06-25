@@ -416,7 +416,7 @@ doSetup' gopts opts = do
 
     let name = LSM.toSnapshotName "bench"
 
-    LSM.withSession (mkTracer gopts) hasFS hasBlockIO benchSalt (FS.mkFsPath []) $ \session -> do
+    LSM.withOpenSession (mkTracer gopts) hasFS hasBlockIO benchSalt (FS.mkFsPath []) $ \session -> do
         tbl <- LSM.newTableWith @IO @K @V @B (mkTableConfigSetup gopts opts benchTableConfig) session
 
         forM_ (groupsOfN 256 [ 0 .. initialSize gopts ]) $ \batch -> do
@@ -578,7 +578,7 @@ doRun gopts opts = do
 
     let name = LSM.toSnapshotName "bench"
 
-    LSM.withSession (mkTracer gopts) hasFS hasBlockIO benchSalt (FS.mkFsPath []) $ \session ->
+    LSM.withOpenSession (mkTracer gopts) hasFS hasBlockIO benchSalt (FS.mkFsPath []) $ \session ->
       withLatencyHandle $ \h -> do
         -- open snapshot
         -- In checking mode we start with an empty table, since our pure

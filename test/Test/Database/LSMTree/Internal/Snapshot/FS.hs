@@ -177,7 +177,7 @@ prop_flipSnapshotBit ::
 prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     runSimOrThrow $
     withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _fsVar ->
-    withSession nullTracer hfs hbio testSalt root $ \s ->
+    withOpenSession nullTracer hfs hbio testSalt root $ \s ->
     withTable s conf $ \t -> do
       -- Create a table, populate it, and create a snapshot
       updates resolve es' t

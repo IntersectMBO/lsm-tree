@@ -63,7 +63,7 @@ newSession ::
 newSession (Positive (Small bufferSize)) es =
     ioProperty $
     withTempIOHasBlockIO "newSession" $ \hfs hbio ->
-    withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session ->
+    withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session ->
       withTable session conf (updates const es')
   where
     conf = testTableConfig {
@@ -78,9 +78,9 @@ restoreSession ::
 restoreSession (Positive (Small bufferSize)) es =
     ioProperty $
     withTempIOHasBlockIO "restoreSession" $ \hfs hbio -> do
-      withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session1 ->
+      withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session1 ->
         withTable session1 conf (updates const es')
-      withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session2 ->
+      withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session2 ->
         withTable session2 conf (updates const es')
   where
     conf = testTableConfig {
@@ -103,7 +103,7 @@ sessionDirCorrupted =
   withTempIOHasBlockIO "sessionDirCorrupted" $ \hfs hbio -> do
     FS.createDirectory hfs (FS.mkFsPath ["unexpected-directory"])
     bracket (try @SessionDirCorruptedError (openSession nullTracer hfs hbio testSalt (FS.mkFsPath []))) tryCloseSession $ \case
-      Left (ErrSessionDirCorrupted _dir) -> pure ()
+      Left (ErrSessionDirCorrupted _ _dir) -> pure ()
       x -> assertFailure $ "Restoring a session in a directory with a wrong \
                            \layout should fail with a ErrSessionDirCorrupted, but \
                            \it returned this instead: " <> showLeft "Session" x
@@ -145,7 +145,7 @@ prop_roundtripCursor ::
   -> Property
 prop_roundtripCursor lb ub kops = ioProperty $
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
-      withSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sesh -> do
+      withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \t -> do
           updates resolve (coerce kops) t
           fromCursor <- withCursor resolve (toOffsetKey lb) t $ \c ->

@@ -19,8 +19,8 @@ module Database.LSMTree (
 
   -- * Sessions
   Session,
-  withSession,
-  withSessionIO,
+  withOpenSession,
+  withOpenSessionIO,
   openSession,
   openSessionIO,
   closeSession,
@@ -200,8 +200,8 @@ import           Control.DeepSeq (NFData (..))
 import           Control.Exception.Base (assert)
 import           Control.Monad.Class.MonadAsync (MonadAsync)
 import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadMask,
-                     MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadEvaluate,
+                     MonadMask, MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.Tracer (Tracer)
 import           Data.Bifunctor (Bifunctor (..))
@@ -290,6 +290,7 @@ type IOLike m =
   , MonadMask m
   , PrimMonad m
   , MonadST m
+  , MonadEvaluate m
   )
 
 --------------------------------------------------------------------------------
@@ -384,7 +385,7 @@ runExample action = do
   let createSessionDir = Dir.createDirectoryIfMissing True sessionDir
   let removeSessionDir = Dir.removeDirectoryRecursive sessionDir
   bracket_ createSessionDir removeSessionDir $ do
-    LSMT.withSessionIO mempty sessionDir $ \session -> do
+    LSMT.withOpenSessionIO mempty sessionDir $ \session -> do
       LSMT.withTable session $ \table ->
         action session table
 :}
@@ -399,8 +400,8 @@ runExample action = do
 {- |
 Run an action with access to a session opened from a session directory.
 
-If the session directory is empty, a new session is created.
-Otherwise, the session directory is opened as an existing session.
+If the session directory is empty, a new session is created using the given salt.
+Otherwise, the session directory is restored as an existing session ignoring the given salt.
 
 If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
 Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
@@ -426,7 +427,7 @@ Throws the following exceptions:
     If the session directory is malformed.
 -}
 {-# SPECIALISE
-  withSession ::
+  withOpenSession ::
     Tracer IO LSMTreeTrace ->
     HasFS IO HandleIO ->
     HasBlockIO IO HandleIO ->
@@ -435,7 +436,7 @@ Throws the following exceptions:
     (Session IO -> IO a) ->
     IO a
   #-}
-withSession ::
+withOpenSession ::
   forall m h a.
   (IOLike m, Typeable h) =>
   Tracer m LSMTreeTrace ->
@@ -447,28 +448,28 @@ withSession ::
   FsPath ->
   (Session m -> m a) ->
   m a
-withSession tracer hasFS hasBlockIO sessionSalt sessionDir action = do
-  Internal.withSession tracer hasFS hasBlockIO sessionSalt sessionDir (action . Session)
+withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDir action = do
+  Internal.withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDir (action . Session)
 
--- | Variant of 'withSession' that is specialised to 'IO' using the real filesystem.
-withSessionIO ::
+-- | Variant of 'withOpenSession' that is specialised to 'IO' using the real filesystem.
+withOpenSessionIO ::
   Tracer IO LSMTreeTrace ->
   FilePath ->
   (Session IO -> IO a) ->
   IO a
-withSessionIO tracer sessionDir action = do
+withOpenSessionIO tracer sessionDir action = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
   let hasFS = ioHasFS mountPoint
   sessionSalt <- randomIO
   withIOHasBlockIO hasFS defaultIOCtxParams $ \hasBlockIO ->
-    withSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
+    withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
 
 {- |
 Open a session from a session directory.
 
-If the session directory is empty, a new session is created.
-Otherwise, the session directory is opened as an existing session.
+If the session directory is empty, a new session is created using the given salt.
+Otherwise, the session directory is restored as an existing session ignoring the given salt.
 
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 

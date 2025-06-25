@@ -38,7 +38,7 @@ module Database.LSMTree.Internal.Unsafe (
   , SessionEnv (..)
   , withKeepSessionOpen
     -- ** Implementation of public API
-  , withSession
+  , withOpenSession
   , openSession
   , closeSession
     -- * Table
@@ -82,13 +82,14 @@ module Database.LSMTree.Internal.Unsafe (
   , supplyUnionCredits
   ) where
 
+import qualified Codec.Serialise as S
 import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM (..))
 import           Control.Concurrent.Class.MonadSTM.RWVar (RWVar)
 import qualified Control.Concurrent.Class.MonadSTM.RWVar as RW
 import           Control.DeepSeq
-import           Control.Monad (forM, unless, void, (<$!>))
+import           Control.Monad (forM, unless, void, when, (<$!>))
 import           Control.Monad.Class.MonadAsync as Async
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadThrow
@@ -104,6 +105,8 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, maybeToList)
 import qualified Data.Set as Set
+import           Data.Text (Text)
+import qualified Data.Text as Text
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager)
@@ -145,6 +148,7 @@ import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
+import qualified System.FS.API.Lazy as FS
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
@@ -155,8 +159,8 @@ import           System.FS.BlockIO.API (HasBlockIO)
 data LSMTreeTrace =
     -- Session
     TraceOpenSession FsPath
-  | TraceNewSession
-  | TraceRestoreSession
+  | TraceNewSession FsPath
+  | TraceRestoreSession FsPath
   | TraceCloseSession
     -- Table
   | TraceNewTable
@@ -302,26 +306,6 @@ withKeepSessionOpen sesh action = RW.withReadAccess (sessionState sesh) $ \case
 -- Implementation of public API
 --
 
-{-# SPECIALISE withSession ::
-     Tracer IO LSMTreeTrace
-  -> HasFS IO h
-  -> HasBlockIO IO h
-  -> Bloom.Salt
-  -> FsPath
-  -> (Session IO h -> IO a)
-  -> IO a #-}
--- | See 'Database.LSMTree.withSession'.
-withSession ::
-     (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m)
-  => Tracer m LSMTreeTrace
-  -> HasFS m h
-  -> HasBlockIO m h
-  -> Bloom.Salt
-  -> FsPath
-  -> (Session m h -> m a)
-  -> m a
-withSession tr hfs hbio salt dir = bracket (openSession tr hfs hbio salt dir) closeSession
-
 -- | The session directory does not exist.
 data SessionDirDoesNotExistError
     = ErrSessionDirDoesNotExist !FsErrorPath
@@ -336,10 +320,26 @@ data SessionDirLockedError
 
 -- | The session directory is corrupted, e.g., it misses required files or contains unexpected files.
 data SessionDirCorruptedError
-    = ErrSessionDirCorrupted !FsErrorPath
+    = ErrSessionDirCorrupted !Text !FsErrorPath
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
+{-# INLINE withOpenSession #-}
+withOpenSession ::
+     forall m h a.
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m, MonadEvaluate m)
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> Bloom.Salt
+  -> FsPath -- ^ Path to the session directory
+  -> (Session m h -> m a)
+  -> m a
+withOpenSession tr hfs hbio salt dir k = do
+    bracket
+      (openSession tr hfs hbio salt dir)
+      closeSession
+      k
 {-# SPECIALISE openSession ::
      Tracer IO LSMTreeTrace
   -> HasFS IO h
@@ -350,100 +350,156 @@ data SessionDirCorruptedError
 -- | See 'Database.LSMTree.openSession'.
 openSession ::
      forall m h.
-     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m, MonadEvaluate m)
   => Tracer m LSMTreeTrace
   -> HasFS m h
-  -> HasBlockIO m h -- TODO: could we prevent the user from having to pass this in?
+  -> HasBlockIO m h
   -> Bloom.Salt
   -> FsPath -- ^ Path to the session directory
   -> m (Session m h)
-openSession tr hfs hbio salt dir =
+openSession tr hfs hbio salt dir = do
+    traceWith tr $ TraceOpenSession dir
+
+    -- This is checked by 'newSession' and 'restoreSession' too, but it does not
+    -- hurt to check it twice, and it's arguably simpler like this.
+    dirExists <- FS.doesDirectoryExist hfs dir
+    unless dirExists $
+      throwIO (ErrSessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
+
+    b <- isSessionDirEmpty hfs dir
+    if b then
+      newSession tr hfs hbio salt dir
+    else
+      restoreSession tr hfs hbio dir
+
+{-# SPECIALISE newSession ::
+     Tracer IO LSMTreeTrace
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> Bloom.Salt
+  -> FsPath
+  -> IO (Session IO h) #-}
+-- | See 'Database.LSMTree.newSession'.
+newSession ::
+     forall m h.
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m)
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> Bloom.Salt
+  -> FsPath -- ^ Path to the session directory
+  -> m (Session m h)
+newSession tr hfs hbio salt dir = do
+    traceWith tr $ TraceNewSession dir
+
     -- We can not use modifyWithActionRegistry here, since there is no in-memory
     -- state to modify. We use withActionRegistry instead, which may have a tiny
     -- chance of leaking resources if openSession is not called in a masked
     -- state.
     withActionRegistry $ \reg -> do
-      traceWith tr (TraceOpenSession dir)
       dirExists <- FS.doesDirectoryExist hfs dir
       unless dirExists $
         throwIO (ErrSessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
-      -- List directory contents /before/ trying to acquire a file lock, so that
-      -- that the lock file does not show up in the listed contents.
-      dirContents <- FS.listDirectory hfs dir
+
       -- Try to acquire the session file lock as soon as possible to reduce the
       -- risk of race conditions.
       --
-      -- The lock is only released when an exception is raised, otherwise the lock
-      -- is included in the returned Session.
-      elock <-
-        withRollbackFun reg
-          (fromRight Nothing)
-          acquireLock
-          releaseLock
+      -- The lock is only released when an exception is raised, otherwise the
+      -- lock is included in the returned Session.
+      sessionFileLock <- acquireSessionLock hfs hbio reg lockFilePath
 
-      case elock of
-        Left e
-          | FS.FsResourceAlreadyInUse <- FS.fsErrorType e
-          , fsep@(FsErrorPath _ fsp) <- FS.fsErrorPath e
-          , fsp == lockFilePath
-          -> throwIO (ErrSessionDirLocked fsep)
-        Left  e -> throwIO e -- rethrow unexpected errors
-        Right Nothing -> throwIO (ErrSessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
-        Right (Just sessionFileLock) ->
-          if Set.null dirContents then newSession reg sessionFileLock
-                                  else restoreSession reg sessionFileLock
+      -- If we're starting a new session, then the session directory should be
+      -- non-empty.
+      b <- isSessionDirEmpty hfs dir
+      unless b $ do
+        throwIO $ ErrSessionDirCorrupted
+                    (Text.pack "Session directory is non-empty")
+                    (FS.mkFsErrorPath hfs dir)
+
+      withRollback_ reg
+        (FS.withFile hfs metadataFilePath (FS.WriteMode FS.MustBeNew) $ \h ->
+          void $ FS.hPutAll hfs h $ S.serialise salt)
+        (FS.removeFile hfs metadataFilePath)
+      withRollback_ reg
+        (FS.createDirectory hfs activeDirPath)
+        (FS.removeDirectoryRecursive hfs activeDirPath)
+      withRollback_ reg
+        (FS.createDirectory hfs snapshotsDirPath)
+        (FS.removeDirectoryRecursive hfs snapshotsDirPath)
+
+      mkSession tr hfs hbio root sessionFileLock salt
   where
     root             = Paths.SessionRoot dir
     lockFilePath     = Paths.lockFile root
+    metadataFilePath = Paths.metadataFile root
     activeDirPath    = Paths.getActiveDir (Paths.activeDir root)
     snapshotsDirPath = Paths.snapshotsDir root
 
-    acquireLock = try @m @FsError $ FS.tryLockFile hbio lockFilePath FS.ExclusiveLock
+{-# SPECIALISE restoreSession ::
+     Tracer IO LSMTreeTrace
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> FsPath
+  -> IO (Session IO h) #-}
+-- | See 'Database.LSMTree.restoreSession'.
+restoreSession ::
+     forall m h.
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m, MonadEvaluate m)
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> FsPath -- ^ Path to the session directory
+  -> m (Session m h)
+restoreSession tr hfs hbio dir = do
+    traceWith tr $ TraceRestoreSession dir
 
-    releaseLock = FS.hUnlock
+    -- We can not use modifyWithActionRegistry here, since there is no in-memory
+    -- state to modify. We use withActionRegistry instead, which may have a tiny
+    -- chance of leaking resources if openSession is not called in a masked
+    -- state.
+    withActionRegistry $ \reg -> do
+      dirExists <- FS.doesDirectoryExist hfs dir
+      unless dirExists $
+        throwIO (ErrSessionDirDoesNotExist (FS.mkFsErrorPath hfs dir))
 
-    mkSession lockFile = do
-        counterVar <- newUniqCounter 0
-        openTablesVar <- newMVar Map.empty
-        openCursorsVar <- newMVar Map.empty
-        sessionVar <- RW.new $ SessionOpen $ SessionEnv {
-            sessionRoot = root
-          , sessionSalt = salt
-          , sessionHasFS = hfs
-          , sessionHasBlockIO = hbio
-          , sessionLockFile = lockFile
-          , sessionUniqCounter = counterVar
-          , sessionOpenTables = openTablesVar
-          , sessionOpenCursors = openCursorsVar
-          }
-        pure $! Session sessionVar tr
+      -- Try to acquire the session file lock as soon as possible to reduce the
+      -- risk of race conditions.
+      --
+      -- The lock is only released when an exception is raised, otherwise the
+      -- lock is included in the returned Session.
+      sessionFileLock <- acquireSessionLock hfs hbio reg lockFilePath
 
-    -- TODO: write session salt to session metadata file
-    newSession reg sessionFileLock = do
-        traceWith tr TraceNewSession
-        withRollback_ reg
-          (FS.createDirectory hfs activeDirPath)
-          (FS.removeDirectoryRecursive hfs activeDirPath)
-        withRollback_ reg
-          (FS.createDirectory hfs snapshotsDirPath)
-          (FS.removeDirectoryRecursive hfs snapshotsDirPath)
-        mkSession sessionFileLock
+      -- If we're restoring a session, then the session directory should be
+      -- non-empty.
+      b <- isSessionDirEmpty hfs dir
+      when b $ do
+        throwIO $ ErrSessionDirCorrupted
+                    (Text.pack "Session directory is empty")
+                    (FS.mkFsErrorPath hfs dir)
 
-    -- TODO: read serialise session salt from session metadata file
-    -- TODO: split openSession and newSession
-    restoreSession _reg sessionFileLock = do
-        traceWith tr TraceRestoreSession
-        -- If the layouts are wrong, we throw an exception
-        checkTopLevelDirLayout
+     -- If the layouts are wrong, we throw an exception
+      checkTopLevelDirLayout
 
-        -- Clear the active directory by removing the directory and recreating
-        -- it again.
-        FS.removeDirectoryRecursive hfs activeDirPath
-          `finally` FS.createDirectoryIfMissing hfs False activeDirPath
+      salt <-
+        FS.withFile hfs metadataFilePath FS.ReadMode $ \h -> do
+          bs <- FS.hGetAll hfs h
+          evaluate $ S.deserialise bs
 
-        checkActiveDirLayout
-        checkSnapshotsDirLayout
-        mkSession sessionFileLock
+      -- Clear the active directory by removing the directory and recreating
+      -- it again.
+      FS.removeDirectoryRecursive hfs activeDirPath
+        `finally` FS.createDirectoryIfMissing hfs False activeDirPath
+
+      checkActiveDirLayout
+      checkSnapshotsDirLayout
+
+      mkSession tr hfs hbio root sessionFileLock salt
+  where
+    root             = Paths.SessionRoot dir
+    lockFilePath     = Paths.lockFile root
+    metadataFilePath = Paths.metadataFile root
+    activeDirPath    = Paths.getActiveDir (Paths.activeDir root)
+    snapshotsDirPath = Paths.snapshotsDir root
 
     -- Check that the active directory and snapshots directory exist. We assume
     -- the lock file already exists at this point.
@@ -452,15 +508,29 @@ openSession tr hfs hbio salt dir =
     -- Unexpected files in the top-level directory are ignored for the layout
     -- check.
     checkTopLevelDirLayout = do
+      FS.doesFileExist hfs metadataFilePath >>= \b ->
+        unless b $ throwIO $
+          ErrSessionDirCorrupted
+            (Text.pack "Missing metadata file")
+            (FS.mkFsErrorPath hfs metadataFilePath)
       FS.doesDirectoryExist hfs activeDirPath >>= \b ->
-        unless b $ throwIO (ErrSessionDirCorrupted (FS.mkFsErrorPath hfs activeDirPath))
+        unless b $ throwIO $
+          ErrSessionDirCorrupted
+            (Text.pack "Missing active directory")
+            (FS.mkFsErrorPath hfs activeDirPath)
       FS.doesDirectoryExist hfs snapshotsDirPath >>= \b ->
-        unless b $ throwIO (ErrSessionDirCorrupted (FS.mkFsErrorPath hfs snapshotsDirPath))
+        unless b $ throwIO $
+          ErrSessionDirCorrupted
+            (Text.pack "Missing snapshot directory")
+            (FS.mkFsErrorPath hfs snapshotsDirPath)
 
     -- The active directory should be empty
     checkActiveDirLayout = do
         contents <- FS.listDirectory hfs activeDirPath
-        unless (Set.null contents) $ throwIO (ErrSessionDirCorrupted (FS.mkFsErrorPath hfs activeDirPath))
+        unless (Set.null contents) $ throwIO $
+          ErrSessionDirCorrupted
+            (Text.pack "Active irectory is non-empty")
+            (FS.mkFsErrorPath hfs activeDirPath)
 
     -- Nothing to check: snapshots are verified when they are loaded, not when a
     -- session is restored.
@@ -515,6 +585,79 @@ closeSession Session{sessionState, sessionTracer} = do
           delayedCommit reg $ FS.hUnlock (sessionLockFile seshEnv)
 
           pure SessionClosed
+
+{-# SPECIALISE acquireSessionLock ::
+     HasFS IO h
+  -> HasBlockIO IO h
+  -> ActionRegistry IO
+  -> FsPath
+  -> IO (FS.LockFileHandle IO) #-}
+acquireSessionLock ::
+     forall m h. (MonadSTM m, PrimMonad m, MonadMask m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> ActionRegistry m
+  -> FsPath
+  -> m (FS.LockFileHandle m)
+acquireSessionLock hfs hbio reg lockFilePath = do
+      elock <-
+        withRollbackFun reg
+          (fromRight Nothing)
+          acquireLock
+          releaseLock
+
+      case elock of
+        Left e
+          | FS.FsResourceAlreadyInUse <- FS.fsErrorType e
+          , fsep@(FsErrorPath _ fsp) <- FS.fsErrorPath e
+          , fsp == lockFilePath
+          -> throwIO (ErrSessionDirLocked fsep)
+        Left  e -> throwIO e -- rethrow unexpected errors
+        Right Nothing -> throwIO (ErrSessionDirLocked (FS.mkFsErrorPath hfs lockFilePath))
+        Right (Just sessionFileLock) -> pure sessionFileLock
+  where
+    acquireLock = try @m @FsError $ FS.tryLockFile hbio lockFilePath FS.ExclusiveLock
+
+    releaseLock = FS.hUnlock
+
+{-# SPECIALISE mkSession ::
+     Tracer IO LSMTreeTrace
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> SessionRoot
+  -> FS.LockFileHandle IO
+  -> Bloom.Salt
+  -> IO (Session IO h) #-}
+mkSession ::
+     (PrimMonad m, MonadMVar m, MonadSTM m)
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> SessionRoot
+  -> FS.LockFileHandle m
+  -> Bloom.Salt
+  -> m (Session m h)
+mkSession tr hfs hbio root lockFile salt = do
+    counterVar <- newUniqCounter 0
+    openTablesVar <- newMVar Map.empty
+    openCursorsVar <- newMVar Map.empty
+    sessionVar <- RW.new $ SessionOpen $ SessionEnv {
+        sessionRoot = root
+      , sessionSalt = salt
+      , sessionHasFS = hfs
+      , sessionHasBlockIO = hbio
+      , sessionLockFile = lockFile
+      , sessionUniqCounter = counterVar
+      , sessionOpenTables = openTablesVar
+      , sessionOpenCursors = openCursorsVar
+      }
+    pure $! Session sessionVar tr
+
+{-# INLINE isSessionDirEmpty #-}
+isSessionDirEmpty :: Monad m => HasFS m h -> FsPath -> m Bool
+isSessionDirEmpty hfs dir = do
+    dirContents <- FS.listDirectory hfs dir
+    pure $ Set.null dirContents || dirContents == Set.singleton Paths.lockFileName
 
 {-------------------------------------------------------------------------------
   Table

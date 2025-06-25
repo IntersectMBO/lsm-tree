@@ -522,7 +522,7 @@ handleSessionDirLockedError = \case
 
 handleSessionDirCorruptedError :: SessionDirCorruptedError -> Model.Err
 handleSessionDirCorruptedError = \case
-  ErrSessionDirCorrupted _dir -> Model.ErrSessionDirCorrupted
+  ErrSessionDirCorrupted _reason _dir -> Model.ErrSessionDirCorrupted
 
 handleSessionClosedError :: SessionClosedError -> Model.Err
 handleSessionClosedError = \case
