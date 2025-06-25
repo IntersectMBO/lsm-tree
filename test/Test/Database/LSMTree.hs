@@ -4,10 +4,12 @@
 
 module Test.Database.LSMTree (tests) where
 
+import           Control.Exception
 import           Control.Tracer
 import           Data.Function (on)
 import           Data.IORef
 import           Data.Monoid
+import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms as VA
 import           Data.Void
@@ -16,6 +18,7 @@ import           Database.LSMTree
 import           Database.LSMTree.Extras (showRangesOf)
 import           Database.LSMTree.Extras.Generators ()
 import qualified System.FS.API as FS
+import qualified System.FS.BlockIO.API as FS
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -27,6 +30,14 @@ tests = testGroup "Test.Database.LSMTree" [
           -- openSession
           testProperty "prop_openSession_newSession" prop_openSession_newSession
         , testProperty "prop_openSession_restoreSession" prop_openSession_restoreSession
+          -- happy path
+        , testProperty "prop_newSession_restoreSession_happyPath" prop_newSession_restoreSession_happyPath
+          -- missing session directory
+        , testProperty "prop_sessionDirDoesNotExist" prop_sessionDirDoesNotExist
+          -- session directory already locked
+        , testProperty "prop_sessionDirLocked" prop_sessionDirLocked
+          -- malformed session directory
+        , testProperty "prop_sessionDirCorrupted" prop_sessionDirCorrupted
           -- salt
         , testProperty "prop_goodAndBadSessionSalt" prop_goodAndBadSessionSalt
         ]
@@ -55,6 +66,30 @@ data NewOrRestore = New | Restore
 instance Arbitrary NewOrRestore where
   arbitrary = arbitraryBoundedEnum
   shrink = shrinkBoundedEnum
+
+-- | If 'New', use 'newSession', otherwise if 'Restore', use 'restoreSession'.
+--
+-- This allows us to run properties on both 'newSession' and 'restoreSession',
+-- without having to write almost identical code twice.
+--
+-- In a sense, this is somewhat similar to 'openSession', but whereas
+-- 'openSession' would defer to 'newSession' or 'restoreSession' based on the
+-- directory contents, here the user gets to pick whether to use 'newSession' or
+-- 'restoreSession'.
+withNewSessionOrRestoreSession ::
+     (IOLike m, Typeable h)
+  => NewOrRestore
+  -> Tracer m LSMTreeTrace
+  -> FS.HasFS m h
+  -> FS.HasBlockIO m h
+  -> Salt
+  -> FS.FsPath
+  -> (Session m -> m a)
+  -> m a
+withNewSessionOrRestoreSession newOrRestore tr hfs hbio salt path =
+    case newOrRestore of
+      New     -> withNewSession tr hfs hbio salt path
+      Restore -> withRestoreSession tr hfs hbio path
 
 {-------------------------------------------------------------------------------
   Session: openSession
@@ -104,6 +139,99 @@ mkSessionOpenModeTracer var = Tracer $ emit $ \case
     TraceNewSession{} -> modifyIORef var ("New" :)
     TraceRestoreSession{} -> modifyIORef var ("Restore" :)
     _ -> pure ()
+
+{-------------------------------------------------------------------------------
+  Session: happy path
+-------------------------------------------------------------------------------}
+
+prop_newSession_restoreSession_happyPath ::
+     Positive (Small Int)
+  -> V.Vector (Key, Value)
+  -> Property
+prop_newSession_restoreSession_happyPath (Positive (Small bufferSize)) ins =
+    ioProperty $
+    withTempIOHasBlockIO "prop_newSession_restoreSession_happyPath" $ \hfs hbio -> do
+    withNewSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session1 ->
+      withTableWith conf session1 $ \(table :: Table IO Key Value Blob) -> do
+        inserts table $ V.map (\(k, v) -> (k, v, Nothing)) ins
+        saveSnapshot "snap" "KeyValueBlob" table
+    withRestoreSession nullTracer hfs hbio (FS.mkFsPath []) $ \session2 ->
+      withTableFromSnapshot session2 "snap" "KeyValueBlob"
+        $ \(_ :: Table IO Key Value Blob) -> pure ()
+  where
+    testSalt = 6
+    conf = defaultTableConfig {
+        confWriteBufferAlloc = AllocNumEntries bufferSize
+      }
+
+{-------------------------------------------------------------------------------
+  Session: missing session directory
+-------------------------------------------------------------------------------}
+
+prop_sessionDirDoesNotExist :: NewOrRestore -> Property
+prop_sessionDirDoesNotExist newOrRestore =
+    ioProperty $
+    withTempIOHasBlockIO "prop_sessionDirDoesNotExist" $ \hfs hbio -> do
+    result <- try @SessionDirDoesNotExistError $
+      withNewSessionOrRestoreSession
+        newOrRestore
+        nullTracer hfs hbio testSalt (FS.mkFsPath ["missing-dir"])
+        $ \_session -> pure ()
+    pure
+      $ counterexample
+          ("Expecting an ErrSessionDirDoesNotExist error, but got: " ++ show result)
+      $ case result of
+          Left ErrSessionDirDoesNotExist{} -> True
+          _                                -> False
+  where
+    testSalt = 6
+
+{-------------------------------------------------------------------------------
+  Session: session directory already locked
+-------------------------------------------------------------------------------}
+
+prop_sessionDirLocked :: NewOrRestore -> Property
+prop_sessionDirLocked newOrRestore =
+    ioProperty $
+    withTempIOHasBlockIO "prop_sessionDirLocked" $ \hfs hbio -> do
+    result <-
+      withNewSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \_session1 -> do
+        try @SessionDirLockedError $
+          withNewSessionOrRestoreSession
+            newOrRestore
+            nullTracer hfs hbio testSalt (FS.mkFsPath [])
+            $ \_session2 -> pure ()
+    pure
+      $ counterexample
+          ("Expecting an ErrSessionDirLocked error, but got: " ++ show result)
+      $ case result of
+        Left ErrSessionDirLocked{} -> True
+        _                          -> False
+  where
+    testSalt = 6
+
+{-------------------------------------------------------------------------------
+  Session: malformed session directory
+-------------------------------------------------------------------------------}
+
+prop_sessionDirCorrupted :: NewOrRestore -> Property
+prop_sessionDirCorrupted newOrRestore =
+    ioProperty $
+    withTempIOHasBlockIO "sessionDirCorrupted" $ \hfs hbio -> do
+    FS.createDirectory hfs (FS.mkFsPath ["unexpected-directory"])
+    result <- try @SessionDirCorruptedError $
+      withNewSessionOrRestoreSession
+        newOrRestore
+        nullTracer hfs hbio testSalt (FS.mkFsPath [])
+        $ \_session -> pure ()
+    pure
+      $ counterexample
+          ("Expecting an ErrSessionDirCorrupted error, but got: " ++ show result)
+      $ case result of
+        Left ErrSessionDirCorrupted{} -> True
+        _                             -> False
+  where
+    testSalt = 6
 
 {-------------------------------------------------------------------------------
   Session: salt

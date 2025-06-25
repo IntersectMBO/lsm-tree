@@ -4,18 +4,11 @@
 
 module Test.Database.LSMTree.Internal (tests) where
 
-import           Control.Concurrent.Class.MonadMVar (MonadMVar)
-import           Control.Concurrent.Class.MonadSTM (MonadSTM)
-import           Control.Exception
-import           Control.Monad.Class.MonadThrow (MonadMask)
-import           Control.Monad.Primitive (PrimMonad)
 import           Control.Tracer
-import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust, mapMaybe)
 import qualified Data.Vector as V
-import           Data.Word
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.BlobRef
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
@@ -26,20 +19,12 @@ import           Database.LSMTree.Internal.Unsafe
 import qualified System.FS.API as FS
 import           Test.QuickCheck
 import           Test.Tasty
-import           Test.Tasty.HUnit
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal" [
-      testGroup "Session" [
-          testProperty "prop_newSession" prop_newSession
-        , testProperty "prop_restoreSession" prop_restoreSession
-        , testProperty "sessionDirLocked" sessionDirLocked
-        , testCase "sessionDirCorrupted" sessionDirCorrupted
-        , testCase "sessionDirDoesNotExist" sessionDirDoesNotExist
-        ]
-    , testGroup "Cursor" [
+      testGroup "Cursor" [
           testProperty "prop_roundtripCursor" $ withMaxSuccess 500 $
             prop_roundtripCursor
         ]
@@ -55,75 +40,6 @@ testTableConfig = defaultTableConfig {
       -- flushes and merges.
       confWriteBufferAlloc = AllocNumEntries 3
     }
-
-prop_newSession ::
-     Positive (Small Int)
-  -> V.Vector (Word64, Entry Word64 Word64)
-  -> Property
-prop_newSession (Positive (Small bufferSize)) es =
-    ioProperty $
-    withTempIOHasBlockIO "prop_newSession" $ \hfs hbio ->
-    withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session ->
-      withTable session conf (updates const es')
-  where
-    conf = testTableConfig {
-        confWriteBufferAlloc = AllocNumEntries bufferSize
-      }
-    es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
-
-prop_restoreSession ::
-     Positive (Small Int)
-  -> V.Vector (Word64, Entry Word64 Word64)
-  -> Property
-prop_restoreSession (Positive (Small bufferSize)) es =
-    ioProperty $
-    withTempIOHasBlockIO "prop_restoreSession" $ \hfs hbio -> do
-      withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session1 ->
-        withTable session1 conf (updates const es')
-      withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \session2 ->
-        withTable session2 conf (updates const es')
-  where
-    conf = testTableConfig {
-        confWriteBufferAlloc = AllocNumEntries bufferSize
-      }
-    es' = fmap (bimap serialiseKey (bimap serialiseValue serialiseBlob)) es
-
-sessionDirLocked :: Property
-sessionDirLocked = ioProperty $
-    withTempIOHasBlockIO "sessionDirLocked" $ \hfs hbio -> do
-      bracket (openSession nullTracer hfs hbio testSalt (FS.mkFsPath [])) closeSession $ \_sesh1 ->
-        bracket (try @SessionDirLockedError $ openSession nullTracer hfs hbio testSalt (FS.mkFsPath [])) tryCloseSession $ \case
-          Left (ErrSessionDirLocked _dir) -> pure ()
-          x -> assertFailure $ "Opening a session twice in the same directory \
-                              \should fail with an ErrSessionDirLocked error, but \
-                              \it returned this instead: " <> showLeft "Session" x
-
-sessionDirCorrupted :: Assertion
-sessionDirCorrupted =
-  withTempIOHasBlockIO "sessionDirCorrupted" $ \hfs hbio -> do
-    FS.createDirectory hfs (FS.mkFsPath ["unexpected-directory"])
-    bracket (try @SessionDirCorruptedError (openSession nullTracer hfs hbio testSalt (FS.mkFsPath []))) tryCloseSession $ \case
-      Left (ErrSessionDirCorrupted _ _dir) -> pure ()
-      x -> assertFailure $ "Restoring a session in a directory with a wrong \
-                           \layout should fail with a ErrSessionDirCorrupted, but \
-                           \it returned this instead: " <> showLeft "Session" x
-
-sessionDirDoesNotExist :: Assertion
-sessionDirDoesNotExist = withTempIOHasBlockIO "sessionDirDoesNotExist" $ \hfs hbio -> do
-  bracket (try @SessionDirDoesNotExistError (openSession nullTracer hfs hbio testSalt (FS.mkFsPath ["missing-dir"]))) tryCloseSession $ \case
-      Left (ErrSessionDirDoesNotExist _dir) -> pure ()
-      x -> assertFailure $ "Opening a session in a non-existent directory should \
-                           \fail with a ErrSessionDirDoesNotExist error, but it \
-                           \returned this instead: " <> showLeft "Session" x
-
--- | Internal helper: close a session opened with 'try'.
-tryCloseSession :: (MonadMask m, MonadSTM m, MonadMVar m, PrimMonad m) => Either e (Session m h) -> m ()
-tryCloseSession = either (const $ pure ()) closeSession
-
-showLeft :: Show a => String -> Either a b -> String
-showLeft x = \case
-    Left e -> show e
-    Right _ -> x
 
 -- | Check that reading from a cursor returns exactly the entries that have
 -- been inserted into the table. Roughly:
