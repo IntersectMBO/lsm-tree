@@ -9,6 +9,7 @@ import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
+import           GHC.Stack (HasCallStack)
 import           System.FS.API
 import qualified System.FS.BlockIO.API as API
 import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode (..))
@@ -55,7 +56,7 @@ serialHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hSynchronise synchron
 data IOCtx m = IOCtx { ctxFS :: SomeHasFS m, openVar :: MVar m Bool }
 
 {-# SPECIALISE guardIsOpen :: IOCtx IO -> IO () #-}
-guardIsOpen :: (MonadMVar m, MonadThrow m) => IOCtx m -> m ()
+guardIsOpen :: (HasCallStack, MonadMVar m, MonadThrow m) => IOCtx m -> m ()
 guardIsOpen ctx = readMVar (openVar ctx) >>= \b ->
     unless b $ throwIO (API.mkClosedError (ctxFS ctx) "submitIO")
 
@@ -72,7 +73,7 @@ close ctx = modifyMVar_ (openVar ctx) $ const (pure False)
   -> IOCtx IO -> V.Vector (IOOp RealWorld h)
   -> IO (VU.Vector IOResult) #-}
 submitIO ::
-     (MonadMVar m, MonadThrow m, PrimMonad m)
+     (HasCallStack, MonadMVar m, MonadThrow m, PrimMonad m)
   => HasFS m h
   -> IOCtx m
   -> V.Vector (IOOp (PrimState m) h)

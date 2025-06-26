@@ -19,6 +19,7 @@ import           Database.LSMTree.Extras.MergingTreeData
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.Arena (newArenaManager)
 import           Database.LSMTree.Internal.BlobRef
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Entry as Entry
 import qualified Database.LSMTree.Internal.Index as Index
@@ -60,6 +61,9 @@ runParams =
       runParamAlloc   = RunAcc.RunAllocFixed 10,
       runParamIndex   = Index.Ordinary
     }
+
+testSalt :: Bloom.Salt
+testSalt = 4
 
 -- | Check that the merging tree constructor functions preserve the property
 -- that if the inputs are obviously empty, the output is also obviously empty.
@@ -126,7 +130,7 @@ prop_lookupTree ::
 prop_lookupTree hfs hbio keys mtd = do
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal runParams path counter mtd $ \tree -> do
+    withMergingTree hfs hbio resolveVal testSalt runParams path counter mtd $ \tree -> do
       arenaManager <- newArenaManager
       withActionRegistry $ \reg -> do
         res <- fetchBlobs =<< lookupsIO reg arenaManager tree
@@ -169,6 +173,7 @@ prop_lookupTree hfs hbio keys mtd = do
             hbio
             mgr
             resolveVal
+            testSalt
             runs
             (fmap (\(DeRef r) -> Run.runFilter   r) runs)
             (fmap (\(DeRef r) -> Run.runIndex    r) runs)
@@ -229,7 +234,7 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
     FS.createDirectory hfs setupPath
     FS.createDirectory hfs (FS.mkFsPath ["active"])
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal runParams setupPath counter mtd $ \tree -> do
+    withMergingTree hfs hbio resolveVal testSalt runParams setupPath counter mtd $ \tree -> do
       (MR.MergeDebt initialDebt, _) <- remainingMergeDebt tree
       props <- for credits $ \c -> do
         (MR.MergeDebt debt, _) <- remainingMergeDebt tree
@@ -238,7 +243,7 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
             pure $ property True
           else do
             leftovers <-
-              supplyCredits hfs hbio resolveVal runParams threshold root counter tree c
+              supplyCredits hfs hbio resolveVal testSalt runParams threshold root counter tree c
             (MR.MergeDebt debt', _) <- remainingMergeDebt tree
             pure $
               -- semi-useful, but mainly tells us in how many steps we supplied

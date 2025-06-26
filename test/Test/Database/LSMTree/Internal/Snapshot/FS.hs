@@ -11,6 +11,7 @@ import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Extras (showPowersOf10)
 import           Database.LSMTree.Extras.Generators ()
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Config.Override
                      (OverrideDiskCachePolicy (..))
@@ -159,6 +160,9 @@ instance Arbitrary TestErrors where
   Snapshot corruption
 -------------------------------------------------------------------------------}
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 -- TODO: an alternative to generating a Choice a priori is to run the monadic
 -- code in @PropertyM (IOSim s)@, and then we can do quantification inside the
 -- monadic property using @pick@. This complicates matters, however, because
@@ -173,7 +177,7 @@ prop_flipSnapshotBit ::
 prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     runSimOrThrow $
     withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _fsVar ->
-    withSession nullTracer hfs hbio root $ \s ->
+    withOpenSession nullTracer hfs hbio testSalt root $ \s ->
     withTable s conf $ \t -> do
       -- Create a table, populate it, and create a snapshot
       updates resolve es' t

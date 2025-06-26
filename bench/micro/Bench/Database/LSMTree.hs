@@ -6,6 +6,7 @@ import           Control.DeepSeq
 import           Control.Exception
 import           Control.Tracer
 import           Criterion.Main
+import qualified Data.BloomFilter.Hash as Bloom
 import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable
@@ -82,6 +83,9 @@ benchConfig = defaultTableConfig
     , confFencePointerIndex = CompactIndex
     }
 
+benchSalt :: Bloom.Salt
+benchSalt = 4
+
 {-------------------------------------------------------------------------------
   Large Value vs. Small Value Blob
 -------------------------------------------------------------------------------}
@@ -135,7 +139,7 @@ benchLargeValueVsSmallValueBlob =
 
       initialise inss = do
           (tmpDir, hfs, hbio) <- mkFiles
-          s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
+          s <- openSession nullTracer hfs hbio benchSalt (FS.mkFsPath [])
           t <- newTableWith benchConfig s
           V.mapM_ (inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
@@ -220,7 +224,7 @@ benchCursorScanVsRangeLookupScan =
 
       initialise inss = do
           (tmpDir, hfs, hbio) <- mkFiles
-          s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
+          s <- openSession nullTracer hfs hbio benchSalt (FS.mkFsPath [])
           t <- newTableWith benchConfig s
           V.mapM_ (inserts t) inss
           pure (tmpDir, hfs, hbio, s, t)
@@ -265,7 +269,7 @@ benchInsertBatches =
 
       initialise = do
           (tmpDir, hfs, hbio) <- mkFiles
-          s <- openSession nullTracer hfs hbio (FS.mkFsPath [])
+          s <- openSession nullTracer hfs hbio benchSalt (FS.mkFsPath [])
           t <- newTableWith _benchConfig s
           pure (tmpDir, hfs, hbio, s, t)
 
@@ -451,7 +455,7 @@ mkTable ::
         , Table IO K V3 B3
         )
 mkTable hfs hbio conf = do
-    sesh <- openSession nullTracer hfs hbio (FS.mkFsPath [])
+    sesh <- openSession nullTracer hfs hbio benchSalt (FS.mkFsPath [])
     t <- newTableWith conf sesh
     pure (sesh, t)
 

@@ -593,6 +593,8 @@ library
     , lsm-tree:control
     , lsm-tree:kmerge
     , primitive               ^>=0.9
+    , random                  ^>=1.0      || ^>=1.1      || ^>=1.2     || ^>=1.3
+    , serialise               ^>=0.2
     , text                    ^>=2.1.1
     , utf8-string             ^>=1.0
     , vector                  ^>=0.13
@@ -770,6 +772,7 @@ test-suite lsm-tree-test
     Database.LSMTree.Model.IO
     Database.LSMTree.Model.Session
     Database.LSMTree.Model.Table
+    Test.Database.LSMTree
     Test.Database.LSMTree.Class
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal

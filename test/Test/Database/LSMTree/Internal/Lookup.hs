@@ -123,6 +123,9 @@ runParams indexType =
       runParamIndex   = indexType
     }
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 {-------------------------------------------------------------------------------
   Models
 -------------------------------------------------------------------------------}
@@ -141,7 +144,7 @@ prop_bloomQueriesModel dats =
     blooms = fmap snd3 runs
     lookupss = concatMap lookups $ getSmallList dats
     real  = map (\(RunIxKeyIx rix kix) -> (rix,kix)) $ VP.toList $
-            bloomQueries (V.fromList blooms) (V.fromList lookupss)
+            bloomQueries testSalt (V.fromList blooms) (V.fromList lookupss)
     model = bloomQueriesModel (fmap Map.keysSet runDatas) lookupss
 
 -- | A bloom filter is a probablistic set that can return false positives, but
@@ -204,6 +207,7 @@ prop_prepLookupsModel dats = real === model
           ks = V.fromList lookupss
       (kixs, ioops) <- prepLookups
                          arena
+                         testSalt
                          (V.map snd3 rs)
                          (V.map thrd3 rs)
                          (V.map fst3 rs) ks
@@ -245,6 +249,7 @@ prop_inMemRunLookupAndConstruction dat =
       (kixs, ioops) <- let r = V.singleton (runWithHandle run)
                        in  prepLookups
                              arena
+                             testSalt
                              (V.map snd3 r)
                              (V.map thrd3 r)
                              (V.map fst3 r)
@@ -332,6 +337,7 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         hbio
         arenaManager
         resolveV
+        testSalt
         wb wbblobs
         runs
         (V.map (\(DeRef r) -> Run.runFilter   r) runs)
@@ -374,7 +380,7 @@ withWbAndRuns hfs hbio indexType (wbdat:rundats) action =
       let wb = WB.fromMap wbkops
       let rds = map (RunData . runData) rundats
       counter <- newUniqCounter 1
-      withRuns hfs hbio (runParams indexType) (FS.mkFsPath []) counter rds $
+      withRuns hfs hbio testSalt (runParams indexType) (FS.mkFsPath []) counter rds $
         \runs ->
           action wb wbblobs (V.fromList runs)
 
@@ -443,7 +449,7 @@ mkTestRun dat = (rawPages, b, ic)
 
     -- one-shot run construction
     (pages, b, ic) = runST $ do
-      racc <- Run.new nentries (RunAllocFixed 10) Index.Ordinary
+      racc <- Run.new nentries (RunAllocFixed 10) testSalt Index.Ordinary
       let kops = Map.toList dat
       psopss <- traverse (uncurry (Run.addKeyOp racc)) kops
       (mp, _ , b', ic', _) <- Run.unsafeFinalise racc

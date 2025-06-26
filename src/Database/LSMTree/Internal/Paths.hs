@@ -4,6 +4,8 @@
 module Database.LSMTree.Internal.Paths (
     SessionRoot (..)
   , lockFile
+  , lockFileName
+  , metadataFile
   , ActiveDir (..)
   , activeDir
   , runPath
@@ -75,7 +77,13 @@ newtype SessionRoot = SessionRoot { getSessionRoot :: FsPath }
   deriving stock Eq
 
 lockFile :: SessionRoot -> FsPath
-lockFile (SessionRoot dir) = dir </> mkFsPath ["lock"]
+lockFile (SessionRoot dir) = dir </> mkFsPath [lockFileName]
+
+lockFileName :: String
+lockFileName = "lock"
+
+metadataFile :: SessionRoot -> FsPath
+metadataFile (SessionRoot dir) = dir </> mkFsPath ["metadata"]
 
 newtype ActiveDir = ActiveDir { getActiveDir :: FsPath }
 

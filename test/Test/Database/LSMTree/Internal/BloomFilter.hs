@@ -1,7 +1,7 @@
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
 import           Control.DeepSeq (deepseq)
-import           Control.Exception (displayException)
+import           Control.Exception (Exception (..), displayException)
 import           Control.Monad (void)
 import qualified Control.Monad.IOSim as IOSim
 import           Data.Bits ((.&.))
@@ -9,6 +9,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS.Builder
 import qualified Data.ByteString.Builder.Extra as BS.Builder
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.List as List
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
@@ -25,6 +26,8 @@ import           Test.Tasty.QuickCheck hiding ((.&.))
 
 import qualified Data.BloomFilter.Blocked as Bloom
 import           Database.LSMTree.Internal.BloomFilter
+import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
+                     FileFormat (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
@@ -43,6 +46,9 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
         prop_bloomQueries
     ]
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 roundtrip_prop :: Positive (Small Int) -> Positive Int ->  [Word64] -> Property
 roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
     counterexample (show bs) $
@@ -52,7 +58,7 @@ roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
   where
     sz  = Bloom.BloomSize { sizeBits   = limitBits bits,
                          sizeHashes = hfN }
-    lhs = Bloom.create sz (\b -> mapM_ (Bloom.insert b) ws)
+    lhs = Bloom.create sz testSalt (\b -> mapM_ (Bloom.insert b) ws)
     bs  = LBS.toStrict (bloomFilterToLBS lhs)
 
 limitBits :: Int -> Int
@@ -61,9 +67,18 @@ limitBits b = b .&. 0xffffff
 prop_total_deserialisation :: BS.ByteString -> Property
 prop_total_deserialisation bs =
     case bloomFilterFromBS bs of
-      Left err -> label (displayException err) $ property True
+      Left err ->
+        label (mkLabel err) $ property True
       Right bf -> label "parsed successfully" $ property $
         bf `deepseq` True
+  where
+    mkLabel err = case err of
+        IOSim.FailureException e
+          | Just (ErrFileFormatInvalid fsep FormatBloomFilterFile msg) <- fromException e
+          , let msg' = "Expected salt does not match actual salt"
+          , msg' `List.isPrefixOf` msg
+          -> displayException $ ErrFileFormatInvalid fsep FormatBloomFilterFile msg'
+        _ -> displayException err
 
 -- | Write the bytestring to a file in the mock file system and then use
 -- 'bloomFilterFromFile'.
@@ -77,7 +92,7 @@ bloomFilterFromBS bs =
         void $ FS.hPutAllStrict hfs h bs
       -- deserialise from file
       FS.withFile hfs file FS.ReadMode $ \h ->
-        bloomFilterFromFile hfs h
+        bloomFilterFromFile hfs testSalt h
 
 -- Length is in bits. A large length would require significant amount of
 -- memory, so we make it 'Small'.
@@ -116,7 +131,7 @@ prop_bloomQueries :: FPR
                   -> Property
 prop_bloomQueries (FPR fpr) filters keys =
     let filters' :: [Bloom SerialisedKey]
-        filters' = map (Bloom.fromList (Bloom.policyForFPR fpr)
+        filters' = map (Bloom.fromList (Bloom.policyForFPR fpr) testSalt
                         . map (\(Small k) -> serialiseKey k))
                        filters
 
@@ -152,5 +167,4 @@ prop_bloomQueries (FPR fpr) filters keys =
         referenceResults
        ===
         map (\(RunIxKeyIx rix kix) -> (rix, kix))
-            (VP.toList (bloomQueries (V.fromList filters')
-                                     (V.fromList keys')))
+            (VP.toList (bloomQueries testSalt (V.fromList filters') (V.fromList keys')))

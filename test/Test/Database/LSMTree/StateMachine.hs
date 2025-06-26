@@ -106,7 +106,7 @@ import           NoThunks.Class
 import           Prelude hiding (init)
 import           System.Directory (removeDirectoryRecursive)
 import           System.FS.API (FsError (..), HasFS, MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO, defaultIOCtxParams)
+import           System.FS.BlockIO.API (HasBlockIO, close, defaultIOCtxParams)
 import           System.FS.BlockIO.IO (ioHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
 import qualified System.FS.Sim.Error as FSSim
@@ -287,16 +287,17 @@ instance Arbitrary R.FencePointerIndexType where
 
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
+  -> QC.Fixed R.Salt
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_RealFS_IO tr =
+propLockstep_RealImpl_RealFS_IO tr (QC.Fixed salt) =
     runActionsBracket
       (Proxy @(ModelState R.Table))
       CheckCleanup
       CheckRefs
       acquire
       release
-      (\r (_, session, errsVar, logVar) -> do
+      (\r (_, session, _, errsVar, logVar) -> do
             faultsVar <- newMutVar []
             let
               env :: RealEnv R.Table IO
@@ -313,18 +314,19 @@ propLockstep_RealImpl_RealFS_IO tr =
         )
       tagFinalState'
   where
-    acquire :: IO (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog)
+    acquire :: IO (FilePath, Class.Session R.Table IO, HasBlockIO IO HandleIO, StrictTVar IO Errors, StrictTVar IO ErrorsLog)
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
-        session <- R.openSession tr hasFS hasBlockIO (mkFsPath [])
+        session <- R.openSession tr hasFS hasBlockIO salt (mkFsPath [])
         errsVar <- newTVarIO FSSim.emptyErrors
         logVar <- newTVarIO emptyLog
-        pure (tmpDir, session, errsVar, logVar)
+        pure (tmpDir, session, hasBlockIO, errsVar, logVar)
 
-    release :: (FilePath, Class.Session R.Table IO, StrictTVar IO Errors, StrictTVar IO ErrorsLog) -> IO Property
-    release (tmpDir, !session, _, _) = do
+    release :: (FilePath, Class.Session R.Table IO, HasBlockIO IO HandleIO, StrictTVar IO Errors, StrictTVar IO ErrorsLog) -> IO Property
+    release (tmpDir, !session, hasBlockIO, _, _) = do
         !prop <- propNoThunks session
         R.closeSession session
+        close hasBlockIO
         removeDirectoryRecursive tmpDir
         pure prop
 
@@ -333,14 +335,15 @@ propLockstep_RealImpl_MockFS_IO ::
   -> CheckCleanup
   -> CheckFS
   -> CheckRefs
+  -> QC.Fixed R.Salt
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag =
+propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) =
     runActionsBracket
       (Proxy @(ModelState R.Table))
       cleanupFlag
       refsFlag
-      (acquire_RealImpl_MockFS tr)
+      (acquire_RealImpl_MockFS tr salt)
       (release_RealImpl_MockFS fsFlag)
       (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
@@ -372,14 +375,15 @@ propLockstep_RealImpl_MockFS_IOSim ::
   -> CheckCleanup
   -> CheckFS
   -> CheckRefs
+  -> QC.Fixed R.Salt
   -> Actions (Lockstep (ModelState R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag actions =
+propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) actions =
     monadicIOSim_ prop
   where
     prop :: forall s. PropertyM (IOSim s) Property
     prop = do
-        (fsVar, session, errsVar, logVar) <- QC.run (acquire_RealImpl_MockFS tr)
+        (fsVar, session, errsVar, logVar) <- QC.run (acquire_RealImpl_MockFS tr salt)
         faultsVar <- QC.run $ newMutVar []
         let
           env :: RealEnv R.Table (IOSim s)
@@ -405,13 +409,14 @@ propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag actions =
 acquire_RealImpl_MockFS ::
      R.IOLike m
   => Tracer m R.LSMTreeTrace
+  -> R.Salt
   -> m (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
-acquire_RealImpl_MockFS tr = do
+acquire_RealImpl_MockFS tr salt = do
     fsVar <- newTMVarIO MockFS.empty
     errsVar <- newTVarIO FSSim.emptyErrors
     logVar <- newTVarIO emptyLog
     (hfs, hbio) <- simErrorHasBlockIOLogged fsVar errsVar logVar
-    session <- R.openSession tr hfs hbio (mkFsPath [])
+    session <- R.openSession tr hfs hbio salt (mkFsPath [])
     pure (fsVar, session, errsVar, logVar)
 
 -- | Flag that turns on\/off file system checks.
@@ -445,7 +450,7 @@ getAllSessionTables ::
   => R.Session m
   -> m [SomeTable m]
 getAllSessionTables (R.Types.Session s) = do
-    R.Unsafe.withOpenSession s $ \seshEnv -> do
+    R.Unsafe.withKeepSessionOpen s $ \seshEnv -> do
       ts <- readMVar (R.Unsafe.sessionOpenTables seshEnv)
       pure ((\x -> SomeTable (R.Types.Table x))  <$> Map.elems ts)
 
@@ -454,7 +459,7 @@ getAllSessionCursors ::
   => R.Session m
   -> m [SomeCursor m]
 getAllSessionCursors (R.Types.Session s) =
-    R.Unsafe.withOpenSession s $ \seshEnv -> do
+    R.Unsafe.withKeepSessionOpen s $ \seshEnv -> do
       cs <- readMVar (R.Unsafe.sessionOpenCursors seshEnv)
       pure ((\x -> SomeCursor (R.Types.Cursor x))  <$> Map.elems cs)
 
@@ -517,7 +522,7 @@ handleSessionDirLockedError = \case
 
 handleSessionDirCorruptedError :: SessionDirCorruptedError -> Model.Err
 handleSessionDirCorruptedError = \case
-  ErrSessionDirCorrupted _dir -> Model.ErrSessionDirCorrupted
+  ErrSessionDirCorrupted _reason _dir -> Model.ErrSessionDirCorrupted
 
 handleSessionClosedError :: SessionClosedError -> Model.Err
 handleSessionClosedError = \case

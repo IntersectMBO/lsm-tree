@@ -38,6 +38,7 @@ import           Control.RefCount
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import           Database.LSMTree.Internal.BloomFilter (Bloom, RunIxKeyIx (..),
                      bloomQueries)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (Index)
 import qualified Database.LSMTree.Internal.Index as Index (search)
@@ -61,13 +62,14 @@ import           System.FS.BlockIO.API
 -- associated with each 'IOOp'.
 prepLookups ::
      Arena s
+  -> Bloom.Salt
   -> V.Vector (Bloom SerialisedKey)
   -> V.Vector Index
   -> V.Vector (Handle h)
   -> V.Vector SerialisedKey
   -> ST s (VP.Vector RunIxKeyIx, V.Vector (IOOp s h))
-prepLookups arena blooms indexes kopsFiles ks = do
-  let !rkixs = bloomQueries blooms ks
+prepLookups arena salt blooms indexes kopsFiles ks = do
+  let !rkixs = bloomQueries salt blooms ks
   !ioops <- indexSearches arena indexes kopsFiles ks rkixs
   pure (rkixs, ioops)
 
@@ -110,6 +112,7 @@ type LookupAcc m h = V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h)))
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
+    -> Bloom.Salt
     -> WB.WriteBuffer
     -> Ref (WBB.WriteBufferBlobs IO h)
     -> V.Vector (Ref (Run IO h))
@@ -125,6 +128,7 @@ lookupsIOWithWriteBuffer ::
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> WB.WriteBuffer
   -> Ref (WBB.WriteBufferBlobs m h)
   -> V.Vector (Ref (Run m h)) -- ^ Runs @rs@
@@ -133,10 +137,10 @@ lookupsIOWithWriteBuffer ::
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (LookupAcc m h)
-lookupsIOWithWriteBuffer !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks =
+lookupsIOWithWriteBuffer !hbio !mgr !resolveV !salt !wb !wbblobs !rs !blooms !indexes !kopsFiles !ks =
     assert precondition $
     withArena mgr $ \arena -> do
-      (rkixs, ioops) <- ST.stToIO $ prepLookups arena blooms indexes kopsFiles ks
+      (rkixs, ioops) <- ST.stToIO $ prepLookups arena salt blooms indexes kopsFiles ks
       ioress <- submitIO hbio ioops
       intraPageLookupsWithWriteBuffer resolveV wb wbblobs rs ks rkixs ioops ioress
   where
@@ -152,6 +156,7 @@ lookupsIOWithWriteBuffer !hbio !mgr !resolveV !wb !wbblobs !rs !blooms !indexes 
        HasBlockIO IO h
     -> ArenaManager RealWorld
     -> ResolveSerialisedValue
+    -> Bloom.Salt
     -> V.Vector (Ref (Run IO h))
     -> V.Vector (Bloom SerialisedKey)
     -> V.Vector Index
@@ -168,16 +173,17 @@ lookupsIO ::
   => HasBlockIO m h
   -> ArenaManager (PrimState m)
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> V.Vector (Ref (Run m h)) -- ^ Runs @rs@
   -> V.Vector (Bloom SerialisedKey) -- ^ The bloom filters inside @rs@
   -> V.Vector Index -- ^ The indexes inside @rs@
   -> V.Vector (Handle h) -- ^ The file handles to the key\/value files inside @rs@
   -> V.Vector SerialisedKey
   -> m (LookupAcc m h)
-lookupsIO !hbio !mgr !resolveV !rs !blooms !indexes !kopsFiles !ks =
+lookupsIO !hbio !mgr !resolveV !salt !rs !blooms !indexes !kopsFiles !ks =
     assert precondition $
     withArena mgr $ \arena -> do
-      (rkixs, ioops) <- ST.stToIO $ prepLookups arena blooms indexes kopsFiles ks
+      (rkixs, ioops) <- ST.stToIO $ prepLookups arena salt blooms indexes kopsFiles ks
       ioress <- submitIO hbio ioops
       intraPageLookupsOn resolveV (V.map (const Nothing) ks) rs ks rkixs ioops ioress
   where

@@ -1,6 +1,7 @@
 module Database.LSMTree.Extras (
     showPowersOf10
   , showPowersOf
+  , showRangesOf
   , groupsOfN
   , vgroupsOfN
   ) where
@@ -25,6 +26,17 @@ showPowersOf factor n
   where
     ub = fromJust (find (n <) (iterate (* factor) factor))
     lb = ub `div` factor
+
+showRangesOf :: Int -> Int -> String
+showRangesOf range n
+  | range <= 0 = error "showRangesOf: range must be larger than 0"
+  | n == 0     = "n == 0"
+  | m == 0     = printf "%d < n < %d" lb ub
+  | otherwise  = printf "%d <= n < %d" lb ub
+  where
+    m = n `div` range
+    lb = m * range
+    ub = (m + 1) * range
 
 -- | Make groups of @n@ elements from a list @xs@
 groupsOfN :: Int -> [a] -> [NonEmpty a]

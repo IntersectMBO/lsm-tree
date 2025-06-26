@@ -65,6 +65,7 @@ import           Data.Primitive.MutVar
 import           Data.Primitive.PrimVar
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Assertions (assert)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Merge (IsMergeType (..),
                      LevelMergeType (..), Merge, RunParams (..),
@@ -132,6 +133,7 @@ instance NFData MergeKnownCompleted where
   => HasFS IO h
   -> HasBlockIO IO h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> RunParams
   -> t
   -> RunFsPaths
@@ -149,12 +151,13 @@ new ::
   => HasFS m h
   -> HasBlockIO m h
   -> ResolveSerialisedValue
+  -> Bloom.Salt
   -> RunParams
   -> t
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
-new hfs hbio resolve runParams ty runPaths inputRuns =
+new hfs hbio resolve salt runParams ty runPaths inputRuns =
     assert (V.length inputRuns > 0) $ do
     -- there can be empty runs, which we don't want to include in the merge
     -- TODO: making runs non-empty would involve introducing a constructor
@@ -172,7 +175,7 @@ new hfs hbio resolve runParams ty runPaths inputRuns =
           -- as we do in the prototype. but that would mean that the result
           -- doesn't follow the supplied @runParams@.
           -- TODO: decide whether that optimisation is okay
-          r <- Run.newEmpty hfs hbio runParams runPaths
+          r <- Run.newEmpty hfs hbio salt runParams runPaths
           unsafeNew
             (MergeDebt 0)
             (SpentCredits 0)
@@ -181,7 +184,7 @@ new hfs hbio resolve runParams ty runPaths inputRuns =
         _ -> do
           rs <- V.mapM dupRun nonEmptyRuns
           merge <- fromMaybe (error "newMerge: merges can not be empty")
-            <$> Merge.new hfs hbio runParams ty resolve runPaths rs
+            <$> Merge.new hfs hbio salt runParams ty resolve runPaths rs
           unsafeNew
             (numEntriesToMergeDebt (V.foldMap' Run.size rs))
             (SpentCredits 0)

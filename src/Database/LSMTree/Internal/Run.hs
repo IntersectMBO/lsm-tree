@@ -44,6 +44,7 @@ import           Database.LSMTree.Internal.BlobRef hiding (mkRawBlobRef,
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (Bloom,
                      bloomFilterFromFile)
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexType (..))
@@ -185,6 +186,7 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
 {-# SPECIALISE newEmpty ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> IO (Ref (Run IO h)) #-}
@@ -194,11 +196,12 @@ newEmpty ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> m (Ref (Run m h))
-newEmpty hfs hbio runParams runPaths = do
-    builder <- Builder.new hfs hbio runParams runPaths (NumEntries 0)
+newEmpty hfs hbio salt runParams runPaths = do
+    builder <- Builder.new hfs hbio salt runParams runPaths (NumEntries 0)
     fromBuilder builder
 
 {-# SPECIALISE fromBuilder ::
@@ -224,6 +227,7 @@ fromBuilder builder = do
 {-# SPECIALISE fromWriteBuffer ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> WriteBuffer
@@ -243,13 +247,14 @@ fromWriteBuffer ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
+  -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio params fsPaths buffer blobs = do
-    builder <- Builder.new fs hbio params fsPaths (WB.numEntries buffer)
+fromWriteBuffer fs hbio salt params fsPaths buffer blobs = do
+    builder <- Builder.new fs hbio salt params fsPaths (WB.numEntries buffer)
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
@@ -264,6 +269,7 @@ fromWriteBuffer fs hbio params fsPaths buffer blobs = do
   -> HasBlockIO IO h
   -> RunDataCaching
   -> IndexType
+  -> Bloom.Salt
   -> RunFsPaths
   -> IO (Ref (Run IO h)) #-}
 -- | Load a previously written run from disk, checking each file's checksum
@@ -289,10 +295,11 @@ openFromDisk ::
   -> HasBlockIO m h
   -> RunDataCaching
   -> IndexType
+  -> Bloom.Salt -- ^ Expected salt
   -> RunFsPaths
   -> m (Ref (Run m h))
 -- TODO: make exception safe
-openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
+openFromDisk fs hbio runRunDataCaching indexType expectedSalt runRunFsPaths = do
     expectedChecksums <-
        CRC.expectValidFile fs (runChecksumsPath runRunFsPaths) CRC.FormatChecksumsFile
            . fromChecksumsFile
@@ -307,7 +314,7 @@ openFromDisk fs hbio runRunDataCaching indexType runRunFsPaths = do
     let filterPath = forRunFilterRaw paths
     checkCRC CacheRunData (forRunFilterRaw expectedChecksums) filterPath
     runFilter <- FS.withFile fs filterPath FS.ReadMode $
-                   bloomFilterFromFile fs
+                   bloomFilterFromFile fs expectedSalt
 
     (runNumEntries, runIndex) <-
       CRC.expectValidFile fs (forRunIndexRaw paths) CRC.FormatIndexFile

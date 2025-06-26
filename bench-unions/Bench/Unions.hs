@@ -292,7 +292,7 @@ doSetup gopts = do
     createDirectoryIfMissing True $ rootDir gopts
 
     -- Populate the specified number of tables
-    LSM.withSession (rootDir gopts) $ \session -> do
+    LSM.withOpenSession (rootDir gopts) $ \session -> do
       -- Create a "baseline" table
       --
       -- We create a single table that *already has* all the same key value pairs
@@ -337,7 +337,7 @@ tableRange gopts =
 -- | Count duplicate keys in all tables that will be unioned together
 doCollisionAnalysis :: GlobalOpts -> IO ()
 doCollisionAnalysis gopts = do
-    LSM.withSession (rootDir gopts) $ \session -> do
+    LSM.withOpenSession (rootDir gopts) $ \session -> do
       seenRef <- newIORef Set.empty
       dupRef <- newIORef Set.empty
 
@@ -381,7 +381,7 @@ doRun gopts opts = do
     withFile dataPath WriteMode $ \h -> do
     hPutStrLn h "# iteration \t baseline (ops/sec) \t union (ops/sec) \t union debt"
 
-    LSM.withSession (rootDir gopts) $ \session -> do
+    LSM.withOpenSession (rootDir gopts) $ \session -> do
     -- Load the baseline table
     LSM.withTableFromSnapshot session baselineTableName label
       $ \baselineTable -> do

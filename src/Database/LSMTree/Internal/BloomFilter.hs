@@ -8,6 +8,7 @@ module Database.LSMTree.Internal.BloomFilter (
   -- * Types
   Bloom.Bloom,
   Bloom.MBloom,
+  Bloom.Salt,
 
   -- * Bulk query
   bloomQueries,
@@ -28,6 +29,7 @@ import qualified Data.Primitive as P
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
 import           Data.Word (Word32, Word64, byteSwap32)
+import           Text.Printf (printf)
 
 import           Control.Exception (assert)
 import           Control.Monad (void, when)
@@ -108,17 +110,18 @@ type ResIx = Int -- Result index
 -- number of keys but this is grown if needed (using a doubling strategy).
 --
 bloomQueries ::
-     V.Vector (Bloom SerialisedKey)
+     Bloom.Salt
+  -> V.Vector (Bloom SerialisedKey)
   -> V.Vector SerialisedKey
   -> VP.Vector RunIxKeyIx
-bloomQueries !filters !keys
+bloomQueries !_salt !filters !keys
   | V.null filters || V.null keys = VP.empty
-bloomQueries !filters !keys =
+bloomQueries !salt !filters !keys =
     runST (bloomQueries_loop1 filters' keyhashes)
   where
     filters'  = toFiltersArray filters
     keyhashes = P.generatePrimArray (V.length keys) $ \i ->
-                  Bloom.hashes (V.unsafeIndex keys i)
+                  Bloom.hashesWithSalt salt (V.unsafeIndex keys i)
 
 -- loop over all keys
 bloomQueries_loop1 ::
@@ -220,15 +223,16 @@ bloomFilterVersion = 1 + fromIntegral Bloom.formatVersion
 
 bloomFilterToLBS :: Bloom a -> LBS.ByteString
 bloomFilterToLBS bf =
-    let (size, ba, off, len) = Bloom.serialise bf
-     in header size <> byteArrayToLBS ba off len
+    let (size, salt, ba, off, len) = Bloom.serialise bf
+     in header size salt <> byteArrayToLBS ba off len
   where
-    header Bloom.BloomSize { sizeBits, sizeHashes } =
-        -- creates a single 16 byte chunk
-        B.toLazyByteStringWith (B.safeStrategy 16 B.smallChunkSize) mempty $
+    header Bloom.BloomSize { sizeBits, sizeHashes } salt =
+        -- creates a single 24 byte chunk
+        B.toLazyByteStringWith (B.safeStrategy 24 B.smallChunkSize) mempty $
              B.word32Host bloomFilterVersion
           <> B.word32Host (fromIntegral sizeHashes)
           <> B.word64Host (fromIntegral sizeBits)
+          <> B.word64Host salt
 
     byteArrayToLBS :: P.ByteArray -> Int -> Int -> LBS.ByteString
     byteArrayToLBS ba off len =
@@ -239,6 +243,7 @@ bloomFilterToLBS bf =
 
 {-# SPECIALISE bloomFilterFromFile ::
      HasFS IO h
+  -> Bloom.Salt
   -> Handle h
   -> IO (Bloom a) #-}
 -- | Read a 'Bloom' from a file.
@@ -246,15 +251,17 @@ bloomFilterToLBS bf =
 bloomFilterFromFile ::
      (PrimMonad m, MonadCatch m)
   => HasFS m h
+  -> Bloom.Salt -- ^ Expected salt
   -> Handle h  -- ^ The open file, in read mode
   -> m (Bloom a)
-bloomFilterFromFile hfs h = do
+bloomFilterFromFile hfs expectedSalt h = do
     header <- rethrowEOFError "Doesn't contain a header" $
-              hGetByteArrayExactly hfs h 16
+              hGetByteArrayExactly hfs h 24
 
     let !version = P.indexByteArray header 0 :: Word32
         !nhashes = P.indexByteArray header 1 :: Word32
         !nbits   = P.indexByteArray header 1 :: Word64
+        !salt    = P.indexByteArray header 2 :: Bloom.Salt
 
     when (version /= bloomFilterVersion) $ throwFormatError $
       if byteSwap32 version == bloomFilterVersion
@@ -264,8 +271,12 @@ bloomFilterFromFile hfs h = do
     when (nbits <= 0) $ throwFormatError "Length is zero"
 
     -- limit to 2^48 bits
-    when (nbits >= 0x1_0000_0000_0000) $ throwFormatError "Too large bloomfilter"
-    --TODO: get max size from bloomfilter lib
+    when (nbits >= fromIntegral Bloom.maxSizeBits) $ throwFormatError "Too large bloomfilter"
+
+    when (expectedSalt /= salt) $ throwFormatError $
+      printf "Expected salt does not match actual salt: %d /= %d"
+        expectedSalt
+        salt
 
     -- read the filter data from the file directly into the bloom filter
     bloom <-
@@ -274,6 +285,7 @@ bloomFilterFromFile hfs h = do
           Bloom.sizeBits   = fromIntegral nbits,
           Bloom.sizeHashes = fromIntegral nhashes
         }
+        salt
         (\buf off len ->
             rethrowEOFError "bloom filter file too short" $
               void $ hGetBufExactly hfs

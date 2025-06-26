@@ -26,7 +26,7 @@ module Database.LSMTree.Simple (
 
     -- * Sessions #sessions#
     Session,
-    withSession,
+    withOpenSession,
     openSession,
     closeSession,
 
@@ -160,6 +160,7 @@ import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.List.NonEmpty (NonEmpty (..))
+import           Data.Text (Text)
 import           Data.Typeable (TypeRep)
 import           Data.Vector (Vector)
 import           Data.Void (Void)
@@ -214,7 +215,7 @@ runExample action = do
   tmpDir <- getTemporaryDirectory
   let sessionDir = tmpDir </> "doctest_Database_LSMTree_Simple"
   createDirectoryIfMissing True sessionDir
-  withSession sessionDir $ \session ->
+  withOpenSession sessionDir $ \session ->
     withTable session $ \table ->
       action session table
 :}
@@ -245,7 +246,7 @@ function that combines the two.
 +------------+--------------------------+-------------------------+-------------------+
 | Resource   | Bracketed #bracketed#    | Allocate #allocate#     | Release #release# |
 +============+==========================+=========================+===================+
-| 'Session'  | 'withSession'            | 'openSession'           | 'closeSession'    |
+| 'Session'  | 'withOpenSession'        | 'openSession'           | 'closeSession'    |
 +------------+--------------------------+-------------------------+-------------------+
 | 'Table'    | 'withTable'              | 'newTable'              | 'closeTable'      |
 +            +--------------------------+-------------------------+                   +
@@ -384,6 +385,9 @@ newtype Session = Session (LSMT.Session IO)
 {- |
 Run an action with access to a session opened from a session directory.
 
+If the session directory is empty, a new session is created.
+Otherwise, the session directory is restored as an existing session.
+
 If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
 Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
 Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
@@ -407,19 +411,22 @@ Throws the following exceptions:
 ['SessionDirCorruptedError']:
     If the session directory is malformed.
 -}
-withSession ::
+withOpenSession ::
     forall a.
     -- | The session directory.
     FilePath ->
     (Session -> IO a) ->
     IO a
-withSession dir action = do
+withOpenSession dir action = do
     let tracer = mempty
     _convertSessionDirErrors dir $
-        LSMT.withSessionIO tracer dir (action . Session)
+        LSMT.withOpenSessionIO tracer dir (action . Session)
 
 {- |
 Open a session from a session directory.
+
+If the session directory is empty, a new session is created.
+Otherwise, the session directory is restored as an existing session.
 
 The worst-case disk I\/O complexity of this operation is \(O(1)\).
 
@@ -1549,7 +1556,7 @@ data SessionDirLockedError
 
 -- | The session directory is corrupted, e.g., it misses required files or contains unexpected files.
 data SessionDirCorruptedError
-    = ErrSessionDirCorrupted !FilePath
+    = ErrSessionDirCorrupted !Text !FilePath
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
@@ -1567,7 +1574,7 @@ _convertSessionDirErrors ::
 _convertSessionDirErrors sessionDir =
     mapExceptionWithActionRegistry (\(LSMT.ErrSessionDirDoesNotExist _fsErrorPath) -> SomeException $ ErrSessionDirDoesNotExist sessionDir)
         . mapExceptionWithActionRegistry (\(LSMT.ErrSessionDirLocked _fsErrorPath) -> SomeException $ ErrSessionDirLocked sessionDir)
-        . mapExceptionWithActionRegistry (\(LSMT.ErrSessionDirCorrupted _fsErrorPath) -> SomeException $ ErrSessionDirCorrupted sessionDir)
+        . mapExceptionWithActionRegistry (\(LSMT.ErrSessionDirCorrupted reason _fsErrorPath) -> SomeException $ ErrSessionDirCorrupted reason sessionDir)
 
 {-------------------------------------------------------------------------------
    Table union

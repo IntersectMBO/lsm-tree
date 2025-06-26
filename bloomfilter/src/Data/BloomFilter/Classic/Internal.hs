@@ -7,18 +7,19 @@
 -- the trusted base.
 module Data.BloomFilter.Classic.Internal (
     -- * Mutable Bloom filters
-    MBloom,
+    MBloom (mbHashSalt),
     new,
     maxSizeBits,
 
     -- * Immutable Bloom filters
-    Bloom,
+    Bloom (hashSalt),
     bloomInvariant,
     size,
 
     -- * Hash-based operations
     Hashes,
-    hashes,
+    Salt,
+    hashesWithSalt,
     insertHashes,
     elemHashes,
     readHashes,
@@ -89,6 +90,7 @@ type MBloom :: Type -> Type -> Type
 data MBloom s a = MBloom {
       mbNumBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
     , mbNumHashes :: {-# UNPACK #-} !Int
+    , mbHashSalt  :: {-# UNPACK #-} !Salt
     , mbBitArray  :: {-# UNPACK #-} !(MBitArray s)
     }
 type role MBloom nominal nominal
@@ -103,13 +105,14 @@ instance NFData (MBloom s a) where
 --
 -- The filter size is capped at 'maxSizeBits'.
 --
-new :: BloomSize -> ST s (MBloom s a)
-new BloomSize { sizeBits, sizeHashes } = do
+new :: BloomSize -> Salt -> ST s (MBloom s a)
+new BloomSize { sizeBits, sizeHashes } mbHashSalt = do
     let !mbNumBits = max 1 (min maxSizeBits sizeBits)
     mbBitArray <- BitArray.new mbNumBits
     pure MBloom {
       mbNumBits,
       mbNumHashes = max 1 sizeHashes,
+      mbHashSalt,
       mbBitArray
     }
 
@@ -173,6 +176,7 @@ type Bloom :: Type -> Type
 data Bloom a = Bloom {
       numBits   :: {-# UNPACK #-} !Int  -- ^ non-zero
     , numHashes :: {-# UNPACK #-} !Int
+    , hashSalt  :: {-# UNPACK #-} !Salt
     , bitArray  :: {-# UNPACK #-} !BitArray
     }
   deriving stock Eq
@@ -224,9 +228,9 @@ elemHashes Bloom { numBits, numHashes, bitArray } !h =
 --
 -- See also 'formatVersion' for compatibility advice.
 --
-serialise :: Bloom a -> (BloomSize, ByteArray, Int, Int)
+serialise :: Bloom a -> (BloomSize, Salt, ByteArray, Int, Int)
 serialise b@Bloom{bitArray} =
-    (size b, ba, off, len)
+    (size b, hashSalt b, ba, off, len)
   where
     (ba, off, len) = BitArray.serialise bitArray
 
@@ -238,11 +242,12 @@ serialise b@Bloom{bitArray} =
 -- | Create an immutable Bloom filter from a mutable one.  The mutable
 -- filter may be modified afterwards.
 freeze :: MBloom s a -> ST s (Bloom a)
-freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
+freeze MBloom { mbNumBits, mbNumHashes, mbHashSalt, mbBitArray } = do
     bitArray <- BitArray.freeze mbBitArray
     let !bf = Bloom {
                 numBits   = mbNumBits,
                 numHashes = mbNumHashes,
+                hashSalt  = mbHashSalt,
                 bitArray
               }
     assert (bloomInvariant bf) $ pure bf
@@ -251,11 +256,12 @@ freeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
 -- mutable filter /must not/ be modified afterwards. For a safer creation
 -- interface, use 'freeze' or 'create'.
 unsafeFreeze :: MBloom s a -> ST s (Bloom a)
-unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
+unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbHashSalt, mbBitArray } = do
     bitArray <- BitArray.unsafeFreeze mbBitArray
     let !bf = Bloom {
                 numBits   = mbNumBits,
                 numHashes = mbNumHashes,
+                hashSalt  = mbHashSalt,
                 bitArray
               }
     assert (bloomInvariant bf) $ pure bf
@@ -263,11 +269,12 @@ unsafeFreeze MBloom { mbNumBits, mbNumHashes, mbBitArray } = do
 -- | Copy an immutable Bloom filter to create a mutable one.  There is
 -- no non-copying equivalent.
 thaw :: Bloom a -> ST s (MBloom s a)
-thaw Bloom { numBits, numHashes, bitArray } = do
+thaw Bloom { numBits, numHashes, hashSalt, bitArray } = do
     mbBitArray <- BitArray.thaw bitArray
     pure MBloom {
       mbNumBits   = numBits,
       mbNumHashes = numHashes,
+      mbHashSalt  = hashSalt,
       mbBitArray
     }
 
@@ -429,6 +436,6 @@ evalHashes (Hashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
 -- | Create 'Hashes' structure.
 --
 -- It's simply hashes the value twice using seed 0 and 1.
-hashes :: Hashable a => a -> Hashes a
-hashes v = Hashes (hashSalt64 0 v) (hashSalt64 1 v)
-{-# INLINE hashes #-}
+hashesWithSalt :: Hashable a => Salt -> a -> Hashes a
+hashesWithSalt salt v = Hashes (hashSalt64 salt v) (hashSalt64 (salt + 1) v)
+{-# INLINE hashesWithSalt #-}

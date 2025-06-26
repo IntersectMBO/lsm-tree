@@ -11,6 +11,7 @@ import qualified Data.Map as Map
 import           Database.LSMTree.Extras.Generators (BiasedKey (..))
 import           Database.LSMTree.Extras.RunData
 import           Database.LSMTree.Internal.BlobRef
+import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Entry (Entry)
 import qualified Database.LSMTree.Internal.Index as Index (IndexType (Ordinary))
 import           Database.LSMTree.Internal.Run (Run)
@@ -73,6 +74,9 @@ runParams =
       runParamIndex   = Index.Ordinary
     }
 
+testSalt :: Bloom.Salt
+testSalt = 4
+
 -- | Creating a run from a write buffer and reading from the run yields the
 -- original elements.
 --
@@ -89,7 +93,7 @@ prop_readAtOffset ::
   -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
-    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio testSalt runParams (simplePath 42) rd' $ \run -> do
       rhs <- readKOps (coerce offsetKey) run
 
       pure . labelRunData rd' $
@@ -133,7 +137,7 @@ prop_readAtOffsetIdempotence ::
   -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
-    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio testSalt runParams (simplePath 42) rd' $ \run -> do
     lhs <- readKOps (coerce offsetKey) run
     rhs <- readKOps (coerce offsetKey) run
 
@@ -157,7 +161,7 @@ prop_readAtOffsetReadHead ::
   -> RunData BiasedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
-    withRunAt fs hbio runParams (simplePath 42) rd' $ \run -> do
+    withRunAt fs hbio testSalt runParams (simplePath 42) rd' $ \run -> do
       lhs <- readKOps Nothing run
       rhs <- case lhs of
         []        -> pure []

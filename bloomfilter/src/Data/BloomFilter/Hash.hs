@@ -8,6 +8,7 @@
 module Data.BloomFilter.Hash (
     -- * Basic hash functionality
     Hash,
+    Salt,
     Hashable(..),
     hash64,
     hashByteArray,
@@ -29,6 +30,9 @@ import qualified XXH3
 -- | A hash value is 64 bits wide.
 type Hash = Word64
 
+-- | The salt value to be used for hashes.
+type Salt = Word64
+
 -------------------------------------------------------------------------------
 -- One shot hashing
 -------------------------------------------------------------------------------
@@ -40,12 +44,12 @@ type Hash = Word64
 class Hashable a where
     -- | Compute a 64-bit hash of a value.
     hashSalt64 ::
-           Word64  -- ^ seed
-        -> a       -- ^ value to hash
-        -> Word64
+           Salt  -- ^ seed
+        -> a     -- ^ value to hash
+        -> Hash
 
 -- | Compute a 64-bit hash.
-hash64 :: Hashable a => a -> Word64
+hash64 :: Hashable a => a -> Hash
 hash64 = hashSalt64 0
 
 instance Hashable () where
@@ -105,7 +109,7 @@ instance (Hashable a, Hashable b) => Hashable (a, b) where
         update s (hash64 y)
 
 -- | Hash a (part of) 'P.ByteArray'.
-hashByteArray :: P.ByteArray -> Int -> Int -> Word64 -> Word64
+hashByteArray :: P.ByteArray -> Int -> Int -> Salt -> Hash
 hashByteArray = XXH3.xxh3_64bit_withSeed_ba
 
 -------------------------------------------------------------------------------
@@ -132,7 +136,7 @@ instance Incremental Char where
     update s c = update s (fromIntegral (ord c) :: Word32)
 
 -- | Calculate incrementally constructed hash.
-incrementalHash :: Word64 -> (forall s. HashState s -> ST s ()) -> Word64
+incrementalHash :: Salt -> (forall s. HashState s -> ST s ()) -> Hash
 incrementalHash seed f = runST $ do
     s <- XXH3.xxh3_64bit_createState
     XXH3.xxh3_64bit_reset_withSeed s seed

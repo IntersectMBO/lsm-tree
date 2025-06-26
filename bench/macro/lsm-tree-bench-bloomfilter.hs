@@ -108,7 +108,7 @@ benchmarks = do
       benchmark "bloomQueries"
                 "(this is the batch lookup, less the cost of computing and hashing the keys)"
                 (benchInBatches benchmarkBatchSize rng0
-                  (\ks -> Bloom.bloomQueries vbs ks `seq` ()))
+                  (\ks -> Bloom.bloomQueries benchSalt vbs ks `seq` ()))
                 (fromIntegralChecked benchmarkNumLookups)
                 hashcost
                 0
@@ -200,6 +200,8 @@ totalNumEntriesSanityCheck l1 filterSizes =
     ==
     sum [ 2^l1 * sizeFactor | (_, sizeFactor, _) <- filterSizes ]
 
+benchSalt :: Bloom.Salt
+benchSalt = 4
 
 -- | Input environment for benchmarking 'Bloom.elemMany'.
 --
@@ -223,7 +225,10 @@ elemManyEnv :: [BloomFilterSizeInfo]
 elemManyEnv filterSizes rng0 =
   stToIO $ do
     -- create the filters
-    mbs <- sequence [ Bloom.new bsize | (_, _, bsize) <- filterSizes ]
+    mbs <- sequence
+      [ Bloom.new bsize benchSalt
+      | (_, _, bsize) <- filterSizes
+      ]
     -- add elements
     foldM_
       (\rng (i, mb) -> do
@@ -264,7 +269,7 @@ benchInBatches !b !rng0 !action =
 benchMakeHashes :: Vector (Bloom SerialisedKey) -> BatchBench
 benchMakeHashes !_bs !ks =
     let khs :: VP.Vector (Bloom.Hashes SerialisedKey)
-        !khs = V.convert (V.map Bloom.hashes ks)
+        !khs = V.convert (V.map (Bloom.hashesWithSalt benchSalt) ks)
      in khs `seq` ()
 
 -- | This gives us a combined cost of calculating the series of keys, their
@@ -273,7 +278,7 @@ benchMakeHashes !_bs !ks =
 benchElemHashes :: Vector (Bloom SerialisedKey) -> BatchBench
 benchElemHashes !bs !ks =
     let khs :: VP.Vector (Bloom.Hashes SerialisedKey)
-        !khs = V.convert (V.map Bloom.hashes ks)
+        !khs = V.convert (V.map (Bloom.hashesWithSalt benchSalt) ks)
      in V.foldl'
           (\_ b -> VP.foldl'
                      (\_ kh -> Bloom.elemHashes b kh `seq` ())
