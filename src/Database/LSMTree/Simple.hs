@@ -111,9 +111,11 @@ module Database.LSMTree.Simple (
     FencePointerIndexType (OrdinaryIndex, CompactIndex),
     DiskCachePolicy (..),
     MergeSchedule (..),
+    MergeBatchSize (..),
 
     -- ** Table Configuration Overrides #table_configuration_overrides#
-    OverrideDiskCachePolicy (..),
+    TableConfigOverride (..),
+    noTableConfigOverride,
 
     -- * Ranges #ranges#
     Range (..),
@@ -166,18 +168,18 @@ import           Data.Vector (Vector)
 import           Data.Void (Void)
 import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
                      DiskCachePolicy, FencePointerIndexType,
-                     InvalidSnapshotNameError (..), MergePolicy, MergeSchedule,
-                     OverrideDiskCachePolicy (..), Range (..), RawBytes,
-                     ResolveAsFirst (..), SerialiseKey (..),
-                     SerialiseKeyOrderPreserving, SerialiseValue (..),
-                     SessionClosedError (..), SizeRatio,
+                     InvalidSnapshotNameError (..), MergeBatchSize, MergePolicy,
+                     MergeSchedule, Range (..), RawBytes, ResolveAsFirst (..),
+                     SerialiseKey (..), SerialiseKeyOrderPreserving,
+                     SerialiseValue (..), SessionClosedError (..), SizeRatio,
                      SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
                      SnapshotLabel (..), SnapshotName,
                      SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableConfig (..), TableCorruptedError (..),
-                     TableTooLargeError (..), UnionCredits (..), UnionDebt (..),
-                     WriteBufferAlloc, isValidSnapshotName, packSlice,
+                     TableConfig (..), TableConfigOverride (..),
+                     TableCorruptedError (..), TableTooLargeError (..),
+                     UnionCredits (..), UnionDebt (..), WriteBufferAlloc,
+                     isValidSnapshotName, noTableConfigOverride, packSlice,
                      serialiseKeyIdentity, serialiseKeyIdentityUpToSlicing,
                      serialiseKeyMinimalSize, serialiseKeyPreservesOrdering,
                      serialiseValueIdentity, serialiseValueIdentityUpToSlicing,
@@ -1431,7 +1433,7 @@ Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](
 -}
 withTableFromSnapshotWith ::
     forall k v a.
-    OverrideDiskCachePolicy ->
+    TableConfigOverride ->
     Session ->
     SnapshotName ->
     SnapshotLabel ->
@@ -1474,7 +1476,7 @@ Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](
 -}
 openTableFromSnapshotWith ::
     forall k v.
-    OverrideDiskCachePolicy ->
+    TableConfigOverride ->
     Session ->
     SnapshotName ->
     SnapshotLabel ->

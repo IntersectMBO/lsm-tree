@@ -117,8 +117,8 @@ import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager)
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.Config.Override
-                     (OverrideDiskCachePolicy, overrideDiskCachePolicy)
+import           Database.LSMTree.Internal.Config.Override (TableConfigOverride,
+                     overrideTableConfig)
 import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
                      FileFormat (..))
 import qualified Database.LSMTree.Internal.Cursor as Cursor
@@ -168,7 +168,7 @@ data LSMTreeTrace =
   | TraceCloseSession
     -- Table
   | TraceNewTable
-  | TraceOpenTableFromSnapshot SnapshotName OverrideDiskCachePolicy
+  | TraceOpenTableFromSnapshot SnapshotName TableConfigOverride
   | TraceTable TableId TableTrace
   | TraceDeleteSnapshot SnapshotName
   | TraceListSnapshots
@@ -1490,7 +1490,7 @@ data SnapshotNotCompatibleError
     deriving anyclass (Exception)
 
 {-# SPECIALISE openTableFromSnapshot ::
-     OverrideDiskCachePolicy
+     TableConfigOverride
   -> Session IO h
   -> SnapshotName
   -> SnapshotLabel
@@ -1499,7 +1499,7 @@ data SnapshotNotCompatibleError
 -- |  See 'Database.LSMTree.openTableFromSnapshot'.
 openTableFromSnapshot ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
-  => OverrideDiskCachePolicy
+  => TableConfigOverride
   -> Session m h
   -> SnapshotName
   -> SnapshotLabel -- ^ Expected label
@@ -1525,7 +1525,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve =
         snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath
 
         let SnapshotMetaData label' conf snapWriteBuffer snapLevels mTreeOpt
-              = overrideDiskCachePolicy policyOveride snapMetaData
+              = overrideTableConfig policyOveride snapMetaData
 
         unless (label == label') $
           throwIO (ErrSnapshotWrongLabel snap label label')

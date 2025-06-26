@@ -13,8 +13,7 @@ import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree as R
-import qualified Database.LSMTree.Internal.Config as R
-                     (TableConfig (TableConfig))
+import qualified Database.LSMTree.Internal.Config as R (TableConfig (..))
 import qualified Database.LSMTree.Model.Session as Model (fromSomeTable, tables)
 import qualified Database.LSMTree.Model.Table as Model (values)
 import           Prelude
@@ -75,7 +74,9 @@ dl_example = do
         , confBloomFilterAlloc = AllocFixed 10
         , confFencePointerIndex = OrdinaryIndex
         , confDiskCachePolicy = DiskCacheNone
-        , confMergeSchedule = OneShot })
+        , confMergeSchedule = OneShot
+        , confMergeBatchSize = MergeBatchSize 4
+        })
     let kvs :: Map.Map Key Value
         kvs = Map.fromList $
               QC.unGen (QC.vectorOf 37 $ (,) <$> QC.arbitrary <*> QC.arbitrary)

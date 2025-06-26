@@ -15,8 +15,8 @@ import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config (BloomFilterAlloc (..),
                      DiskCachePolicy (..), FencePointerIndexType (..),
-                     MergePolicy (..), MergeSchedule (..), SizeRatio (..),
-                     TableConfig (..), WriteBufferAlloc (..))
+                     MergeBatchSize (..), MergePolicy (..), MergeSchedule (..),
+                     SizeRatio (..), TableConfig (..), WriteBufferAlloc (..))
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),
                      NominalDebt (..))
@@ -26,10 +26,11 @@ import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import qualified System.Directory as Dir
+import           System.FilePath
 import qualified System.FS.API as FS
-import           System.FS.API.Types (FsPath, MountPoint (..), fsToFilePath,
-                     mkFsPath, (<.>))
-import           System.FS.IO (HandleIO, ioHasFS)
+import           System.FS.API.Types (MountPoint (..))
+import           System.FS.IO (ioHasFS)
 import           Test.QuickCheck (Property, counterexample, ioProperty, once,
                      (.&&.))
 import qualified Test.Tasty as Tasty
@@ -70,47 +71,36 @@ snapshotCodecGoldenTest ::
   => Proxy a
   -> [TestTree]
 snapshotCodecGoldenTest proxy = [
-      go (nameGolden proxy annotation) datum
+      go annotation datum
     | (annotation, datum) <- enumGoldenAnnotated' proxy
     ]
   where
-    go name datum =
-      let -- Various paths
-          --
-          -- There are three paths for both the checksum and the snapshot files:
-          --   1. The filepath of type @FsPath@ to which data is written.
-          --   2. The filepath of type @FilePath@ from which data is read.
-          --   3. The filepath of type @FilePath@ against which the data is compared.
-          --
-          -- These file types' bindings have the following infix annotations, respectively:
-          --   1. (Fs) for FsPath
-          --   2. (Hs) for "Haskell" path
-          --   3. (Au) for "Golden file" path
-          snapshotFsPath = mkFsPath [name] <.> "snapshot"
-          snapshotHsPath = fsToFilePath goldenDataMountPoint snapshotFsPath
-          snapshotAuPath = snapshotHsPath <> ".golden"
+    go ann datum =
+      let v = currentSnapshotVersion
+          outputFilePath = goldenDataFilePath </> filePathOutput proxy ann v
+          goldenFilePath = goldenDataFilePath </> filePathGolden proxy ann v
 
           -- IO actions
-          runnerIO :: FS.HasFS IO HandleIO
-          runnerIO = ioHasFS goldenDataMountPoint
-          removeIfExists :: FsPath -> IO ()
+          removeIfExists :: FilePath -> IO ()
           removeIfExists fp =
-            FS.doesFileExist runnerIO fp >>= (`when` (FS.removeFile runnerIO fp))
+              Dir.doesFileExist fp >>= (`when` (Dir.removeFile fp))
           outputAction :: IO ()
           outputAction = do
             -- Ensure that if the output file already exists, we remove it and
             -- re-write out the serialized data. This ensures that there are no
             -- false-positives, false-negatives, or irrelevant I/O exceptions.
-            removeIfExists snapshotFsPath
-            BSL.writeFile snapshotHsPath . toLazyByteString $ encode datum
+            removeIfExists outputFilePath
+            BSL.writeFile outputFilePath . toLazyByteString $ encode datum
 
-      in  Au.goldenVsFile name snapshotAuPath snapshotHsPath outputAction
+      in  Au.goldenVsFile (nameGolden proxy ann v) goldenFilePath outputFilePath outputAction
 
 -- | Check that are no missing or unexpected files in the output directory
 prop_noUnexpectedOrMissingGoldenFiles :: Property
 prop_noUnexpectedOrMissingGoldenFiles = once $ ioProperty $ do
-    let expectedFiles = Set.fromList $ concat $ forallSnapshotTypes filePathsGolden
-
+    let expectedFiles = Set.fromList $ concat $ forallSnapshotTypes $ \p -> concat [
+            filePathsGolden p v
+          | v <- supportedVersions p
+          ]
 
     let hfs = ioHasFS goldenDataMountPoint
     actualDirectoryEntries <- FS.listDirectory hfs (FS.mkFsPath [])
@@ -153,6 +143,7 @@ forallSnapshotTypes f = [
     , f (Proxy @FencePointerIndexType)
     , f (Proxy @DiskCachePolicy)
     , f (Proxy @MergeSchedule)
+    , f (Proxy @MergeBatchSize)
       -- SnapLevels
     , f (Proxy @(SnapLevels SnapshotRun))
     , f (Proxy @(SnapLevel SnapshotRun))
@@ -231,6 +222,9 @@ class EnumGolden a where
   singGolden :: a
   singGolden = snd $ head enumGoldenAnnotated
 
+  supportedVersions :: Proxy a -> [SnapshotVersion]
+  supportedVersions _ = allCompatibleSnapshotVersions
+
 type Annotation = String
 
 enumGoldenAnnotated' :: EnumGolden a => Proxy a -> [(Annotation, a)]
@@ -240,21 +234,28 @@ enumGoldenAnnotated' _ = enumGoldenAnnotated
   Enumeration class: names and file paths
 -------------------------------------------------------------------------------}
 
-nameGolden :: Typeable a => Proxy a -> Annotation -> String
-nameGolden p ann = map spaceToUnderscore (show $ typeRep p) ++ "." ++ ann
+nameGolden :: Typeable a => Proxy a -> Annotation -> SnapshotVersion -> String
+nameGolden p ann v = show v ++ "." ++ map spaceToUnderscore (show $ typeRep p) ++ "." ++ ann
 
 spaceToUnderscore :: Char -> Char
 spaceToUnderscore ' ' = '_'
 spaceToUnderscore c   = c
 
-filePathsGolden :: (EnumGolden a, Typeable a) => Proxy a -> [String]
-filePathsGolden p = [
-      filePathGolden p annotation
+filePathsGolden ::
+     (EnumGolden a, Typeable a)
+  => Proxy a
+  -> SnapshotVersion
+  -> [String]
+filePathsGolden p v = [
+      filePathGolden p annotation v
     | (annotation, _) <- enumGoldenAnnotated' p
     ]
 
-filePathGolden :: Typeable a => Proxy a -> String -> String
-filePathGolden p ann = nameGolden p ann ++ ".snapshot.golden"
+filePathOutput :: Typeable a => Proxy a -> String -> SnapshotVersion -> String
+filePathOutput p ann v = nameGolden p ann v ++ ".snapshot"
+
+filePathGolden :: Typeable a => Proxy a -> String -> SnapshotVersion -> String
+filePathGolden p ann v = nameGolden p ann v ++ ".snapshot.golden"
 
 {-------------------------------------------------------------------------------
   Enumeration class: instances
@@ -276,7 +277,8 @@ instance EnumGolden SnapshotLabel where
         SnapshotLabel{} -> ()
 
 instance EnumGolden TableConfig where
-  singGolden = TableConfig singGolden singGolden singGolden singGolden singGolden singGolden singGolden
+  singGolden = TableConfig singGolden singGolden singGolden singGolden
+                           singGolden singGolden singGolden singGolden
     where
       _coveredAllCases = \case
         TableConfig{} -> ()
@@ -328,6 +330,10 @@ instance EnumGolden MergeSchedule where
       _coveredAllCases = \case
         OneShot{} -> ()
         Incremental{} -> ()
+
+instance EnumGolden MergeBatchSize where
+  enumGolden = map MergeBatchSize [ 1, 1000 ]
+  supportedVersions _ = [V1]
 
 instance EnumGolden (SnapLevels SnapshotRun) where
   singGolden = SnapLevels singGolden

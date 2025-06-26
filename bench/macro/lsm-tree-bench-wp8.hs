@@ -183,13 +183,23 @@ mkTableConfigSetup GlobalOpts{diskCachePolicy} SetupOpts{bloomFilterAlloc} conf 
     , LSM.confBloomFilterAlloc = bloomFilterAlloc
     }
 
-mkTableConfigRun :: GlobalOpts -> LSM.TableConfig -> LSM.TableConfig
-mkTableConfigRun GlobalOpts{diskCachePolicy} conf = conf {
-      LSM.confDiskCachePolicy = diskCachePolicy
+mkTableConfigRun :: GlobalOpts -> RunOpts -> LSM.TableConfig -> LSM.TableConfig
+mkTableConfigRun GlobalOpts{diskCachePolicy} RunOpts {pipelined} conf =
+    conf {
+      LSM.confDiskCachePolicy = diskCachePolicy,
+      LSM.confMergeBatchSize  = if pipelined
+                                  then LSM.MergeBatchSize 1
+                                  else LSM.confMergeBatchSize conf
     }
 
-mkOverrideDiskCachePolicy :: GlobalOpts -> LSM.OverrideDiskCachePolicy
-mkOverrideDiskCachePolicy GlobalOpts{diskCachePolicy} = LSM.OverrideDiskCachePolicy diskCachePolicy
+mkTableConfigOverride :: GlobalOpts -> RunOpts -> LSM.TableConfigOverride
+mkTableConfigOverride GlobalOpts{diskCachePolicy} RunOpts {pipelined} =
+    LSM.noTableConfigOverride {
+      LSM.overrideDiskCachePolicy = Just diskCachePolicy,
+      LSM.overrideMergeBatchSize  = if pipelined
+                                      then Just (LSM.MergeBatchSize 1)
+                                      else Nothing
+    }
 
 mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
 mkTracer gopts
@@ -585,8 +595,10 @@ doRun gopts opts = do
         -- reference version starts with empty (as it's not practical or
         -- necessary for testing to load the whole snapshot).
         tbl <- if check opts
-                then LSM.newTableWith @IO @K @V @B (mkTableConfigRun gopts benchTableConfig) session
-                else LSM.openTableFromSnapshotWith @IO @K @V @B (mkOverrideDiskCachePolicy gopts) session name label
+                then let conf = mkTableConfigRun gopts opts benchTableConfig
+                      in LSM.newTableWith @IO @K @V @B conf session
+                else let conf = mkTableConfigOverride gopts opts
+                      in LSM.openTableFromSnapshotWith @IO @K @V @B conf session name label
 
         -- In checking mode, compare each output against a pure reference.
         checkvar <- newIORef $ pureReference
