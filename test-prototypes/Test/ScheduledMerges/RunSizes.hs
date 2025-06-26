@@ -1,6 +1,7 @@
 module Test.ScheduledMerges.RunSizes (tests) where
 
-import           ScheduledMerges
+import qualified ScheduledMerges as Proto
+import           ScheduledMerges hiding (MergePolicyForLevel)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -54,14 +55,14 @@ prop_runSizeFitsInLevel (MergePolicyForLevel mpl) (Config conf) (LevelNo ln) (Ru
   Generators and shrinkers
 -------------------------------------------------------------------------------}
 
-newtype MergePolicyForLevel = MergePolicyForLevel MergePolicy
+newtype MergePolicyForLevel = MergePolicyForLevel Proto.MergePolicyForLevel
   deriving stock (Show, Eq)
 
 instance Arbitrary MergePolicyForLevel where
-  arbitrary = MergePolicyForLevel <$> elements [MergePolicyTiering, MergePolicyLevelling]
+  arbitrary = MergePolicyForLevel <$> elements [Proto.LevelTiering, Proto.LevelLevelling]
   shrink (MergePolicyForLevel x) = MergePolicyForLevel <$> case x of
-      MergePolicyTiering   -> []
-      MergePolicyLevelling -> [MergePolicyTiering]
+      Proto.LevelTiering   -> []
+      Proto.LevelLevelling -> [Proto.LevelTiering]
 
 newtype Config = Config LSMConfig
   deriving stock (Show, Eq)
@@ -105,10 +106,10 @@ levelNumberInvariant
   | ln < 0 = False
   | ln == 0 = True
   | otherwise = case mpl of
-      MergePolicyTiering ->
+       Proto.LevelTiering ->
         toInteger configMaxWriteBufferSize * (toInteger configSizeRatio ^ toInteger (pred ln))
           <= toInteger (maxBound :: Int)
-      MergePolicyLevelling ->
+       Proto.LevelLevelling ->
         toInteger configMaxWriteBufferSize * (toInteger configSizeRatio ^ toInteger ln)
           <= toInteger (maxBound :: Int)
 

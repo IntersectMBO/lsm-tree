@@ -1150,6 +1150,7 @@ library prototypes
     , bytestring
     , containers
     , contra-tracer
+    , primitive
     , QuickCheck
     , transformers
 
@@ -1171,6 +1172,8 @@ test-suite prototypes-test
     , containers
     , contra-tracer
     , lsm-tree:prototypes
+    , mtl
+    , primitive
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-lockstep

@@ -5,12 +5,14 @@
 
 module Test.ScheduledMergesQLS (tests) where
 
+import           Control.Monad.Reader (ReaderT (..))
 import           Control.Monad.ST
-import           Control.Tracer (Tracer, nullTracer)
+import           Control.Tracer (Contravariant (contramap), Tracer, debugTracer)
 import           Data.Constraint (Dict (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
+import           Data.Primitive.PrimVar
 import           Data.Proxy
 import           Data.Semigroup (First (..))
 import           Prelude hiding (lookup)
@@ -33,7 +35,12 @@ tests = testGroup "Test.ScheduledMergesQLS" [
 -- TODO: add tagging, e.g. how often ASupplyUnion makes progress or completes a
 -- union merge.
 prop_LSM :: Actions (Lockstep Model) -> Property
-prop_LSM = Lockstep.runActions (Proxy :: Proxy Model)
+prop_LSM =
+    Lockstep.runActionsBracket
+      (Proxy :: Proxy Model)
+      (newPrimVar (TableId 0))
+      (\_ -> pure ())
+      runReaderT
 
 -------------------------------------------------------------------------------
 -- QLS infrastructure
@@ -166,10 +173,10 @@ instance StateModel (Lockstep Model) where
   arbitraryAction = Lockstep.arbitraryAction
   shrinkAction    = Lockstep.shrinkAction
 
-instance RunModel (Lockstep Model) IO where
+instance RunModel (Lockstep Model) (ReaderT (PrimVar RealWorld TableId) IO) where
   perform       = \_state -> runActionIO
   postcondition = Lockstep.postcondition
-  monitoring    = Lockstep.monitoring (Proxy :: Proxy IO)
+  monitoring    = Lockstep.monitoring (Proxy :: Proxy (ReaderT (PrimVar RealWorld TableId) IO))
 
 instance InLockstep Model where
   data ModelValue Model a where
@@ -343,7 +350,7 @@ instance InLockstep Model where
 
 deriving newtype instance Arbitrary UnionCredits
 
-instance RunLockstep Model IO where
+instance RunLockstep Model (ReaderT (PrimVar RealWorld TableId) IO) where
   observeReal _ action result =
     case (action, result) of
       (ANew{},         _) -> ORef
@@ -377,29 +384,40 @@ deriving stock instance Eq (ModelValue Model a)
 
 runActionIO :: Action (Lockstep Model) a
             -> LookUp IO
-            -> IO a
-runActionIO action lookUp =
-  stToIO $
+            -> ReaderT (PrimVar RealWorld TableId) IO a
+runActionIO action lookUp = ReaderT $ \tidVar -> do
   case action of
-    ANew conf           -> newWith conf
-    AInsert var evk v b -> insert tr (lookUpVar var) k v b >> pure k
+    ANew conf           -> do
+      tid <- incrTidVar tidVar
+      stToIO $ newWith tr tid conf
+    AInsert var evk v b -> stToIO $ insert tr (lookUpVar var) k v b >> pure k
       where k = either lookUpVar id evk
-    ADelete var evk     -> delete tr (lookUpVar var) k >> pure ()
+    ADelete var evk     -> stToIO$ delete tr (lookUpVar var) k >> pure ()
       where k = either lookUpVar id evk
-    AMupsert var evk v  -> mupsert tr (lookUpVar var) k v >> pure k
+    AMupsert var evk v  -> stToIO $ mupsert tr (lookUpVar var) k v >> pure k
       where k = either lookUpVar id evk
-    ALookup var evk     -> lookup (lookUpVar var) k
+    ALookup var evk     -> stToIO $ lookup tr (lookUpVar var) k
       where k = either lookUpVar id evk
-    ADuplicate var      -> duplicate (lookUpVar var)
-    AUnions vars        -> unions (map lookUpVar vars)
-    ASupplyUnion var c  -> supplyUnionCredits (lookUpVar var) (getNonNegative c) >> pure ()
-    ADump      var      -> logicalValue (lookUpVar var)
+    ADuplicate var      -> do
+      tid <- incrTidVar tidVar
+      stToIO $ duplicate tr tid (lookUpVar var)
+    AUnions vars        -> do
+      tid <- incrTidVar tidVar
+      stToIO $ unions tr tid (map lookUpVar vars)
+    ASupplyUnion var c  -> stToIO $ supplyUnionCredits (lookUpVar var) (getNonNegative c) >> pure ()
+    ADump      var      -> stToIO $ logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a
     lookUpVar = realLookupVar (Proxy :: Proxy IO) lookUp
 
     tr :: Tracer (ST RealWorld) Event
-    tr = nullTracer
+    tr = show `contramap` debugTracer
+
+    incrTidVar :: PrimVar RealWorld TableId -> IO TableId
+    incrTidVar tidVar = do
+        tid@(TableId x) <- readPrimVar tidVar
+        writePrimVar tidVar (TableId (x + 1))
+        pure tid
 
 runModel :: Action (Lockstep Model) a
          -> ModelVarContext Model
