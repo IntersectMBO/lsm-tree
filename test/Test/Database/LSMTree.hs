@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
@@ -134,11 +135,16 @@ prop_openSession_restoreSession =
 -- | A tracer that records session open, session new, and session restore
 -- messages in a mutable variable.
 mkSessionOpenModeTracer :: IORef [String] -> Tracer IO LSMTreeTrace
-mkSessionOpenModeTracer var = Tracer $ emit $ \case
-    TraceOpenSession{} -> modifyIORef var ("Open" :)
-    TraceNewSession{} -> modifyIORef var ("New" :)
-    TraceRestoreSession{} -> modifyIORef var ("Restore" :)
-    _ -> pure ()
+mkSessionOpenModeTracer var =
+  Tracer $
+#if MIN_VERSION_contra_tracer(0,2,0)
+    emit $
+#endif
+      \case
+        TraceOpenSession{} -> modifyIORef var ("Open" :)
+        TraceNewSession{} -> modifyIORef var ("New" :)
+        TraceRestoreSession{} -> modifyIORef var ("Restore" :)
+        _ -> pure ()
 
 {-------------------------------------------------------------------------------
   Session: happy path
