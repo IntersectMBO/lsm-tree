@@ -484,6 +484,16 @@ source-repository this
   location: https://github.com/IntersectMBO/lsm-tree
   tag:      lsm-tree-0.1.0.0
 
+flag iog-contra-tracer
+  description:
+    IOG's contra-tracer (https://chap.intersectmbo.org/package/contra-tracer-0.1.0.2/)
+    is slightly different than the one on Hackage. This flag is
+    expected to be switched automatically by Cabal if this library is
+    used in some project which uses the IOG fork of contra-tracer.
+
+  manual:      False
+  default:     False
+
 common warnings
   ghc-options:
     -Wall -Wcompat -Wincomplete-uni-patterns
@@ -582,7 +592,6 @@ library
     , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
     , cborg                   ^>=0.2.10.0
     , containers              ^>=0.6      || ^>=0.7
-    , contra-tracer           ^>=0.2
     , crc32c                  ^>=0.2.1
     , deepseq                 ^>=1.4      || ^>=1.5
     , filepath
@@ -599,6 +608,12 @@ library
     , utf8-string             ^>=1.0
     , vector                  ^>=0.13
     , vector-algorithms       ^>=0.9
+
+  if flag(iog-contra-tracer)
+    build-depends: contra-tracer ^>=0.1
+
+  else
+    build-depends: contra-tracer ^>=0.2
 
   if impl(ghc >=9.4)
     other-modules: Database.LSMTree.Internal.StrictArray

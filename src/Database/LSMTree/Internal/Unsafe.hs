@@ -202,11 +202,16 @@ data TableTrace =
   | TraceSupplyUnionCredits UnionCredits
   deriving stock Show
 
+#if MIN_VERSION_contra_tracer(0,2,0)
 contramapTraceMerge :: Monad m => Tracer m TableTrace -> Tracer m (AtLevel MergeTrace)
 #ifdef DEBUG_TRACES
 contramapTraceMerge t = TraceMerge `contramap` t
 #else
 contramapTraceMerge t = traceMaybe (const Nothing) t
+#endif
+#else
+contramapTraceMerge :: Applicative m => Tracer m TableTrace -> Tracer m (AtLevel MergeTrace)
+contramapTraceMerge _t = nullTracer
 #endif
 
 data CursorTrace =

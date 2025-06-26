@@ -194,6 +194,7 @@ mkOverrideDiskCachePolicy GlobalOpts{diskCachePolicy} = LSM.OverrideDiskCachePol
 mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
 mkTracer gopts
   | trace gopts =
+#if MIN_VERSION_contra_tracer(0,2,0)
       -- Don't trace update/lookup messages, because they are too noisy
       squelchUnless
         (\case
@@ -201,6 +202,13 @@ mkTracer gopts
           LSM.TraceTable _ LSM.TraceLookups{} -> False
           _                                   -> True )
         (show `contramap` stdoutTracer)
+#else
+      Tracer $
+        \case
+          LSM.TraceTable _ LSM.TraceUpdates{} -> pure ()
+          LSM.TraceTable _ LSM.TraceLookups{} -> pure ()
+          e                                   -> traceWith (show `contramap` stdoutTracer) e
+#endif
   | otherwise   = nullTracer
 
 -------------------------------------------------------------------------------
