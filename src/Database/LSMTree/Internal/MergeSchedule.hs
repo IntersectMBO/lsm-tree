@@ -968,6 +968,8 @@ supplyCredits conf deposit levels =
       -- supplyCreditsIncomingRun could easily return the supplied credits
       -- before & after, which may be useful for tracing.
 
+-- | See 'maxPhysicalDebt' in 'newLevelMerge' in the 'ScheduledMerges'
+-- prototype.
 maxMergeDebt :: TableConfig -> MergePolicyForLevel -> LevelNo -> MergeDebt
 maxMergeDebt TableConfig {
                confWriteBufferAlloc = AllocNumEntries (NumEntries -> bufferSize),
@@ -977,16 +979,13 @@ maxMergeDebt TableConfig {
     case mergePolicy of
       LevelLevelling ->
         MergeDebt . MergeCredits $
-          sizeRatio * maxRunSizeTiering sizeRatio bufferSize (pred ln)
+          sizeRatio * maxRunSizeTiering sizeRatio bufferSize ln
                     + maxRunSizeLevelling sizeRatio bufferSize ln
 
       LevelTiering   ->
         MergeDebt . MergeCredits $
-          maxRuns * maxRunSizeTiering sizeRatio bufferSize (pred ln)
-        where
-          -- We can hold back underfull runs, so sometimes the are n+1 runs,
-          -- rather than the typical n at a tiering level (n = LSM size ratio).
-          maxRuns = sizeRatio + 1
+          sizeRatio * maxRunSizeTiering sizeRatio bufferSize ln
+                    + maxRunSizeTiering sizeRatio bufferSize (pred ln)
 
 -- | The nominal debt equals the minimum of credits we will supply before we
 -- expect the merge to complete. This is the same as the number of updates
