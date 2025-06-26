@@ -1,10 +1,14 @@
+{-# LANGUAGE CPP #-}
+
 module Test.ScheduledMerges (tests) where
 
 import           Control.Exception
 import           Control.Monad (replicateM_, when)
 import           Control.Monad.ST
 import           Control.Tracer (Tracer (Tracer))
+#if MIN_VERSION_contra_tracer(0,2,0)
 import qualified Control.Tracer as Tracer
+#endif
 import           Data.Foldable (find, traverse_)
 import           Data.Maybe (fromJust)
 import           Data.STRef
@@ -526,7 +530,11 @@ genShrinkTrace !n x
 runWithTracer :: (Tracer (ST RealWorld) Event -> IO a) -> IO a
 runWithTracer action = do
     events <- stToIO $ newSTRef []
-    let tracer = Tracer $ Tracer.emit $ \e -> modifySTRef events (e :)
+    let tracer = Tracer $
+#if MIN_VERSION_contra_tracer(0,2,0)
+                   Tracer.emit $
+#endif
+                     \e -> modifySTRef events (e :)
     action tracer `catch` \e -> do
       if isDiscard e  -- don't intercept these
         then throwIO e
