@@ -8,7 +8,7 @@ inputs:
     required: true
     description: "Version of cabal"
   hackage-index-state:
-    required: false
+    required: true
     description: "Timestamp for Hackage index"
 runs:
   using: composite
@@ -25,10 +25,13 @@ runs:
       id: cache-cabal
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: generate-readme-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}
+        key: generate-readme-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}-input-state-${{ inputs.hackage-index-state }}
 
     - name: 🛠️ Generate README.md
-      run: ./scripts/generate-readme.hs
+      run: |
+        cabal run \
+          ${{ inputs.hackage-index-state && format('--index-state={0}', inputs.hackage-index-state) }} \
+          ./scripts/generate-readme.hs
       shell: sh
 
     - name: 💾 Save Cabal dependencies
