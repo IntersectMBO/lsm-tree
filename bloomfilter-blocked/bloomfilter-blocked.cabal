@@ -11,7 +11,7 @@ license-files:
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:         TODO: MAINTAINER EMAIL
+maintainer:         duncan@well-typed.com, joris@well-typed.com
 copyright:
   (c) 2023 Input Output Global, Inc. (IOG)
   (c) 2023-2025 INTERSECT
@@ -21,14 +21,15 @@ build-type:         Simple
 tested-with:
   GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
 
-extra-doc-files:    CHANGELOG.md
+extra-doc-files:
+  CHANGELOG.md
+  README.md
+
 extra-source-files:
   xxhash/include/HsXXHash.h
   xxhash/xxHash-0.8.2/xxhash.h
 
-license-files:
-  LICENSE-bloomfilter
-  xxhash/xxHash-0.8.2/LICENSE-xxHash
+license-files:      xxhash/xxHash-0.8.2/LICENSE-xxHash
 
 source-repository head
   type:     git
@@ -67,11 +68,11 @@ library
   import:          language, warnings
   hs-source-dirs:  src
   build-depends:
-    , base                        >=4.16 && <5
+    , base                        >=4.16  && <4.22
     , bloomfilter-blocked:xxhash
-    , bytestring                  >=0.9
-    , deepseq
-    , primitive
+    , bytestring                  ^>=0.11 || ^>=0.12
+    , deepseq                     ^>=1.4  || ^>=1.5
+    , primitive                   ^>=0.9
 
   exposed-modules:
     Data.BloomFilter
@@ -103,7 +104,7 @@ test-suite tests
     , tasty-quickcheck
 
 benchmark bench
-  import:         language
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench
   main-is:        bloomfilter-bench.hs
@@ -129,7 +130,7 @@ executable fpr-calc
   ghc-options:    -threaded
 
 executable spell
-  import:         language
+  import:         language, warnings
   scope:          private
   hs-source-dirs: examples
   main-is:        spell.hs
@@ -139,7 +140,7 @@ executable spell
 
 -- this exists due to windows
 library xxhash
-  import:          language
+  import:          language, warnings
   visibility:      private
   include-dirs:    xxhash/xxHash-0.8.2/ xxhash/include/
   includes:
@@ -161,7 +162,7 @@ library xxhash
     , primitive   ^>=0.9
 
 test-suite xxhash-tests
-  import:         language
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: xxhash/tests
   main-is:        xxhash-tests.hs
