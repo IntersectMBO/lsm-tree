@@ -19,6 +19,7 @@ import           Control.DeepSeq (NFData (..), deepseq)
 import           Data.Kind (Type)
 import           Data.Semigroup (Sum)
 import           Data.Typeable
+import           Data.Void (Void)
 import           Data.Word (Word64)
 import qualified Database.LSMTree.Internal.BlobRef as Unsafe
 import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
@@ -224,5 +225,7 @@ instance ResolveValue (ResolveAsFirst v) where
   resolve = const
   resolveSerialised :: Proxy (ResolveAsFirst v) -> RawBytes -> RawBytes -> RawBytes
   resolveSerialised _p = const
+
+deriving via ResolveViaSemigroup Void instance ResolveValue Void
 
 deriving via (ResolveViaSemigroup (Sum v)) instance (Num v, SerialiseValue v) => ResolveValue (Sum v)

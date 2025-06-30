@@ -510,11 +510,13 @@ instance SerialiseValue P.ByteArray where
   Void
 -------------------------------------------------------------------------------}
 
-{- |
-This instance is intended for tables without blobs.
+-- | The implementation of 'deserialiseKey' throws an exception.
+instance SerialiseKey Void where
+  serialiseKey = absurd
+  deserialiseKey = error "deserialiseKey: cannot deserialise into Void"
 
-The implementation of @'deserialiseValue'@ throws an excepValuen.
--}
+
+-- | The implementation of 'deserialiseValue' throws an exception.
 instance SerialiseValue Void where
   serialiseValue = absurd
   deserialiseValue = error "deserialiseValue: cannot deserialise into Void"
