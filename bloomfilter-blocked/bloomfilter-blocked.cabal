@@ -1,0 +1,175 @@
+cabal-version:      3.4
+name:               bloomfilter-blocked
+version:            0.1.0.0
+synopsis:           Classic and block-style bloom filters
+description:        Classic and block-style bloom filters.
+license:            Apache-2.0
+license-files:
+  LICENSE
+  NOTICE
+
+author:
+  Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
+
+maintainer:         TODO: MAINTAINER EMAIL
+copyright:
+  (c) 2023 Input Output Global, Inc. (IOG)
+  (c) 2023-2025 INTERSECT
+
+category:           Data
+build-type:         Simple
+tested-with:
+  GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
+
+extra-doc-files:    CHANGELOG.md
+extra-source-files:
+  xxhash/include/HsXXHash.h
+  xxhash/xxHash-0.8.2/xxhash.h
+
+license-files:
+  LICENSE-bloomfilter
+  xxhash/xxHash-0.8.2/LICENSE-xxHash
+
+source-repository head
+  type:     git
+  location: https://github.com/IntersectMBO/lsm-tree
+  subdir:   bloomfilter-blocked
+
+source-repository this
+  type:     git
+  location: https://github.com/IntersectMBO/lsm-tree
+  subdir:   bloomfilter-blocked
+  tag:      bloomfilter-blocked-0.1.0.0
+
+common warnings
+  ghc-options:
+    -Wall -Wcompat -Wincomplete-uni-patterns
+    -Wincomplete-record-updates -Wpartial-fields -Widentities
+    -Wredundant-constraints -Wmissing-export-lists
+    -Wno-unticked-promoted-constructors -Wunused-packages
+
+  ghc-options: -Werror=missing-deriving-strategies
+
+common language
+  default-language:   GHC2021
+  default-extensions:
+    DeriveAnyClass
+    DerivingStrategies
+    DerivingVia
+    ExplicitNamespaces
+    GADTs
+    LambdaCase
+    RecordWildCards
+    RoleAnnotations
+    ViewPatterns
+
+library
+  import:          language, warnings
+  hs-source-dirs:  src
+  build-depends:
+    , base                        >=4.16 && <5
+    , bloomfilter-blocked:xxhash
+    , bytestring                  >=0.9
+    , deepseq
+    , primitive
+
+  exposed-modules:
+    Data.BloomFilter
+    Data.BloomFilter.Blocked
+    Data.BloomFilter.Classic
+    Data.BloomFilter.Hash
+
+  other-modules:
+    Data.BloomFilter.Blocked.BitArray
+    Data.BloomFilter.Blocked.Calc
+    Data.BloomFilter.Blocked.Internal
+    Data.BloomFilter.Classic.BitArray
+    Data.BloomFilter.Classic.Calc
+    Data.BloomFilter.Classic.Internal
+
+  ghc-options:     -O2
+
+test-suite tests
+  import:         language, warnings
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is:        bloomfilter-tests.hs
+  build-depends:
+    , base                  <5
+    , bloomfilter-blocked
+    , bytestring
+    , quickcheck-instances
+    , tasty
+    , tasty-quickcheck
+
+benchmark bench
+  import:         language
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench
+  main-is:        bloomfilter-bench.hs
+  build-depends:
+    , base
+    , bloomfilter-blocked
+    , criterion
+    , random
+
+executable fpr-calc
+  import:         language, warnings
+  scope:          private
+  hs-source-dirs: tests
+  main-is:        fpr-calc.hs
+  build-depends:
+    , base
+    , bloomfilter-blocked
+    , containers
+    , parallel
+    , random
+    , regression-simple
+
+  ghc-options:    -threaded
+
+executable spell
+  import:         language
+  scope:          private
+  hs-source-dirs: examples
+  main-is:        spell.hs
+  build-depends:
+    , base
+    , bloomfilter-blocked
+
+-- this exists due to windows
+library xxhash
+  import:          language
+  visibility:      private
+  include-dirs:    xxhash/xxHash-0.8.2/ xxhash/include/
+  includes:
+    HsXXHash.h
+    xxhash.h
+
+  exposed-modules: XXH3
+
+  if (arch(x86_64) && !os(osx))
+    -- Cabal doesn't pass cc-options to "ordinary" Haskell source compilation
+    -- https://github.com/haskell/cabal/issues/9801
+    ghc-options: -optc=-mavx2 -optc=-O3
+
+  other-modules:   FFI
+  hs-source-dirs:  xxhash/src
+  build-depends:
+    , base        <5
+    , bytestring
+    , primitive   ^>=0.9
+
+test-suite xxhash-tests
+  import:         language
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: xxhash/tests
+  main-is:        xxhash-tests.hs
+  build-depends:
+    , base                        <5
+    , bloomfilter-blocked:xxhash
+    , bytestring
+    , primitive
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck

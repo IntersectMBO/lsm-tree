@@ -1,7 +1,7 @@
-cabal-version:      3.4
-name:               lsm-tree
-version:            0.1.0.0
-synopsis:           Log-structured merge-trees
+cabal-version:   3.4
+name:            lsm-tree
+version:         0.1.0.0
+synopsis:        Log-structured merge-trees
 description:
   This package contains an efficient implementation of on-disk key–value storage, implemented as a log-structured merge-tree or LSM-tree.
   An LSM-tree is a data structure for key–value mappings, similar to "Data.Map", but optimized for large tables with a high insertion volume.
@@ -477,7 +477,7 @@ description:
       \"Constructing and analyzing the LSM compaction design space.\"
       [doi:10.14778/3476249.3476274](https://doi.org/10.14778/3476249.3476274)
 
-license:            Apache-2.0
+license:         Apache-2.0
 license-files:
   LICENSE
   NOTICE
@@ -485,24 +485,15 @@ license-files:
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:         TODO: MAINTAINER EMAIL
+maintainer:      TODO: MAINTAINER EMAIL
 copyright:
   (c) 2023 Input Output Global, Inc. (IOG)
   (c) 2023-2025 INTERSECT
 
-category:           Database
-build-type:         Simple
-tested-with:
-  GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
-
-extra-doc-files:    CHANGELOG.md
-extra-source-files:
-  xxhash/include/HsXXHash.h
-  xxhash/xxHash-0.8.2/xxhash.h
-
-license-files:
-  bloomfilter-blocked/LICENSE-bloomfilter
-  xxhash/xxHash-0.8.2/LICENSE-xxHash
+category:        Database
+build-type:      Simple
+tested-with:     GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
+extra-doc-files: CHANGELOG.md
 
 source-repository head
   type:     git
@@ -607,147 +598,34 @@ library
     Database.LSMTree.Simple
 
   build-depends:
-    , base                          >=4.16      && <4.22
-    , bitvec                        ^>=1.1
-    , blockio                       ^>=0.1
-    , bytestring                    ^>=0.11.4.0 || ^>=0.12.1.0
-    , cborg                         ^>=0.2.10.0
-    , containers                    ^>=0.6      || ^>=0.7
-    , contra-tracer                 ^>=0.2
-    , crc32c                        ^>=0.2.1
-    , deepseq                       ^>=1.4      || ^>=1.5
+    , base                    >=4.16      && <4.22
+    , bitvec                  ^>=1.1
+    , blockio                 ^>=0.1
+    , bloomfilter-blocked
+    , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
+    , cborg                   ^>=0.2.10.0
+    , containers              ^>=0.6      || ^>=0.7
+    , contra-tracer           ^>=0.2
+    , crc32c                  ^>=0.2.1
+    , deepseq                 ^>=1.4      || ^>=1.5
     , filepath
-    , fs-api                        ^>=0.4
-    , io-classes                    ^>=1.6      || ^>=1.7      || ^>=1.8.0.1
+    , fs-api                  ^>=0.4
+    , io-classes              ^>=1.6      || ^>=1.7      || ^>=1.8.0.1
     , io-classes:strict-mvar
-    , lsm-tree:bloomfilter-blocked
     , lsm-tree:control
     , lsm-tree:kmerge
-    , primitive                     ^>=0.9
-    , random                        ^>=1.0      || ^>=1.1      || ^>=1.2     || ^>=1.3
-    , serialise                     ^>=0.2
-    , text                          ^>=2.1.1
-    , utf8-string                   ^>=1.0
-    , vector                        ^>=0.13
-    , vector-algorithms             ^>=0.9
+    , primitive               ^>=0.9
+    , random                  ^>=1.0      || ^>=1.1      || ^>=1.2     || ^>=1.3
+    , serialise               ^>=0.2
+    , text                    ^>=2.1.1
+    , utf8-string             ^>=1.0
+    , vector                  ^>=0.13
+    , vector-algorithms       ^>=0.9
 
   if impl(ghc >=9.4)
     other-modules: Database.LSMTree.Internal.StrictArray
     build-depends: data-elevator ^>=0.1.0.2 || ^>=0.2
     cpp-options:   -DHAVE_STRICT_ARRAY
-
--- this exists due windows
-library xxhash
-  import:          language
-  visibility:      private
-  include-dirs:    xxhash/xxHash-0.8.2/ xxhash/include/
-  includes:
-    HsXXHash.h
-    xxhash.h
-
-  exposed-modules: XXH3
-
-  if (arch(x86_64) && !os(osx))
-    -- Cabal doesn't pass cc-options to "ordinary" Haskell source compilation
-    -- https://github.com/haskell/cabal/issues/9801
-    ghc-options: -optc=-mavx2 -optc=-O3
-
-  other-modules:   FFI
-  hs-source-dirs:  xxhash/src
-  build-depends:
-    , base        <5
-    , bytestring
-    , primitive   ^>=0.9
-
-test-suite xxhash-tests
-  import:         language
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: xxhash/tests
-  main-is:        xxhash-tests.hs
-  build-depends:
-    , base              <5
-    , bytestring
-    , lsm-tree:xxhash
-    , primitive
-    , tasty
-    , tasty-hunit
-    , tasty-quickcheck
-
--- this fork doesn't work on 32bit systems
-library bloomfilter-blocked
-  import:          language, warnings
-  visibility:      private
-  hs-source-dirs:  bloomfilter-blocked/src
-  build-depends:
-    , base             >=4.16 && <5
-    , bytestring       >=0.9
-    , deepseq
-    , lsm-tree:xxhash
-    , primitive
-
-  exposed-modules:
-    Data.BloomFilter
-    Data.BloomFilter.Blocked
-    Data.BloomFilter.Classic
-    Data.BloomFilter.Hash
-
-  other-modules:
-    Data.BloomFilter.Blocked.BitArray
-    Data.BloomFilter.Blocked.Calc
-    Data.BloomFilter.Blocked.Internal
-    Data.BloomFilter.Classic.BitArray
-    Data.BloomFilter.Classic.Calc
-    Data.BloomFilter.Classic.Internal
-
-  ghc-options:     -O2
-
-test-suite bloomfilter-blocked-tests
-  import:         language, warnings
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: bloomfilter-blocked/tests
-  main-is:        bloomfilter-tests.hs
-  build-depends:
-    , base                          <5
-    , bytestring
-    , lsm-tree:bloomfilter-blocked
-    , quickcheck-instances
-    , tasty
-    , tasty-quickcheck
-
-benchmark bloomfilter-blocked-bench
-  import:         language
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: bloomfilter-blocked/bench
-  main-is:        bloomfilter-bench.hs
-  build-depends:
-    , base
-    , criterion
-    , lsm-tree:bloomfilter-blocked
-    , random
-
-executable bloomfilter-blocked-fpr-calc
-  import:         language, warnings
-  scope:          private
-  hs-source-dirs: bloomfilter-blocked/tests
-  main-is:        fpr-calc.hs
-  build-depends:
-    , base
-    , containers
-    , lsm-tree:bloomfilter-blocked
-    , parallel
-    , random
-    , regression-simple
-
-  ghc-options:    -threaded
-
-executable bloomfilter-blocked-spell
-  import:         language
-  scope:          private
-  hs-source-dirs: bloomfilter-blocked/examples
-  main-is:        spell.hs
-  build-depends:
-    , base
-    , lsm-tree:bloomfilter-blocked
 
 library extras
   import:          language, warnings
@@ -860,10 +738,11 @@ test-suite lsm-tree-test
   build-depends:
     , ansi-terminal
     , barbies
-    , base                          <5
+    , base                    <5
     , bitvec
     , blockio
     , blockio:sim
+    , bloomfilter-blocked
     , bytestring
     , cborg
     , constraints
@@ -881,7 +760,6 @@ test-suite lsm-tree-test
     , io-classes:strict-stm
     , io-sim
     , lsm-tree
-    , lsm-tree:bloomfilter-blocked
     , lsm-tree:control
     , lsm-tree:extras
     , lsm-tree:prototypes
@@ -929,8 +807,9 @@ benchmark lsm-tree-micro-bench
     Bench.Database.LSMTree.Internal.WriteBuffer
 
   build-depends:
-    , base                          <5
+    , base                 <5
     , blockio
+    , bloomfilter-blocked
     , bytestring
     , containers
     , contra-tracer
@@ -939,7 +818,6 @@ benchmark lsm-tree-micro-bench
     , directory
     , fs-api
     , lsm-tree
-    , lsm-tree:bloomfilter-blocked
     , lsm-tree:control
     , lsm-tree:extras
     , QuickCheck
@@ -955,9 +833,9 @@ benchmark lsm-tree-bench-bloomfilter
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-bloomfilter.hs
   build-depends:
-    , base                          <5
+    , base                 <5
+    , bloomfilter-blocked
     , lsm-tree
-    , lsm-tree:bloomfilter-blocked
     , lsm-tree:extras
     , random
     , time
@@ -972,13 +850,13 @@ benchmark lsm-tree-bench-lookups
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-lookups.hs
   build-depends:
-    , base                          <5
+    , base                 <5
     , blockio
+    , bloomfilter-blocked
     , deepseq
     , fs-api
     , io-classes
     , lsm-tree
-    , lsm-tree:bloomfilter-blocked
     , lsm-tree:control
     , lsm-tree:extras
     , primitive
