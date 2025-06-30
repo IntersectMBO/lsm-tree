@@ -89,6 +89,79 @@ import           Data.BloomFilter.Hash
 
 import           Prelude hiding (elem, notElem, read)
 
+-- $overview
+--
+-- Each of the functions for creating Bloom filters accepts a 'BloomSize'. The
+-- size determines the number of bits that should be used for the filter. Note
+-- that a filter is fixed in size; it cannot be resized after creation.
+--
+-- The size can be specified by asking for a target false positive rate (FPR)
+-- or a number of bits per element, and the number of elements in the filter.
+-- For example:
+--
+-- * @'sizeForFPR' 1e-3 10_000@ for a Bloom filter sized for 10,000 elements
+--   with a false positive rate of 1 in 1000
+--
+-- * @'sizeForBits' 10 10_000@ for a Bloom filter sized for 10,000 elements
+--   with 10 bits per element
+--
+-- Depending on the application it may be more important to target a fixed
+-- amount of memory to use, or target a specific FPR.
+--
+-- As a very rough guide for filter sizes, here are a range of FPRs and bits
+-- per element:
+--
+-- * FPR of 1e-1 requires approximately 4.8 bits per element
+-- * FPR of 1e-2 requires approximately 9.6 bits per element
+-- * FPR of 1e-3 requires approximately 14.4 bits per element
+-- * FPR of 1e-4 requires approximately 19.2 bits per element
+-- * FPR of 1e-5 requires approximately 24.0 bits per element
+
+
+-- $example
+--
+-- This example reads a dictionary file containing one word per line,
+-- constructs a Bloom filter with a 1% false positive rate, and
+-- spellchecks its standard input.  Like the Unix @spell@ command, it
+-- prints each word that it does not recognize.
+--
+-- @
+-- import Data.Maybe (mapMaybe)
+-- import qualified Data.BloomFilter as B
+--
+-- main = do
+--   filt \<- B.fromList (B.policyForFPR 0.01) . words \<$> readFile "\/usr\/share\/dict\/words"
+--   let check word | B.elem word filt  = Nothing
+--                  | otherwise         = Just word
+--   interact (unlines . mapMaybe check . lines)
+-- @
+
+
+-- $differences
+--
+-- This package is an entirely rewritten fork of
+-- [bloomfilter](https://hackage.haskell.org/package/bloomfilter) package.
+--
+-- The main differences are
+--
+-- * This packages support bloomfilters of arbitrary sizes
+--   (not limited to powers of two). Also sizes over 2^32 are supported.
+--
+-- * The 'Bloom' and 'MBloom' types are parametrised over a 'Hashable' type
+--   class, instead of having a @a -> ['Hash']@ typed field.
+--   This separation allows clean de\/serialization of Bloom filters in this
+--   package, as the hashing scheme is static.
+--
+-- * [@XXH3@ hash](https://xxhash.com/) is used instead of Jenkins'
+--   @lookup3@.
+--
+-- * Support for both classic and \"blocked\" Bloom filters. Blocked-structured
+--   Bloom filters arrange all the bits for each insert or lookup into a single
+--   cache line, which greatly reduces the number of slow uncached memory reads.
+--   The trade-off for this performance optimisation is a slightly worse
+--   trade-off between bits per element and the FPR. In practice for typical
+--   FPRs of 1-e3 -- 1e-4, this requires a couple extra bits per element.
+
 -- | Create an immutable Bloom filter, using the given setup function
 -- which executes in the 'ST' monad.
 --
@@ -205,75 +278,3 @@ deserialise bloomsalt bloomsize fill = do
     mbloom <- stToPrim $ new bloomsalt bloomsize
     Internal.deserialise mbloom fill
     stToPrim $ unsafeFreeze mbloom
-
--- $overview
---
--- Each of the functions for creating Bloom filters accepts a 'BloomSize'. The
--- size determines the number of bits that should be used for the filter. Note
--- that a filter is fixed in size; it cannot be resized after creation.
---
--- The size can be specified by asking for a target false positive rate (FPR)
--- or a number of bits per element, and the number of elements in the filter.
--- For example:
---
--- * @'sizeForFPR' 1e-3 10_000@ for a Bloom filter sized for 10,000 elements
---   with a false positive rate of 1 in 1000
---
--- * @'sizeForBits' 10 10_000@ for a Bloom filter sized for 10,000 elements
---   with 10 bits per element
---
--- Depending on the application it may be more important to target a fixed
--- amount of memory to use, or target a specific FPR.
---
--- As a very rough guide for filter sizes, here are a range of FPRs and bits
--- per element:
---
--- * FPR of 1e-1 requires approximately 4.8 bits per element
--- * FPR of 1e-2 requires approximately 9.6 bits per element
--- * FPR of 1e-3 requires approximately 14.4 bits per element
--- * FPR of 1e-4 requires approximately 19.2 bits per element
--- * FPR of 1e-5 requires approximately 24.0 bits per element
---
-
--- $example
---
--- This example reads a dictionary file containing one word per line,
--- constructs a Bloom filter with a 1% false positive rate, and
--- spellchecks its standard input.  Like the Unix @spell@ command, it
--- prints each word that it does not recognize.
---
--- @
--- import Data.Maybe (mapMaybe)
--- import qualified Data.BloomFilter as B
---
--- main = do
---   filt \<- B.fromList (B.policyForFPR 0.01) . words \<$> readFile "\/usr\/share\/dict\/words"
---   let check word | B.elem word filt  = Nothing
---                  | otherwise         = Just word
---   interact (unlines . mapMaybe check . lines)
--- @
-
--- $differences
---
--- This package is an entirely rewritten fork of
--- [bloomfilter](https://hackage.haskell.org/package/bloomfilter) package.
---
--- The main differences are
---
--- * This packages support bloomfilters of arbitrary sizes
---   (not limited to powers of two). Also sizes over 2^32 are supported.
---
--- * The 'Bloom' and 'MBloom' types are parametrised over a 'Hashable' type
---   class, instead of having a @a -> ['Hash']@ typed field.
---   This separation allows clean de\/serialization of Bloom filters in this
---   package, as the hashing scheme is static.
---
--- * [@XXH3@ hash](https://xxhash.com/) is used instead of Jenkins'
---   @lookup3@.
---
--- * Support for both classic and \"blocked\" Bloom filters. Blocked-structured
---   Bloom filters arrange all the bits for each insert or lookup into a single
---   cache line, which greatly reduces the number of slow uncached memory reads.
---   The trade-off for this performance optimisation is a slightly worse
---   trade-off between bits per element and the FPR. In practice for typical
---   FPRs of 1-e3 -- 1e-4, this requires a couple extra bits per element.
