@@ -41,6 +41,7 @@ module Database.LSMTree (
   getBlob,
   lookup,
   lookups,
+  getNumRuns,
   Entry (..),
   rangeLookup,
 
@@ -893,6 +894,10 @@ lookups (Table table :: Table m k v b) keys = do
     Entry.InsertWithBlob !v !b -> FoundWithBlob (Internal.deserialiseValue v) (BlobRef b)
     Entry.Upsert !v -> Found (Internal.deserialiseValue v)
     Entry.Delete -> NotFound
+
+{-# SPECIALISE getNumRuns :: Table IO k v b -> IO Int #-}
+getNumRuns :: forall m k v b. (IOLike m) => Table m k v b -> m Int
+getNumRuns (Table table) = Internal.getNumRuns table
 
 data Entry k v b
   = Entry !k !v

@@ -640,6 +640,8 @@ sequentialIteration h output !initialSize !batchSize !tbl !b !g =
     withTimedBatch h b $ \tref -> do
     let (!g', ls, is) = generateBatch initialSize batchSize g b
 
+    timeNumRuns tref $ LSM.getNumRuns tbl
+
     -- lookups
     results <- timeLatency tref $ LSM.lookups tbl ls
     output b (V.zip ls (fmap (fmap (const ())) results))
@@ -921,7 +923,7 @@ withLatencyHandle k
 hPutHeaderSequential :: LatencyHandle -> IO ()
 hPutHeaderSequential h
   | _mEASURE_BATCH_LATENCY = do
-    hPutStrLn h "# batch number \t lookup time (ns) \t update time (ns)"
+    hPutStrLn h "# batch number \t number of runs \t lookup time (ns) \t update time (ns)"
   | otherwise = pure ()
 
 {-# INLINE createGnuplotExampleFileSequential #-}
@@ -940,8 +942,8 @@ createGnuplotExampleFileSequential
         , "set terminal png size 1200,800"
         , "set output \"latency.png\""
         , ""
-        , "plot \"latency.dat\" using 1:2 title 'lookups' axis x1y1, \\"
-        , "     \"latency.dat\" using 1:3 title 'updates' axis x1y1"
+        , "plot \"latency.dat\" using 1:3 title 'lookups' axis x1y1, \\"
+        , "     \"latency.dat\" using 1:4 title 'updates' axis x1y1"
         ]
   | otherwise = pure ()
 
@@ -998,6 +1000,14 @@ timeLatency tref k
     modifyIORef tref (t :)
     pure x
   | otherwise = k
+
+{-# INLINE timeNumRuns #-}
+timeNumRuns :: TimeRef -> IO Int -> IO ()
+timeNumRuns tref k
+  | _mEASURE_BATCH_LATENCY = do
+    n <- k
+    modifyIORef tref (fromIntegral n :)
+  | otherwise = return ()
 
 -------------------------------------------------------------------------------
 -- main

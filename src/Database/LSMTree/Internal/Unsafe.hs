@@ -52,6 +52,7 @@ module Database.LSMTree.Internal.Unsafe (
   , new
   , close
   , lookups
+  , getNumRuns
   , rangeLookup
   , updates
   , retrieveBlobs
@@ -804,6 +805,15 @@ lookups resolve ks t = do
           (V.mapStrict (\(DeRef r) -> Run.runIndex    r) runs)
           (V.mapStrict (\(DeRef r) -> Run.runKOpsFile r) runs)
           ks
+
+{-# SPECIALISE getNumRuns :: Table IO h -> IO Int #-}
+getNumRuns ::
+     (MonadAsync m, MonadMask m, MonadMVar m)
+  => Table m h -> m Int
+getNumRuns t = do
+    withOpenTable t $ \tEnv ->
+      RW.withReadAccess (tableContent tEnv) $ \tc -> do
+        return (V.length (cachedRuns (tableCache tc)))
 
 {-# SPECIALISE rangeLookup ::
      ResolveSerialisedValue
