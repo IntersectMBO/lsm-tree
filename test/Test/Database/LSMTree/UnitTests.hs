@@ -3,6 +3,8 @@
 
 module Test.Database.LSMTree.UnitTests (tests) where
 
+import           Control.Exception (Exception, bracket, try)
+import           Control.Monad (void)
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -11,13 +13,10 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map as Map
 import qualified Data.Vector as V
 import           Data.Word
-import qualified System.FS.API as FS
-
 import           Database.LSMTree as R
-
-import           Control.Exception (Exception, bracket, try)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
+import qualified System.FS.API as FS
 import qualified Test.QuickCheck.Arbitrary as QC
 import qualified Test.QuickCheck.Gen as QC
 import           Test.Tasty (TestTree, testGroup)
@@ -222,24 +221,20 @@ unit_union_credit_0 =
 unit_union_blobref_invalidation :: Assertion
 unit_union_blobref_invalidation =
     withTempIOHasBlockIO "test" $ \hfs hbio ->
-    withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
-      t1 <- newTableWith @_ @Key1 @Value1 @Blob1 config sess
+    withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess ->
+    withTableWith config sess $ \t1 -> do
       for_ ([0..99] :: [Word64]) $ \i ->
         inserts t1 [(Key1 i, Value1 i, Just (Blob1 i))]
-      t2 <- t1 `union` t1
+      withUnion t1 t1 $ \t2 -> do
+        -- do lookups on the union table (the result contains blob refs)
+        res <- lookups t2 (Key1 <$> [0..99])
 
-      -- do lookups on the union table (the result contains blob refs)
-      res <- lookups t2 (Key1 <$> [0..99])
+        -- progress original table (supplying merge credits would be most direct),
+        -- so merges complete
+        inserts t1 (fmap (\i -> (Key1 i, Value1 i, Nothing)) [1000..2000])
 
-      -- progress original table (supplying merge credits would be most direct),
-      -- so merges complete
-      inserts t1 (fmap (\i -> (Key1 i, Value1 i, Nothing)) [1000..2000])
-      -- closeTable it, so it doesn't hold open extra references
-      closeTable t1
-
-      -- try to resolve the blob refs we obtained earlier
-      _blobs <- retrieveBlobs sess (V.mapMaybe R.getBlob res)
-      pure ()
+        -- try to resolve the blob refs we obtained earlier
+        void $ retrieveBlobs sess (V.mapMaybe R.getBlob res)
   where
     config = defaultTableConfig {
         confWriteBufferAlloc = AllocNumEntries 4
