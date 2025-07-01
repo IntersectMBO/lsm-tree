@@ -798,8 +798,9 @@ assumptions.
 
 The performance requirements are specified in terms of one primary benchmark and
 one secondary benchmark. The primary benchmark is used to demonstrate overall
-throughput and memory use, while the secondary benchmark is used to demonstrate
-that the upsert operation has the expected performance characteristics.
+throughput (items 3–5) and memory use (item 7), while the secondary benchmark is
+used to demonstrate that the upsert operation has the expected performance
+characteristics (item 6).
 
 The primary benchmark is designed to be reasonably close to the expected UTxO
 workload. Throughput is specified in terms of batches of operations that match
