@@ -43,6 +43,7 @@ import qualified Database.LSMTree.Internal.RunReader as RunReader
 import           Database.LSMTree.Internal.Serialise
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WB
+import           GHC.Stack (HasCallStack)
 import qualified KMerge.Heap as Heap
 import qualified System.FS.API as FS
 
@@ -148,12 +149,13 @@ data ReaderSource m h =
   | FromReaders     !ReadersMergeType ![ReaderSource m h]
 
 {-# SPECIALISE new ::
-     ResolveSerialisedValue
+     HasCallStack
+  => ResolveSerialisedValue
   -> OffsetKey
   -> [ReaderSource IO h]
   -> IO (Maybe (Readers IO h)) #-}
 new :: forall m h.
-     (MonadMask m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> OffsetKey
   -> [ReaderSource m h]

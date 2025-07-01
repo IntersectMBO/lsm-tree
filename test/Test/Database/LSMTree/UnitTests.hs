@@ -4,7 +4,7 @@
 module Test.Database.LSMTree.UnitTests (tests) where
 
 import           Control.Exception (Exception, bracket, try)
-import           Control.Monad (void)
+import           Control.Monad (forM_, void)
 import           Control.Tracer (nullTracer)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -219,7 +219,7 @@ unit_union_credit_0 =
 -- | Blob refs into a union don't get invalidated when updating the union's
 -- input tables.
 unit_union_blobref_invalidation :: Assertion
-unit_union_blobref_invalidation =
+unit_union_blobref_invalidation = forM_ @[] @IO @Int [1..100] $ \_ ->
     withTempIOHasBlockIO "test" $ \hfs hbio ->
     withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess ->
     withTableWith config sess $ \t1 -> do

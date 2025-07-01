@@ -44,6 +44,7 @@ import           Database.LSMTree.Internal.RunBuilder (RunBuilder, RunParams)
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import qualified Database.LSMTree.Internal.RunReader as Reader
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -151,7 +152,7 @@ instance IsMergeType TreeMergeType where
       MergeUnion -> True
 
 {-# SPECIALISE new ::
-     IsMergeType t
+     (HasCallStack, IsMergeType t)
   => HasFS IO h
   -> HasBlockIO IO h
   -> Bloom.Salt
@@ -164,7 +165,7 @@ instance IsMergeType TreeMergeType where
 -- | Returns 'Nothing' if no input 'Run' contains any entries.
 -- The list of runs should be sorted from new to old.
 new ::
-     (IsMergeType t, MonadMask m, MonadSTM m, MonadST m)
+     (HasCallStack, IsMergeType t, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> Bloom.Salt

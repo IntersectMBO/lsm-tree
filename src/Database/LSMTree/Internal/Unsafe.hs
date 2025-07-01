@@ -153,6 +153,7 @@ import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.API.Lazy as FS
@@ -1242,7 +1243,8 @@ rangeLookup resolve range t fromEntry = do
         else pure (V.concat (reverse (V.slice 0 n chunk : chunks)))
 
 {-# SPECIALISE updates ::
-     ResolveSerialisedValue
+     HasCallStack
+  => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table IO h
   -> IO () #-}
@@ -1250,7 +1252,7 @@ rangeLookup resolve range t fromEntry = do
 --
 -- Does not enforce that upsert and BLOBs should not occur in the same table.
 updates ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Table m h
@@ -1393,14 +1395,15 @@ data CursorEnv m h = CursorEnv {
   }
 
 {-# SPECIALISE withCursor ::
-     ResolveSerialisedValue
+     HasCallStack
+  => ResolveSerialisedValue
   -> OffsetKey
   -> Table IO h
   -> (Cursor IO h -> IO a)
   -> IO a #-}
 -- | See 'Database.LSMTree.withCursor'.
 withCursor ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> OffsetKey
   -> Table m h
@@ -1409,13 +1412,14 @@ withCursor ::
 withCursor resolve offsetKey t = bracket (newCursor resolve offsetKey t) closeCursor
 
 {-# SPECIALISE newCursor ::
-     ResolveSerialisedValue
+     HasCallStack
+  => ResolveSerialisedValue
   -> OffsetKey
   -> Table IO h
   -> IO (Cursor IO h) #-}
 -- | See 'Database.LSMTree.newCursor'.
 newCursor ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => ResolveSerialisedValue
   -> OffsetKey
   -> Table m h
@@ -1495,10 +1499,10 @@ lookupTreeToReaderSource = \case
       MR.MergeUnion -> Readers.MergeUnion
       MR.MergeLevel -> Readers.MergeLevel
 
-{-# SPECIALISE closeCursor :: Cursor IO h -> IO () #-}
+{-# SPECIALISE closeCursor :: HasCallStack => Cursor IO h -> IO () #-}
 -- | See 'Database.LSMTree.closeCursor'.
 closeCursor ::
-     (MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadSTM m, PrimMonad m)
   => Cursor m h
   -> m ()
 closeCursor Cursor {..} = do
