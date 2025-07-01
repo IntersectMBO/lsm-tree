@@ -49,6 +49,7 @@ import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
 import           Database.LSMTree.Internal.RawPage
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.Serialise
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import qualified System.FS.BlockIO.API as FS
@@ -93,11 +94,12 @@ data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
   deriving stock Show
 
 {-# SPECIALISE new ::
-     OffsetKey
+     HasCallStack
+  => OffsetKey
   -> Ref (Run.Run IO h)
   -> IO (RunReader IO h) #-}
 new :: forall m h.
-     (MonadMask m, MonadSTM m, PrimMonad m)
+     (HasCallStack, MonadMask m, MonadSTM m, PrimMonad m)
   => OffsetKey
   -> Ref (Run.Run m h)
   -> m  (RunReader m h)

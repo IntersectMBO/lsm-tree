@@ -272,6 +272,7 @@ import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
                      TableTrace, TableUnionNotCompatibleError (..),
                      UnionCredits (..), UnionDebt (..))
 import qualified Database.LSMTree.Internal.Unsafe as Internal
+import           GHC.Stack (HasCallStack)
 import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
@@ -1246,14 +1247,14 @@ prop> inserts table entries = traverse_ (uncurry $ insert table) entries
 -}
 {-# SPECIALISE
   inserts ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+    (HasCallStack, SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector (k, v, Maybe b) ->
     IO ()
   #-}
 inserts ::
   forall m k v b.
-  (IOLike m) =>
+  (IOLike m, HasCallStack) =>
   (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector (k, v, Maybe b) ->
@@ -1346,14 +1347,14 @@ prop> upserts table entries = traverse_ (uncurry $ upsert table) entries
 -}
 {-# SPECIALISE
   upserts ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+    (HasCallStack, SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector (k, v) ->
     IO ()
   #-}
 upserts ::
   forall m k v b.
-  (IOLike m) =>
+  (HasCallStack, IOLike m) =>
   (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector (k, v) ->
@@ -1431,14 +1432,14 @@ prop> deletes table keys = traverse_ (delete table) keys
 -}
 {-# SPECIALISE
   deletes ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+    (HasCallStack, SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector k ->
     IO ()
   #-}
 deletes ::
   forall m k v b.
-  (IOLike m) =>
+  (HasCallStack, IOLike m) =>
   (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector k ->
@@ -1520,14 +1521,14 @@ prop> updates table entries = traverse_ (uncurry $ update table) entries
 -}
 {-# SPECIALISE
   updates ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+    (HasCallStack, SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
     Table IO k v b ->
     Vector (k, Update v b) ->
     IO ()
   #-}
 updates ::
   forall m k v b.
-  (IOLike m) =>
+  (IOLike m, HasCallStack) =>
   (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
   Table m k v b ->
   Vector (k, Update v b) ->
@@ -2201,14 +2202,14 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   withCursor ::
-    (ResolveValue v) =>
+    (HasCallStack, ResolveValue v) =>
     Table IO k v b ->
     (Cursor IO k v b -> IO a) ->
     IO a
   #-}
 withCursor ::
   forall m k v b a.
-  (IOLike m) =>
+  (HasCallStack, IOLike m) =>
   (ResolveValue v) =>
   Table m k v b ->
   (Cursor m k v b -> m a) ->
@@ -2231,7 +2232,7 @@ Entry (Key 1) (Value "World")
 -}
 {-# SPECIALISE
   withCursorAtOffset ::
-    (SerialiseKey k, ResolveValue v) =>
+    (HasCallStack, SerialiseKey k, ResolveValue v) =>
     Table IO k v b ->
     k ->
     (Cursor IO k v b -> IO a) ->
@@ -2239,7 +2240,7 @@ Entry (Key 1) (Value "World")
   #-}
 withCursorAtOffset ::
   forall m k v b a.
-  (IOLike m) =>
+  (HasCallStack, IOLike m) =>
   (SerialiseKey k, ResolveValue v) =>
   Table m k v b ->
   k ->
@@ -2278,13 +2279,13 @@ Throws the following exceptions:
 -}
 {-# SPECIALISE
   newCursor ::
-    (ResolveValue v) =>
+    (HasCallStack, ResolveValue v) =>
     Table IO k v b ->
     IO (Cursor IO k v b)
   #-}
 newCursor ::
   forall m k v b.
-  (IOLike m) =>
+  (HasCallStack, IOLike m) =>
   (ResolveValue v) =>
   Table m k v b ->
   m (Cursor m k v b)
@@ -2306,14 +2307,14 @@ Entry (Key 1) (Value "World")
 -}
 {-# SPECIALISE
   newCursorAtOffset ::
-    (SerialiseKey k, ResolveValue v) =>
+    (HasCallStack, SerialiseKey k, ResolveValue v) =>
     Table IO k v b ->
     k ->
     IO (Cursor IO k v b)
   #-}
 newCursorAtOffset ::
   forall m k v b.
-  (IOLike m) =>
+  (HasCallStack, IOLike m) =>
   (SerialiseKey k, ResolveValue v) =>
   Table m k v b ->
   k ->
@@ -2334,12 +2335,13 @@ All other operations on a closed cursor will throw an exception.
 -}
 {-# SPECIALISE
   closeCursor ::
+    HasCallStack =>
     Cursor IO k v b ->
     IO ()
   #-}
 closeCursor ::
   forall m k v b.
-  (IOLike m) =>
+  (HasCallStack, IOLike m) =>
   Cursor m k v b ->
   m ()
 closeCursor (Cursor cursor) =

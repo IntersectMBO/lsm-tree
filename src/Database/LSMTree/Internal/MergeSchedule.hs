@@ -83,6 +83,7 @@ import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import           Database.LSMTree.Internal.WriteBufferBlobs (WriteBufferBlobs)
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS)
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -198,14 +199,15 @@ data LevelsCache m h = LevelsCache_ {
   }
 
 {-# SPECIALISE mkLevelsCache ::
-     ActionRegistry IO
+     HasCallStack
+  => ActionRegistry IO
   -> Levels IO h
   -> IO (LevelsCache IO h) #-}
 -- | Flatten the argument 'Level's into a single vector of runs, including all
 -- runs that are inputs to an ongoing merge. Use that to populate the
 -- 'LevelsCache'. The cache will take a reference for each of its runs.
 mkLevelsCache ::
-     forall m h. (PrimMonad m, MonadMVar m, MonadMask m)
+     forall m h. (HasCallStack, PrimMonad m, MonadMVar m, MonadMask m)
   => ActionRegistry m
   -> Levels m h
   -> m (LevelsCache m h)
@@ -239,7 +241,8 @@ mkLevelsCache reg lvls = do
           (incoming <>) . fold <$> V.forM rs k1
 
 {-# SPECIALISE rebuildCache ::
-     ActionRegistry IO
+     HasCallStack
+  => ActionRegistry IO
   -> LevelsCache IO h
   -> Levels IO h
   -> IO (LevelsCache IO h) #-}
@@ -264,7 +267,7 @@ mkLevelsCache reg lvls = do
 -- a solution to keep blob references valid until the next /update/ comes along.
 -- Lookups should no invalidate blob erferences.
 rebuildCache ::
-     (PrimMonad m, MonadMVar m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMVar m, MonadMask m)
   => ActionRegistry m
   -> LevelsCache m h -- ^ old cache
   -> Levels m h -- ^ new levels
@@ -274,11 +277,12 @@ rebuildCache reg oldCache newLevels = do
     mkLevelsCache reg newLevels
 
 {-# SPECIALISE duplicateLevelsCache ::
-     ActionRegistry IO
+     HasCallStack
+  => ActionRegistry IO
   -> LevelsCache IO h
   -> IO (LevelsCache IO h) #-}
 duplicateLevelsCache ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> LevelsCache m h
   -> m (LevelsCache m h)
@@ -288,11 +292,12 @@ duplicateLevelsCache reg cache = do
     pure cache { cachedRuns = rs' }
 
 {-# SPECIALISE releaseLevelsCache ::
-     ActionRegistry IO
+     HasCallStack
+  => ActionRegistry IO
   -> LevelsCache IO h
   -> IO () #-}
 releaseLevelsCache ::
-     (PrimMonad m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMask m)
   => ActionRegistry m
   -> LevelsCache m h
   -> m ()
@@ -440,7 +445,8 @@ releaseUnionCache reg (UnionCache mt) =
 -------------------------------------------------------------------------------}
 
 {-# SPECIALISE updatesWithInterleavedFlushes ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -478,7 +484,7 @@ releaseUnionCache reg (UnionCache mt) =
 -- whole run should then end up in a fresh write buffer.
 updatesWithInterleavedFlushes ::
      forall m h.
-     (MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadSTM m, MonadST m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
@@ -560,7 +566,8 @@ addWriteBufferEntries hfs f wbblobs maxn =
 
 
 {-# SPECIALISE flushWriteBuffer ::
-     Tracer IO (AtLevel MergeTrace)
+     HasCallStack
+  => Tracer IO (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
   -> HasFS IO h
@@ -576,7 +583,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
 -- The returned table content contains an updated set of levels, where the write
 -- buffer is inserted into level 1.
 flushWriteBuffer ::
-     (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
+     (HasCallStack, MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Tracer m (AtLevel MergeTrace)
   -> TableConfig
   -> ResolveSerialisedValue
