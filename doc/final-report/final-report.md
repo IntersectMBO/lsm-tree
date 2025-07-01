@@ -1074,12 +1074,12 @@ Indexes of the compact type.
 
 : This takes advantage of the keys being uniformly distributed. It reduces the
   size of the in-memory indexes, leaving more memory available for the Bloom
-  filters and write buffer.
+  filters and the write buffer.
 
 Write buffer size of 20,000 elements.
 
-: This is a reasonable size for a 100M entry table, and the memory budget of
-  the benchmark.
+: This is a reasonable size for a 100 M entry table and the memory budget of the
+  benchmark.
 
 ## Results of the primary benchmark
 
@@ -1125,9 +1125,9 @@ Lookup only (ops/sec).
 Primary benchmark (MiB).
 
 : This is the amount of memory used by the primary benchmark. Concretely, it is
-  the Linux kernel maximum resident set size (RSS) as reported by GNU `time`.
-  This value does not cover page cache memory used by the operating system on
-  behalf of the application. However, the primary benchmark makes only little
+  the maximum resident set size (RSS) queried from the Linux kernel using GNU
+  Time. This value does not cover page cache memory used by the operating system
+  on behalf of the application. However, the primary benchmark makes only little
   use of the page cache: it employs it only for streaming reads and writes of
   run files, not for actual caching.
 
