@@ -1,0 +1,100 @@
+GlobalOpts {rootDir = "_bench_wp8_greedy", initialSize = 100000000, diskCachePolicy = DiskCacheNone, trace = False}
+CmdRun (RunOpts {batchCount = 200000, batchSize = 256, check = False, seed = 1337, pipelined = False, lookuponly = False})
+....................................................................................................
+Running time:  1131.142 sec
+/proc/self/io after vs. before: ProcIODiff
+  ProcIO
+    { rchar = 38040498871
+    , wchar = 45704564196
+    , syscr = 9402455
+    , syscw = 10889655
+    , read_bytes = 217151512576
+    , write_bytes = 45751312384
+    , cancelled_write_bytes = 0
+    }
+RTSStats after vs. before: RTSStatsDiff
+  { gcs =
+      Triple { before = 252 , after = 85411 , difference = 85159 }
+  , major_gcs =
+      Triple { before = 6 , after = 176 , difference = 170 }
+  , allocated_bytes =
+      Triple
+        { before = 1994440696
+        , after = 483226756736
+        , difference = 481232316040
+        }
+  , max_live_bytes =
+      Triple
+        { before = 228264096 , after = 806579272 , difference = 578315176 }
+  , max_large_objects_bytes =
+      Triple
+        { before = 228125376 , after = 797931216 , difference = 569805840 }
+  , max_compact_bytes =
+      Triple { before = 0 , after = 0 , difference = 0 }
+  , max_slop_bytes =
+      Triple
+        { before = 5474144 , after = 17187768 , difference = 11713624 }
+  , max_mem_in_use_bytes =
+      Triple
+        { before = 246415360
+        , after = 1336934400
+        , difference = 1090519040
+        }
+  , cumulative_live_bytes =
+      Triple
+        { before = 557210312
+        , after = 66258859688
+        , difference = 65701649376
+        }
+  , copied_bytes =
+      Triple
+        { before = 1631168
+        , after = 62742281392
+        , difference = 62740650224
+        }
+  , par_copied_bytes =
+      Triple { before = 0 , after = 0 , difference = 0 }
+  , cumulative_par_balanced_copied_bytes =
+      Triple { before = 0 , after = 0 , difference = 0 }
+  , init_cpu_ns =
+      Triple { before = 550834 , after = 550834 , difference = 0 }
+  , init_elapsed_ns =
+      Triple { before = 440260 , after = 440260 , difference = 0 }
+  , mutator_cpu_ns =
+      Triple
+        { before = 6040419445
+        , after = 776751625878
+        , difference = 770711206433
+        }
+  , mutator_elapsed_ns =
+      Triple
+        { before = 10222409931
+        , after = 1050516254932
+        , difference = 1040293845001
+        }
+  , gc_cpu_ns =
+      Triple
+        { before = 12584921
+        , after = 90251369711
+        , difference = 90238784790
+        }
+  , gc_elapsed_ns =
+      Triple
+        { before = 12922819
+        , after = 90869605234
+        , difference = 90856682415
+        }
+  , cpu_ns =
+      Triple
+        { before = 6053004366
+        , after = 867002995589
+        , difference = 860949991223
+        }
+  , elapsed_ns =
+      Triple
+        { before = 10235332750
+        , after = 1141385860166
+        , difference = 1131150527416
+        }
+  }
+Operations per second: 45264.0 ops/sec
