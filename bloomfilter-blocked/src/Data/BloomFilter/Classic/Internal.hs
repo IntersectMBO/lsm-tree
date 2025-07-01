@@ -116,8 +116,8 @@ new BloomSize { sizeBits, sizeHashes } mbHashSalt = do
       mbBitArray
     }
 
--- | The maximum filter size is $2^48$ bits. Tell us if you need bigger bloom
--- filters.
+-- | The maximum filter size is @2^48@ bits (256 terabytes). Tell us if you need
+-- bigger bloom filters.
 --
 maxSizeBits :: Int
 maxSizeBits = 0x1_0000_0000_0000
@@ -316,10 +316,9 @@ word64ToWordShim# x# = x#
 -- Hashes
 --
 
--- | A pair of hashes used for a double hashing scheme.
---
--- See 'evalHashes'.
+-- | A small family of hashes, for probing bits in a classic bloom filter.
 data Hashes a = Hashes !Hash !Hash
+-- pair of hashes used for a double hashing scheme.
 type role Hashes nominal
 
 instance Prim (Hashes a) where
@@ -433,9 +432,8 @@ https://github.com/facebook/rocksdb/blob/096fb9b67d19a9a180e7c906b4a0cdb2b2d0c1f
 evalHashes :: Hashes a -> Int -> Hash
 evalHashes (Hashes h1 h2) i = h1 + (h2 `unsafeShiftR` i)
 
--- | Create 'Hashes' structure.
---
--- It's simply hashes the value twice using seed 0 and 1.
+-- | Create a 'Hashes' structure.
 hashesWithSalt :: Hashable a => Salt -> a -> Hashes a
+-- It simply hashes the value twice using seed 0 and 1.
 hashesWithSalt salt v = Hashes (hashSalt64 salt v) (hashSalt64 (salt + 1) v)
 {-# INLINE hashesWithSalt #-}

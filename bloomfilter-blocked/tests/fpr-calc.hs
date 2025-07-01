@@ -1,8 +1,7 @@
 {-# LANGUAGE ParallelListComp #-}
 module Main (main) where
 
-import qualified Data.BloomFilter as B (BitsPerEntry, BloomPolicy, BloomSize,
-                     FPR, Hashable, Salt)
+import qualified Data.BloomFilter as B (BitsPerEntry, FPR, Hashable, Salt)
 import qualified Data.BloomFilter.Blocked as B.Blocked
 import qualified Data.BloomFilter.Classic as B.Classic
 
@@ -99,7 +98,7 @@ main_generateData = do
     ys_classic_actual = ys_actual classicBloomImpl xs_classic
     ys_blocked_actual = ys_actual blockedBloomImpl xs_blocked
 
-    ys_calc :: BloomImpl b -> [(Double, StdGen)] -> [Double]
+    ys_calc :: BloomImpl b p s -> [(Double, StdGen)] -> [Double]
     ys_calc BloomImpl{..} xs =
       [ fpr
       | (bitsperkey, _) <- xs
@@ -107,7 +106,7 @@ main_generateData = do
             fpr    = policyFPR policy
       ]
 
-    ys_actual :: BloomImpl b -> [(Double, StdGen)] -> [Double]
+    ys_actual :: BloomImpl b p s -> [(Double, StdGen)] -> [Double]
     ys_actual impl@BloomImpl{..} xs =
       withStrategy (parList rseq) -- eval in parallel
       [ fpr
@@ -133,14 +132,14 @@ main_generateData = do
       ]
 -}
 
-actualFalsePositiveRate :: BloomImpl bloom
-                        -> B.BloomPolicy -> Int -> StdGen -> Double
+actualFalsePositiveRate :: BloomImpl bloom policy size
+                        -> policy -> Int -> StdGen -> Double
 actualFalsePositiveRate bloomimpl policy n g0 =
     fromIntegral (countFalsePositives bloomimpl policy n g0)
   / fromIntegral n
 
-countFalsePositives :: forall bloom. BloomImpl bloom
-                    -> B.BloomPolicy -> Int -> StdGen -> Int
+countFalsePositives :: forall bloom policy size. BloomImpl bloom policy size
+                    -> policy -> Int -> StdGen -> Int
 countFalsePositives BloomImpl{..} policy n g0 =
     let (!g01, !g02) = splitGen g0
 
@@ -173,18 +172,18 @@ countFalsePositives BloomImpl{..} policy n g0 =
         where
           (!x, !g') = uniform g
 
-data BloomImpl bloom = BloomImpl {
-       policyForBits :: B.BitsPerEntry -> B.BloomPolicy,
-       policyForFPR  :: B.FPR          -> B.BloomPolicy,
-       policyBits    :: B.BloomPolicy -> B.BitsPerEntry,
-       policyFPR     :: B.BloomPolicy -> B.FPR,
-       sizeForPolicy :: B.BloomPolicy -> Int -> B.BloomSize,
+data BloomImpl bloom policy size = BloomImpl {
+       policyForBits :: B.BitsPerEntry -> policy,
+       policyForFPR  :: B.FPR          -> policy,
+       policyBits    :: policy -> B.BitsPerEntry,
+       policyFPR     :: policy -> B.FPR,
+       sizeForPolicy :: policy -> Int -> size,
        unfold        :: forall a b. B.Hashable a
-                     => B.BloomSize -> B.Salt -> (b -> Maybe (a, b)) -> b -> bloom a,
+                     => size -> B.Salt -> (b -> Maybe (a, b)) -> b -> bloom a,
        elem          :: forall a. B.Hashable a => a -> bloom a -> Bool
      }
 
-classicBloomImpl :: BloomImpl B.Classic.Bloom
+classicBloomImpl :: BloomImpl B.Classic.Bloom B.Classic.BloomPolicy B.Classic.BloomSize
 classicBloomImpl =
     BloomImpl {
        policyForBits = B.Classic.policyForBits,
@@ -196,7 +195,7 @@ classicBloomImpl =
        elem          = B.Classic.elem
     }
 
-blockedBloomImpl :: BloomImpl B.Blocked.Bloom
+blockedBloomImpl :: BloomImpl B.Blocked.Bloom B.Blocked.BloomPolicy B.Blocked.BloomSize
 blockedBloomImpl =
     BloomImpl {
        policyForBits = B.Blocked.policyForBits,
