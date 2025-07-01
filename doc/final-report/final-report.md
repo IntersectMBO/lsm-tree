@@ -21,6 +21,31 @@ header-includes:
 link-citations: true
 citation-style: ieee-software
 references:
+
+- id: utxo-db
+  author:
+  - given: Duncan
+    family: Coutts
+  - given: Douglas
+    family: Wilson
+  issued: 2021
+  title: "Storing the Cardano ledger state on disk: analysis and design options"
+  type: report
+  URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db.pdf
+
+- id: utxo-db-api
+  author:
+  - given: Duncan
+    family: Coutts
+  - given: Joris
+    family: Dral
+  - given: Douglas
+    family: Wilson
+  issued: 2021
+  title: "Storing the Cardano ledger state on disk: API design concepts"
+  type: report
+  URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-api.pdf
+
 - id: utxo-db-lsm
   author:
   - given: Duncan
@@ -28,6 +53,7 @@ references:
   issued: 2023
   title: "Storing the Cardano ledger state on disk: requirements for high performance backend"
   type: report
+  URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-lsm.pdf
 
 - id: lsm-tree
   type: software
@@ -88,10 +114,10 @@ references:
 
 # Introduction
 
-As part of the project to reduce `cardano-node`’s memory use (colloquially known
+As part of the project to reduce `cardano-node`’s memory use[@utxo-db] (colloquially known
 as UTxO-HD), a high-performance disk backend has been developed as an
-arm’s-length project by Well-Typed LLP on behalf of Input Output Global, Inc.
-(IOG) and later Intersect MBO. The intent is for the backend to be integrated
+arm’s-length project by Well-Typed LLP on behalf of Intersect MBO and previously
+Input Output Global, Inc. (IOG). The intent is for the backend to be integrated
 into the consensus layer of `cardano-node`, specifically to be used for storing
 large parts of the Cardano ledger state. The backend is now feature-complete and
 should satisfy all functional requirements, and it has favourable results
@@ -107,7 +133,7 @@ but it should be useful for the broader Haskell community as well.
 
 Currently, a UTxO-HD `cardano-node` already exists, but it is an MVP that uses
 off-the-shelf database software (LMDB) to store parts of the ledger state on
-disk. Though the LMDB-based solution is suitable for the current state of the
+disk[@utxo-db-api]. Though the LMDB-based solution is suitable for the current state of the
 Cardano blockchain, it is not suitable to achieve Cardano’s long-term business
 requirements, such as high throughput with limited system resources. The goal of
 `lsm-tree` is to pave the way for achieving said business requirements,
