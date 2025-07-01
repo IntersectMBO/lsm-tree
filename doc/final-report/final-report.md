@@ -1251,41 +1251,41 @@ can be interleaved with the database operations then using more cores can
 improve performance even more. With the real UTxO workload, we are in this
 situation, of course, because there is transaction validation work to do.
 
-### The memory targets
+### Meeting the memory targets
 
-Performance requirement 7 states:
+Item 7 of the performance requirements states the following:
 
 > A benchmark should demonstrate that the memory use of a table with 10 M
 > entries is within 100 Mb, and a 100 M entry table is within 1 Gb. This should
 > be for key value sizes as in the primary benchmark (34 + 60 bytes).
 
-The table in the [Primary Benchmark Results] section reports the results for a
-table with 100 M entries. The last column is the maximum memory used during the
-run. As noted in the table description, the memory measurement is the peak RSS,
-as reported by the OS.
+The benchmark results shown at the beginning of the section *[Results of the
+primary benchmark]* are for a database table with 100 M entries. They contain
+the amount of memory for each run, which is the maximum RSS as reported by the
+operating system. We can see from the listed values that all the benchmark runs
+use less than 1 GiB (1024 MiB).
 
-We can see from the reported memory use that all the benchmark runs work in
-less than 1 GiB (1024 MiB).
+For the target of a 100 MiB maximum when using a 10 M entry table, we run the
+same benchmark with a slightly different configuration:
 
-For the target of the 10 M entry table operating within 100 Mb, we have to use
-a slightly different benchmark configuration.
+* Of course, we use a smaller table, one with an initial size of 10 M entries.
 
- * Obviously we must use a smaller table, with an initial size of 10 M entries.
- * We also scale down the size of the write buffer correspondingly, from 20k
-   entries to 2k entries.
- * We tell the GHC RTS to limit its heap size to 100 Mb, using: `+RTS -M100m`.
+* We scale down the size of the write buffer correspondingly, from 20 k entries
+  to 2 k entries.
 
-One minor "gotcha" to avoid, when reproducing this result, is that one has to
-run the benchmark executable directly, not via `cabal run`. This is because
-`/usr/bin/time` reports the largest RSS of any sub-process which may turn out
-to be from `cabal` itself, and not the benchmark process.
+* We tell the GHC RTS to limit its heap size to 100 MiB, using `+RTS -M100m`.
 
-With this, the RSS is reported as 85,220 Kb, 83.2 Mb, which is less than the
-target of 100 Mb.
+With this configuration, the maximum RSS is reported as 85,220 KiB (83.2 MiB),
+which is less than the target of 100 MiB.
 
-We also get excellent performance results for smaller tables like this, since
-there is less merging work to do. In this case we get around 150k ops/sec,
-compared to around 86k ops/sec for the 100 M entry table.
+When reproducing this result, one minor trap to avoid is to run the benchmark
+using `cabal run` instead of launching its executable directly. The problem with
+the former is that GNU Time reports the largest RSS of any subprocess, which may
+turn out to be the `cabal` process and not the benchmark process.
+
+By the way, we also get excellent speed with the 10 M entry table: 150 k
+ops/sec, much more than the circa 86 k ops/sec we get with the 100 M entry
+table. The reason is that for smaller tables there is less merging work to do.
 
 ### Reproducing the results
 
