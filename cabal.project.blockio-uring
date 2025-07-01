@@ -1,5 +1,0 @@
-if(os(linux))
-  source-repository-package
-    type: git
-    location: https://github.com/well-typed/blockio-uring
-    tag: c7b550063b5ce2c859db50b2ebf66d41a4f24844
