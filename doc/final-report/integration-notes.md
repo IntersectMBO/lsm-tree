@@ -1,9 +1,25 @@
-# Storing the Cardano ledger state on disk: integration notes for high-performance backend
+---
+title: "Storing the Cardano ledger state on disk:
+        integration notes for high-performance backend"
+author:
+  - Duncan Coutts
+  - Joris Dral
+  - Wolfgang Jeltsch
+date: May 2025
 
-Authors: Joris Dral, Wolfgang Jeltsch
-Date: May 2025
+toc: true
+numbersections: true
+classoption:
+ - 11pt
+ - a4paper
+geometry:
+ - margin=2.5cm
+header-includes:
+ - \usepackage{microtype}
+ - \usepackage{mathpazo}
+---
 
-## Sessions
+# Sessions
 
 Creating new empty tables or opening tables from snapshots requires a `Session`.
 The session can be created using `openSession`, which has to be done in the
@@ -15,7 +31,7 @@ Closing the session will automatically close all tables, but this is only
 intended to be a backup functionality: ideally the user closes all tables
 manually.
 
-## The compact index
+# The compact index
 
 The compact index is a memory-efficient data structure that maintains serialised
 keys. Rather than storing full keys, it only stores the first 64 bits of each
@@ -60,7 +76,7 @@ keys is as good as any other total ordering. However, the consensus layer will
 face the situation where a range lookup or a cursor read returns key–value pairs
 slightly out of order. Currently, we do not expect this to cause problems.
 
-## Snapshots
+# Snapshots
 
 Snapshots currently require support for hard links. This means that on Windows
 the library only works when using NTFS. Support for other file systems could be
@@ -84,7 +100,7 @@ a cheaper non-SSD drive. This feature was unfortunately not anticipated in the
 project specification and so is not currently included. As discussed above, it
 could be added with some additional work.
 
-## Value resolving
+# Value resolving
 
 When instantiating the `ResolveValue` class, it is usually advisable to
 implement `resolveValue` such that it works directly on the serialised values.
@@ -94,7 +110,7 @@ function is intended to work like `(+)`, then `resolveValue` could add the raw
 bytes of the serialised values and would likely achieve better performance this
 way.
 
-## `io-classes` incompatibility
+# `io-classes` incompatibility
 
 At the time of writing, various packages in the `cardano-node` stack depend on
 `io-classes-1.5` and the 1.5-versions of its daughter packages, like
