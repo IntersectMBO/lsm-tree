@@ -7,7 +7,7 @@ module Test.ScheduledMergesQLS (tests) where
 
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.Monad.ST
-import           Control.Tracer (Contravariant (contramap), Tracer, debugTracer)
+import           Control.Tracer (Tracer, nullTracer)
 import           Data.Constraint (Dict (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -411,7 +411,7 @@ runActionIO action lookUp = ReaderT $ \tidVar -> do
     lookUpVar = realLookupVar (Proxy :: Proxy IO) lookUp
 
     tr :: Tracer (ST RealWorld) Event
-    tr = show `contramap` debugTracer
+    tr = nullTracer
 
     incrTidVar :: PrimVar RealWorld TableId -> IO TableId
     incrTidVar tidVar = do
