@@ -153,6 +153,7 @@ data GlobalOpts = GlobalOpts
 
 data SetupOpts = SetupOpts {
     bloomFilterAlloc :: !LSM.BloomFilterAlloc
+  , writeBufferAlloc :: !LSM.WriteBufferAlloc
   }
   deriving stock Show
 
@@ -178,9 +179,15 @@ data Cmd
   deriving stock Show
 
 mkTableConfigSetup :: GlobalOpts -> SetupOpts -> LSM.TableConfig -> LSM.TableConfig
-mkTableConfigSetup GlobalOpts{diskCachePolicy} SetupOpts{bloomFilterAlloc} conf = conf {
-      LSM.confDiskCachePolicy = diskCachePolicy
+mkTableConfigSetup GlobalOpts{diskCachePolicy}
+                   SetupOpts {
+                     bloomFilterAlloc,
+                     writeBufferAlloc
+                   } conf =
+    conf {
+      LSM.confDiskCachePolicy  = diskCachePolicy
     , LSM.confBloomFilterAlloc = bloomFilterAlloc
+    , LSM.confWriteBufferAlloc = writeBufferAlloc
     }
 
 mkTableConfigRun :: GlobalOpts -> RunOpts -> LSM.TableConfig -> LSM.TableConfig
@@ -239,8 +246,24 @@ cmdP = O.subparser $ mconcat
     ]
 
 setupOptsP :: O.Parser SetupOpts
-setupOptsP = pure SetupOpts
-    <*> O.option O.auto (O.long "bloom-filter-alloc" <> O.value (LSM.confBloomFilterAlloc LSM.defaultTableConfig) <> O.showDefault <> O.help "Bloom filter allocation method [AllocFixed n | AllocRequestFPR d]")
+setupOptsP =
+  pure SetupOpts
+    <*> O.option
+          O.auto
+          (O.long "bloom-filter-alloc" <>
+           O.value (LSM.confBloomFilterAlloc LSM.defaultTableConfig) <>
+           O.showDefault <>
+           O.help "Bloom filter allocation method [AllocFixed n | AllocRequestFPR d]")
+
+    <*> LSM.AllocNumEntries `fmap` O.option
+          (O.auto)
+          (O.long "write-buffer-alloc" <>
+           O.value defaultAllocNumEntries <>
+           O.showDefault <>
+           O.help "Write buffer size")
+  where
+    LSM.AllocNumEntries defaultAllocNumEntries =
+      LSM.confWriteBufferAlloc LSM.defaultTableConfig
 
 runOptsP :: O.Parser RunOpts
 runOptsP = pure RunOpts
