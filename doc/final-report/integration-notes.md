@@ -140,3 +140,50 @@ It is known to us that the `ouroboros-consensus` stack has not been updated to
 https://github.com/IntersectMBO/ouroboros-network/pull/4951. We would advise to
 fix this Nix-related bug rather than downgrading `lsm-tree`’s dependency on
 `io-classes` to version 1.5.
+
+# Security of hash based data structures
+
+Data structures based on hashing have to be considered carefully when they may
+be used with untrusted data. If the attacker can control the keys in a hash
+table for example, they may be able to arrange for all their keys to have hash
+collisions which may cause unexpected performance problems. This is why the
+Haskell Cardano node implementation does not use hash tables, and uses
+ordering-based containers instead (such as `Data.Map`).
+
+The Bloom filters in an LSM tree are hash based data structures. For performance
+they do not use cryptographic hashes. So in principle it would be possibile for
+an attacker to arrange that all their keys hash to a common set of bits. This
+would be a potential problem for the UTxO and other stake related tables in
+Cardano, since it is the users that get to pick (with old modest grinding
+difficulty) their UTxO keys (TxIn) and stake keys (verification key hashes). It
+would be even more serious if an attacker can grind their set of malicious keys
+locally, in the knowledge that the same set of keys will hash the same way on
+all other Cardano nodes.
+
+This issue was not considered in the original project specification, but we
+have considered it and included a mitigation. The mitigation is that on the
+initial creation of a lsm-tree session, a random salt is conjured (from
+`/dev/random`) and stored persistenly as part of the session. This salt is then
+used as part of the Bloom filter hashing for all runs in all tables in the
+session.
+
+The result is that while it is in principle still possible to produce hash
+collisions in the Bloom filter, this now depends on knowing the salt. And now
+every node has a different salt. So a system wide attack becomes impossible;
+instead it is only plausible to target individual nodes. Discovering a node's
+salt would also be impractically difficult. In principle there is a timing
+side channel, in that collisions will cause more I/O and thus take longer.
+An attacker would need to get upstream of a victim node, supply a valid block
+and measure the timing of receiving the block downstream. There is however a
+large amount of noise.
+
+Overall, our judgement is that this mitigation is practically sufficient, but
+it merits a securit review from others who may make a different judgement. It
+is also worth noting that this issue may occur in other LSM-trees used in other
+Cardano and non-Cardano implementations. In particular, RocksDB does not appear
+to use a salt at all.
+
+Note that a per-run or per-table hash salt would incur non-trivial costs,
+because it would reduce the sharing available in bulk Bloom filter lookups
+(looking up N keys in M filters). The Bloom filter lookup is a performance
+sensitive part of the overall database implementation.
