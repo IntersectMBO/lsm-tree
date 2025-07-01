@@ -108,7 +108,7 @@ prop_openSession_newSession =
       $ \_session -> pure ()
     results <- readIORef resultsVar
     -- Check that we first called openSession, then newSession
-    pure $ results === ["New", "Open"]
+    pure $ results === ["Created", "New", "Open"]
   where
     testSalt = 6
 
@@ -127,7 +127,7 @@ prop_openSession_restoreSession =
       $ \_session2 -> pure ()
     results <- readIORef resultsVar
     -- Check that we first called openSession, then restoreSession
-    pure $ results === ["Restore", "Open"]
+    pure $ results === ["Created", "Restore", "Open"]
   where
     testSalt = 6
 
@@ -135,9 +135,10 @@ prop_openSession_restoreSession =
 -- messages in a mutable variable.
 mkSessionOpenModeTracer :: IORef [String] -> Tracer IO LSMTreeTrace
 mkSessionOpenModeTracer var = Tracer $ emit $ \case
-    TraceOpenSession{} -> modifyIORef var ("Open" :)
-    TraceNewSession{} -> modifyIORef var ("New" :)
-    TraceRestoreSession{} -> modifyIORef var ("Restore" :)
+    TraceSession _ TraceOpenSession{} -> modifyIORef var ("Open" :)
+    TraceSession _ TraceNewSession{} -> modifyIORef var ("New" :)
+    TraceSession _ TraceRestoreSession{} -> modifyIORef var ("Restore" :)
+    TraceSession _ TraceCreatedSession{} -> modifyIORef var ("Created" :)
     _ -> pure ()
 
 {-------------------------------------------------------------------------------
