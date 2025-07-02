@@ -1355,56 +1355,57 @@ assurance that the actual implementation is correct. This is important in
 general but especially so for the pipelined implementation, which is
 non-trivial.
 
-## The "Upsert" Benchmark
+## The upsert benchmarks
 
-Performance requirement 6 states:
+Item 6 of the performance requirements states the following:
 
 > A benchmark should demonstrate that the performance characteristics of the
 > monoidial update operation should be similar to that of the insert or delete
-> operations, and substantially better than the combination of a lookup
-> followed by an insert.
+> operations, and substantially better than the combination of a lookup followed
+> by an insert.
 
-The `lsm-tree` library and documentation now uses the term "upsert" for this
-monoidal update operation, to follow standard database terminology.
+As already mentioned in [the discussion on functional
+requirement 4](#requirement-4), the `lsm-tree` library and its documentation now
+use the term ‘upsert’ for this monoidal update operation, to follow standard
+database terminology.
 
-Based on the requirement above there are two (pairs of) benchmarks:
+In line with the above requirement, we have created the following benchmarks:
 
-1. A benchmark of the time to insert a (large) number of (batches of) key-value
-   pairs; and a benchmark of the time to upsert the same sequence of
-   key-value pairs.
+* A benchmark of the time to insert a large number of key–value pairs using the
+  insert operation and a benchmark of the time to insert the same key–value
+  pairs using the upsert operation
 
-2. A benchmark of the time to repeatedly upsert values for a set of keys (so
-   each key is updated several times); and a benchmark of the time to
-   repeatedly update the same keys by the combination of lookup and insert
-   (with accumulation). This uses lookups and inserts in batches. The set of
-   keys is looked up, and the existing values are combined with the new values.
-   The same set of key-value pairs are used 10 times, so that there are 10
-   updates per key (either lookup and insert, or upsert).
+* A benchmark of the time to repeatedly upsert values of certain keys and a
+  benchmark of the time to repeatedly update the values of these keys by looking
+  up their current values, modifying them and writing them back
 
-Each benchmark uses:
+The benchmarks use the following parameters:
 
- * 64bit keys and values
- * values are combined using addition;
- * 80,000 elements (generated using a PRNG),
- * batches of size 250;
- * no disk caching;
- * a write buffer of 1,000 elements.
+* 64 bit as the size of keys and values
+* 80,000 elements (generated using a PRNG)
+* Addition as the update operation
+* 250 operations per batch
+* No disk caching
+* 1,000 elements as the write buffer capacity
+* 10 updates per key in case of the second two benchmarks
 
-These benchmarks are implemented using `criterion`, which performs multiple
-runs and combines the results in a sound statistical manner. The reported
-variance was relatively low. The benchmarks were executed on the dev laptop
-machine, however the absolute times of these benchmarks is of little interest.
-The interesting point is the relative timings.
+The benchmarks are implemented using Criterion, which performs multiple
+benchmark runs and combines the results in a sound statistical manner. For our
+benchmarks, the variance of the results across the different runs, as reported
+by Criterion, is relatively low. We have executed the benchmarks on the dev
+laptop machine. However, the absolute running times of these benchmarks is of
+little interest; the interesting point is the relative timings.
 
-The result are as follows
+The result are as follows:
 
-1. Less than 0.4 % difference in timing between insert and upsert (932.8ms vs
-   929.4ms). This clearly qualifies as "similar".
+* The difference in running time between the insert and the corresponding upsert
+  benchmark is less than 0.4 % (932.8 ms vs. 929.4 ms), so that insert and
+  upsert performance clearly qualify as ‘similar’.
 
-2. The combination of lookup and insert takes 2.4 times as long as using upsert
-   (2.857s vs 1.188s). We can thus reasonably conclude that the performance of
-   upsert is "substantially better" than the combination of a lookup followed
-   by an insert.
+* Using the combination of lookup and insert takes 2.4 times as long as using
+  upsert (2.857 s vs. 1.188 s). We can thus reasonably conclude that the
+  performance of upsert is ‘substantially better’ than the performance of a
+  lookup followed by an insert.
 
 # References {-}
 
