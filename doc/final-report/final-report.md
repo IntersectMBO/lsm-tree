@@ -18,6 +18,7 @@ geometry:
 header-includes:
  - \usepackage{microtype}
  - \usepackage{mathpazo}
+ - \usepackage{changelog}
 
 link-citations: true
 citation-style: ieee-software
@@ -112,6 +113,10 @@ references:
   title: 'ouroboros-consensus InMemory module'
   URL: https://github.com/IntersectMBO/ouroboros-consensus/blob/9d41590555954c511d5f81682ccf7bc963659708/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/InMemory.hs
 ---
+
+\begin{changelog}[simple, sectioncmd=\section*]
+  \shortversion{author={Duncan Coutts, Joris Dral, Wolfgang Jeltsch}, v=0.1, date=July 2025, changes=Final draft}
+\end{changelog}
 
 # Introduction
 
