@@ -1,6 +1,7 @@
 ---
 title: "Storing the Cardano ledger state on disk:
-        final report for high-performance backend"
+        final report for a high-performance backend"
+subtitle: '[A technical report by Well-Typed LLP on behalf of Intersect MBO]{.smallcaps}'
 author:
   - Duncan Coutts
   - Joris Dral
