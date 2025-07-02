@@ -115,28 +115,39 @@ references:
 
 # Introduction
 
-As part of the project to reduce `cardano-node`’s memory use[@utxo-db] (colloquially known
-as UTxO-HD), a high-performance disk backend has been developed as an
-arm’s-length project by Well-Typed LLP on behalf of Intersect MBO and previously
-Input Output Global, Inc. (IOG). The intent is for the backend to be integrated
-into the consensus layer of `cardano-node`, specifically to be used for storing
-large parts of the Cardano ledger state. The backend is now feature-complete and
-should satisfy all functional requirements, and it has favourable results
-regarding the performance requirements.
+As part of the project to reduce `cardano-node`’s memory use[@utxo-db], by
+storing the bulk of the ledger state on disk (colloquially known as
+"UTxO-HD"[^1]), a high-performance disk backend has been developed as an
+arm’s-length project by Well-Typed LLP on behalf of Intersect MBO[^2]. The
+intent is for the backend to be integrated into the consensus layer of
+`cardano-node`, specifically to be used for storing the large parts of the
+Cardano ledger state.
+
+This backend is now complete. It satisfies all its functional requirements, and
+meets all its performance requirements, including stretch targets.
+
+[^1]: "UTxO-HD" is a classic project-manager's misnomer. It is not just about
+      the UTxO, but all of the ledger state, and it is not about hard drives.
+      Indeed the performance of hard drives is too low to support the feature.
+      A better project name would be "On-disk ledger state", but there's no way
+      to remove poorly chosen names from people's heads once they're firmly
+      engrained.
+
+[^2]: And previously on behalf of Input Output Global, Inc. (IOG).
 
 The backend is implemented as a Haskell library called `lsm-tree`[@lsm-tree], which
 provides efficient on-disk key–value storage using log-structured merge-trees,
 or LSM-trees for short. An LSM-tree is a data structure for key–value mappings
-that is optimized for large tables with a high insertion volume, such as the
+that is optimized for large tables with a high insertion rate, such as the
 UTxO set and other stake-related data. The library has a number of custom
 features that are primarily tailored towards use cases of the consensus layer,
-but it should be useful for the broader Haskell community as well.
+but the library should be useful for the broader Haskell community as well.
 
 Currently, a UTxO-HD `cardano-node` already exists, but it is an MVP that uses
-off-the-shelf database software (LMDB) to store parts of the ledger state on
+off-the-shelf database software (LMDB) to store a part of the ledger state on
 disk[@utxo-db-api]. Though the LMDB-based solution is suitable for the current state of the
 Cardano blockchain, it is not suitable to achieve Cardano’s long-term business
-requirements, such as high throughput with limited system resources. The goal of
+requirements[@utxo-db, Section 3], such as high throughput with limited system resources. The goal of
 `lsm-tree` is to pave the way for achieving said business requirements,
 providing the necessary foundation on which technologies like Ouroboros Leios
 can build.
