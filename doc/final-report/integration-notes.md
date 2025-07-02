@@ -187,3 +187,17 @@ Note that a per-run or per-table hash salt would incur non-trivial costs,
 because it would reduce the sharing available in bulk Bloom filter lookups
 (looking up N keys in M filters). The Bloom filter lookup is a performance
 sensitive part of the overall database implementation.
+
+In the Cardano context, a downside of a per-session (and thus per-node) Bloom
+filter salt is that it may interact poorly with sharing of pre-created
+databases. While it will work to copy a whole database session (since this
+includes the salt), it means the salt is then shared between the nodes. If SPOs
+share databases widely with each other (to avoid syning the entire chain), then
+the salt diversity is lost. This would be especially acute with Mithril which
+shares a single copy of the database. It may be necesary for proper Mithril
+support to add a re-salting operation, and to perform this re-salting operation
+after cloning a Mithril snapshot. Re-salting would involve re-creating the
+Bloom filter for each table run, which involves reading each run and inserting
+into a new Bloom filter, and writing out the new Bloom filter. This would of
+course be additional development work, but the infrastructure needed is
+present already.
