@@ -99,11 +99,11 @@ references:
     URL: https://github.com/IntersectMBO/ouroboros-consensus/commit/9d41590555954c511d5f81682ccf7bc963659708
   - id: ouroboros-consensus-LedgerTablesHandle
     type: software
-    title: "`ouroboros-consensus` `LedgerSeq` module"
+    title: "`ouroboros-consensus` `LedgerSeq` module"
     URL: https://github.com/IntersectMBO/ouroboros-consensus/blob/9d41590555954c511d5f81682ccf7bc963659708/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/LedgerSeq.hs#L72-L96
   - id: ouroboros-consensus-InMemory
     type: software
-    title: "`ouroboros-consensus` `InMemory` module"
+    title: "`ouroboros-consensus` `InMemory` module"
     URL: https://github.com/IntersectMBO/ouroboros-consensus/blob/9d41590555954c511d5f81682ccf7bc963659708/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/InMemory.hs
 ---
 
