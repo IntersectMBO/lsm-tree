@@ -53,14 +53,14 @@ import           Control.ActionRegistry (AbortActionRegistryError (..),
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
-import           Control.Monad (forM_, void, (<=<))
+import           Control.Monad (forM_, (<=<))
+import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
-                     MonadCatch (..), MonadThrow (..), SomeException, catches,
-                     displayException, fromException)
+                     MonadCatch (..), MonadMask, MonadThrow (..), SomeException,
+                     catches, displayException, fromException)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import qualified Control.Monad.ST.Lazy as ST
 import           Control.RefCount (RefException, checkForgottenRefs,
                      ignoreForgottenRefs)
 import           Control.Tracer (Tracer, nullTracer)
@@ -120,10 +120,6 @@ import           Test.Database.LSMTree.StateMachine.Op (HasBlobRef (getBlobRef),
                      Op (..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary, Gen, Property)
-import qualified Test.QuickCheck.Extras as QD
-import qualified Test.QuickCheck.Monadic as QC
-import           Test.QuickCheck.Monadic (PropertyM)
-import qualified Test.QuickCheck.StateModel as QD
 import           Test.QuickCheck.StateModel hiding (Var)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
@@ -365,53 +361,37 @@ propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) =
         )
       tagFinalState'
 
--- We can not use @bracket@ inside @PropertyM@, so @acquire_RealImpl_MockFS@ and
--- @release_RealImpl_MockFS@ are not run in a masked state and it is not
--- guaranteed that the latter runs if the former succeeded. Therefore, if
--- @runActions@ fails (with exceptions), then not having @bracket@ might lead to
--- more exceptions, which can obfuscate the original reason that the property
--- failed. Because of this, if @prop@ fails, it's probably best to also try
--- running the @IO@ version of this property with the failing seed, and compare
--- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
   -> CheckCleanup
   -> CheckFS
   -> CheckRefs
   -> QC.Fixed R.Salt
+  -> Actions (Lockstep (ModelState (IOSim RealWorld) R.Table))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) =
-    flip QC.monadic prop $ \x -> QC.ioProperty $ do
-        trac <- ST.stToIO $ runSimTraceST x
-        case traceResult False trac of
-          Left e  -> pure $ QC.counterexample (show e) False
-          Right p -> pure p
-  where
-    prop :: forall s. Typeable s => PropertyM (IOSim s) Property
-    prop = do
-        actions <- QC.pick QC.arbitrary
-        (fsVar, session, errsVar, logVar) <- QC.run (acquire_RealImpl_MockFS tr salt)
-        faultsVar <- QC.run $ newMutVar []
-        let
-          env :: RealEnv R.Table (IOSim s)
-          env = RealEnv {
-              envSession = session
-            , envHandlers = realErrorHandlers @(IOSim s)
-            , envErrors = errsVar
-            , envErrorsLog = logVar
-            , envInjectFaultResults = faultsVar
-            }
-        void $ QD.runPropertyReaderT
-                (QD.runActions @(Lockstep (ModelState (IOSim s) R.Table)) actions)
-                env
-        faults <- QC.run $ readMutVar faultsVar
-        p <- QC.run $ propCleanup cleanupFlag $
-          release_RealImpl_MockFS fsFlag (fsVar, session, errsVar, logVar)
-        p' <- QC.run $ propRefs refsFlag
-        pure
-          $ tagFinalState actions tagFinalState'
-          $ QC.tabulate "Fault results" (fmap show faults)
-          $ p QC..&&. p'
+    runActionsBracket
+      (Proxy @(ModelState (IOSim RealWorld) R.Table))
+      cleanupFlag
+      refsFlag
+      (acquire_RealImpl_MockFS tr salt)
+      (release_RealImpl_MockFS fsFlag)
+      (\r (_, session, errsVar, logVar) -> do
+            faultsVar <- newMutVar []
+            let
+              env :: RealEnv R.Table (IOSim RealWorld)
+              env = RealEnv {
+                  envSession = session
+                , envHandlers = realErrorHandlers @(IOSim RealWorld)
+                , envErrors = errsVar
+                , envErrorsLog = logVar
+                , envInjectFaultResults = faultsVar
+                }
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
+      tagFinalState'
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
@@ -2862,18 +2842,21 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
 -- count how often something happens over the course of running these actions,
 -- then we would want to only tag the final state, not intermediate steps.
 runActionsBracket ::
-     forall state st m e prop.  (
+     forall state st m n e prop.  (
        RunLockstep state m
      , e ~ Error (Lockstep state) m
      , forall a. IsPerformResult e a
      , QC.Testable prop
+     , MonadMask n
+     , MonadST n
+     , QLS.IOProperty n
      )
   => Proxy state
   -> CheckCleanup
   -> CheckRefs
-  -> IO st
-  -> (st -> IO prop)
-  -> (m QC.Property -> st -> IO QC.Property)
+  -> n st
+  -> (st -> n prop)
+  -> (m QC.Property -> st -> n QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
 runActionsBracket p cleanupFlag refsFlag init cleanup runner tagger actions =
