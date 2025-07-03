@@ -1,7 +1,7 @@
 ---
 title: "Storing the Cardano ledger state on disk:
         final report for a high-performance backend"
-subtitle: '[A technical report by Well-Typed LLP on behalf of Intersect MBO]{.smallcaps}'
+subtitle: "[A technical report by Well-Typed LLP on behalf of Intersect MBO]{.smallcaps}"
 author:
   - Duncan Coutts
   - Joris Dral
@@ -11,107 +11,98 @@ date: June 2025
 toc: true
 numbersections: true
 classoption:
- - 11pt
- - a4paper
+  - 11pt
+  - a4paper
 geometry:
- - margin=2.5cm
+  - margin=2.5cm
 header-includes:
- - \usepackage{microtype}
- - \usepackage{mathpazo}
- - \usepackage{changelog}
+  - \usepackage{microtype}
+  - \usepackage{mathpazo}
+  - \usepackage{changelog}
 
 link-citations: true
 citation-style: ieee-software
 references:
-
-- id: utxo-db
-  author:
-  - given: Duncan
-    family: Coutts
-  - given: Douglas
-    family: Wilson
-  issued: 2021
-  title: "Storing the Cardano ledger state on disk: analysis and design options"
-  type: report
-  URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db.pdf
-
-- id: utxo-db-api
-  author:
-  - given: Duncan
-    family: Coutts
-  - given: Joris
-    family: Dral
-  - given: Douglas
-    family: Wilson
-  issued: 2021
-  title: "Storing the Cardano ledger state on disk: API design concepts"
-  type: report
-  URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-api.pdf
-
-- id: utxo-db-lsm
-  author:
-  - given: Duncan
-    family: Coutts
-  issued: 2023
-  title: "Storing the Cardano ledger state on disk: requirements for high performance backend"
-  type: report
-  URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-lsm.pdf
-
-- id: lsm-tree
-  type: software
-  title: 'lsm-tree'
-  URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha
-
-- id: lsm-tree-prototype
-  type: webpage
-  title: '`lsm-tree` prototype'
-  locator: 'ScheduledMerges.hs'
-  URL: https://github.com/IntersectMBO/lsm-tree/blob/alpha/prototypes/ScheduledMerges.hs
-
-- id: blockio-uring
-  type: software
-  title: 'blockio-uring'
-  URL: https://github.com/well-typed/blockio-uring
-
-- id: lsm-tree-format-docs
-  type: webpage
-  title: '`lsm-tree` format specifications'
-  URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha/doc
-
-- id: lsm-tree-api-docs
-  type: webpage
-  title: '`lsm-tree` API documentation'
-  URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha/doc
-
-- id: integration-notes
-  author:
-  - given: Joris
-    family: Dral
-  - given: Wolfgang
-    family: Jeltsch
-  issued: 2025
-  title: "Storing the Cardano ledger state on disk: integration notes for high performance backend"
-  type: report
-
-- id: lsm-tree-package-desc
-  type: webpage
-  title: '`lsm-tree` package description'
-  URL: https://github.com/IntersectMBO/lsm-tree/blob/main/lsm-tree.cabal
-
-- id: ouroboros-consensus
-  type: software
-  title: 'ouroboros-consensus'
-  URL: https://github.com/IntersectMBO/ouroboros-consensus/commit/9d41590555954c511d5f81682ccf7bc963659708
-
-- id: ouroboros-consensus-LedgerTablesHandle
-  type: software
-  title: 'ouroboros-consensus LedgerSeq module'
-  URL: https://github.com/IntersectMBO/ouroboros-consensus/blob/9d41590555954c511d5f81682ccf7bc963659708/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/LedgerSeq.hs#L72-L96
-
-- id: ouroboros-consensus-InMemory
-  type: software
-  title: 'ouroboros-consensus InMemory module'
-  URL: https://github.com/IntersectMBO/ouroboros-consensus/blob/9d41590555954c511d5f81682ccf7bc963659708/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/InMemory.hs
+  - id: utxo-db
+    author:
+      - given: Duncan
+        family: Coutts
+      - given: Douglas
+        family: Wilson
+    issued: 2021
+    title: "Storing the Cardano ledger state on disk:
+            analysis and design options"
+    type: report
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db.pdf
+  - id: utxo-db-api
+    author:
+      - given: Duncan
+        family: Coutts
+      - given: Joris
+        family: Dral
+      - given: Douglas
+        family: Wilson
+    issued: 2021
+    title: "Storing the Cardano ledger state on disk:
+            API design concepts"
+    type: report
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-api.pdf
+  - id: utxo-db-lsm
+    author:
+      - given: Duncan
+        family: Coutts
+    issued: 2023
+    title: "Storing the Cardano ledger state on disk:
+            requirements for high performance backend"
+    type: report
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-lsm.pdf
+  - id: lsm-tree
+    type: software
+    title: "`lsm-tree`"
+    URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha
+  - id: lsm-tree-prototype
+    type: webpage
+    title: "`lsm-tree` prototype"
+    locator: "ScheduledMerges.hs"
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/alpha/prototypes/ScheduledMerges.hs
+  - id: blockio-uring
+    type: software
+    title: "`blockio-uring`"
+    URL: https://github.com/well-typed/blockio-uring
+  - id: lsm-tree-format-docs
+    type: webpage
+    title: "`lsm-tree` format specifications"
+    URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha/doc
+  - id: lsm-tree-api-docs
+    type: webpage
+    title: "`lsm-tree` API documentation"
+    URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha/doc
+  - id: integration-notes
+    author:
+      - given: Joris
+        family: Dral
+      - given: Wolfgang
+        family: Jeltsch
+    issued: 2025
+    title: "Storing the Cardano ledger state on disk:
+            integration notes for high performance backend"
+    type: report
+  - id: lsm-tree-package-desc
+    type: webpage
+    title: "`lsm-tree` package description"
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/lsm-tree.cabal
+  - id: ouroboros-consensus
+    type: software
+    title: "`ouroboros-consensus`"
+    URL: https://github.com/IntersectMBO/ouroboros-consensus/commit/9d41590555954c511d5f81682ccf7bc963659708
+  - id: ouroboros-consensus-LedgerTablesHandle
+    type: software
+    title: "`ouroboros-consensus` `LedgerSeq` module"
+    URL: https://github.com/IntersectMBO/ouroboros-consensus/blob/9d41590555954c511d5f81682ccf7bc963659708/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/LedgerSeq.hs#L72-L96
+  - id: ouroboros-consensus-InMemory
+    type: software
+    title: "`ouroboros-consensus` `InMemory` module"
+    URL: https://github.com/IntersectMBO/ouroboros-consensus/blob/9d41590555954c511d5f81682ccf7bc963659708/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/InMemory.hs
 ---
 
 \begin{changelog}[simple, sectioncmd=\section*]
