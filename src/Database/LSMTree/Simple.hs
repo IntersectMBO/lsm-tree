@@ -134,7 +134,6 @@ module Database.LSMTree.Simple (
     serialiseKeyIdentity,
     serialiseKeyIdentityUpToSlicing,
     serialiseKeyPreservesOrdering,
-    serialiseKeyMinimalSize,
     serialiseValueIdentity,
     serialiseValueIdentityUpToSlicing,
     packSlice,
@@ -182,9 +181,8 @@ import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
                      UnionCredits (..), UnionDebt (..), WriteBufferAlloc,
                      isValidSnapshotName, noTableConfigOverride, packSlice,
                      serialiseKeyIdentity, serialiseKeyIdentityUpToSlicing,
-                     serialiseKeyMinimalSize, serialiseKeyPreservesOrdering,
-                     serialiseValueIdentity, serialiseValueIdentityUpToSlicing,
-                     toSnapshotName)
+                     serialiseKeyPreservesOrdering, serialiseValueIdentity,
+                     serialiseValueIdentityUpToSlicing, toSnapshotName)
 import qualified Database.LSMTree as LSMT
 import qualified Database.LSMTree.Internal.Types as LSMT
 import qualified Database.LSMTree.Internal.Unsafe as Internal

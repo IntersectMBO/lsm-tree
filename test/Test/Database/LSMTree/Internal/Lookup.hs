@@ -60,7 +60,7 @@ import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunAcc as Run
 import           Database.LSMTree.Internal.RunBuilder
                      (RunDataCaching (CacheRunData), RunParams (RunParams))
-import           Database.LSMTree.Internal.Serialise
+import           Database.LSMTree.Internal.Serialise as Serialise
 import           Database.LSMTree.Internal.Serialise.Class
 import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -569,14 +569,10 @@ liftShrink3InMemLookupData shrinkKey shrinkValue shrinkBlob InMemLookupData{ run
       shrinkEntry = liftShrink2 shrinkValue shrinkBlob
 
 genSerialisedKey :: Gen SerialisedKey
-genSerialisedKey = frequency [
-      (9, arbitrary `suchThat` (\k -> sizeofKey k >= 8))
-    , (1, do x <- getSmall <$> arbitrary
-             pure $ SerialisedKey (RB.pack [0,0,0,0,0,0,0, x]))
-    ]
+genSerialisedKey = Serialise.serialiseKey <$> arbitraryBoundedIntegral @Word64
 
 shrinkSerialisedKey :: SerialisedKey -> [SerialisedKey]
-shrinkSerialisedKey k = [k' | k' <- shrink k, sizeofKey k' >= 8]
+shrinkSerialisedKey k = Serialise.serialiseKey <$> shrink (Serialise.deserialiseKey k :: Word64)
 
 genSerialisedValue :: Gen SerialisedValue
 genSerialisedValue = frequency [ (50, arbitrary), (1, genLongValue) ]
