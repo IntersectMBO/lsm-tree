@@ -79,6 +79,8 @@ references:
     URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha/doc
   - id: integration-notes
     author:
+      - given: Duncan
+        family: Coutts
       - given: Joris
         family: Dral
       - given: Wolfgang
