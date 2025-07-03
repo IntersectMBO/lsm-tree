@@ -28,6 +28,7 @@ import qualified Database.LSMTree.Internal.Paths as RIP
 import qualified Database.LSMTree.Internal.Types as RT (Table (..))
 import qualified Database.LSMTree.Internal.Unsafe as RU (SessionEnv (..),
                      Table (..), withKeepSessionOpen)
+import           GHC.Stack (HasCallStack)
 import           Test.Util.FS (flipRandomBitInRandomFileHardlinkSafe)
 import           Test.Util.QC (Choice)
 
@@ -72,7 +73,8 @@ class (IsSession (Session h)) => IsTable h where
         -> m (V.Vector (Entry k v (BlobRef h m b)))
 
     newCursor ::
-           ( IOLike m
+           ( HasCallStack
+           , IOLike m
            , C k v b
            )
         => Maybe k
@@ -80,7 +82,8 @@ class (IsSession (Session h)) => IsTable h where
         -> m (Cursor h m k v b)
 
     closeCursor ::
-           ( IOLike m
+           ( HasCallStack
+           , IOLike m
            , C k v b
            )
         => proxy h
@@ -106,7 +109,8 @@ class (IsSession (Session h)) => IsTable h where
         -> m (V.Vector b)
 
     updates ::
-           ( IOLike m
+           ( HasCallStack
+           , IOLike m
            , C k v b
            )
         => h m k v b
@@ -114,7 +118,8 @@ class (IsSession (Session h)) => IsTable h where
         -> m ()
 
     inserts ::
-           ( IOLike m
+           ( HasCallStack
+           , IOLike m
            , C k v b
            )
         => h m k v b
@@ -122,7 +127,8 @@ class (IsSession (Session h)) => IsTable h where
         -> m ()
 
     deletes ::
-           ( IOLike m
+           ( HasCallStack
+           , IOLike m
            , C k v b
            )
         => h m k v b
@@ -130,7 +136,8 @@ class (IsSession (Session h)) => IsTable h where
         -> m ()
 
     upserts ::
-           ( IOLike m
+           ( HasCallStack
+           , IOLike m
            , C k v b
            )
         => h m k v b

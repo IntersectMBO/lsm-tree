@@ -268,9 +268,11 @@ unsafeNew mergeDebt (SpentCredits spentCredits)
 -- @withRollback reg (duplicateRuns mr) (mapM_ releaseRef)@ isn't exception-safe
 -- since if one of the @releaseRef@ calls fails, the following ones aren't run.
 {-# SPECIALISE duplicateRuns ::
-     Ref (MergingRun t IO h) -> IO (V.Vector (Ref (Run IO h))) #-}
+     HasCallStack
+  => Ref (MergingRun t IO h)
+  -> IO (V.Vector (Ref (Run IO h))) #-}
 duplicateRuns ::
-     (PrimMonad m, MonadMVar m, MonadMask m)
+     (HasCallStack, PrimMonad m, MonadMVar m, MonadMask m)
   => Ref (MergingRun t m h)
   -> m (V.Vector (Ref (Run m h)))
 duplicateRuns (DeRef mr) =
