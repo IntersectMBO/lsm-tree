@@ -51,10 +51,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Merge"
       => (FS.HasFS IO FsSim.HandleMock -> FS.HasBlockIO IO FsSim.HandleMock -> IO p)
       -> Property
     ioPropertyWithMockFS prop = ioProperty $ do
-        (res, mockFS) <-
-          FsSim.runSimErrorFS FsSim.empty FsSim.emptyErrors $ \_ fs -> do
-            hbio <- FsSim.fromHasFS fs
-            prop fs hbio
+        (res, mockFS, _) <- FsSim.runSimErrorHasBlockIO FsSim.empty FsSim.emptyErrors prop
         pure $ res
             .&&. counterexample "open handles"
                    (FsSim.numOpenHandles mockFS === 0)

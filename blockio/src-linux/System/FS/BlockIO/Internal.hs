@@ -6,9 +6,8 @@ module System.FS.BlockIO.Internal (
 
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
-import qualified System.FS.BlockIO.API as FS
-import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
-                     IOCtxParams)
+import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO)
+import qualified System.FS.BlockIO.IO.Internal as IOI
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
 import qualified System.Posix.Fcntl as Fcntl
@@ -23,7 +22,7 @@ import qualified System.FS.BlockIO.Async as Async
 
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> IOCtxParams
+  -> IOI.IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 #if SERIALBLOCKIO
 ioHasBlockIO hfs _params =
@@ -31,10 +30,10 @@ ioHasBlockIO hfs _params =
       hSetNoCache
       hAdvise
       hAllocate
-      (FS.tryLockFileIO hfs)
+      (IOI.tryLockFileIO hfs)
       hSynchronise
       (synchroniseDirectory hfs)
-      (FS.createHardLinkIO hfs Unix.createLink)
+      (IOI.createHardLinkIO hfs Unix.createLink)
       hfs
 #else
 ioHasBlockIO hfs  params =
@@ -42,10 +41,10 @@ ioHasBlockIO hfs  params =
       hSetNoCache
       hAdvise
       hAllocate
-      (FS.tryLockFileIO hfs)
+      (IOI.tryLockFileIO hfs)
       hSynchronise
       (synchroniseDirectory hfs)
-      (FS.createHardLinkIO hfs Unix.createLink)
+      (IOI.createHardLinkIO hfs Unix.createLink)
       hfs
       params
 #endif

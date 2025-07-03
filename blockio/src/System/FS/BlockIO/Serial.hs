@@ -13,6 +13,7 @@ import           GHC.Stack (HasCallStack)
 import           System.FS.API
 import qualified System.FS.BlockIO.API as API
 import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode (..))
+import qualified System.FS.BlockIO.IO.Internal as IOI
 
 {-# SPECIALISE serialHasBlockIO ::
      Eq h
@@ -58,7 +59,7 @@ data IOCtx m = IOCtx { ctxFS :: SomeHasFS m, openVar :: MVar m Bool }
 {-# SPECIALISE guardIsOpen :: IOCtx IO -> IO () #-}
 guardIsOpen :: (HasCallStack, MonadMVar m, MonadThrow m) => IOCtx m -> m ()
 guardIsOpen ctx = readMVar (openVar ctx) >>= \b ->
-    unless b $ throwIO (API.mkClosedError (ctxFS ctx) "submitIO")
+    unless b $ throwIO (IOI.mkClosedError (ctxFS ctx) "submitIO")
 
 {-# SPECIALISE initIOCtx :: SomeHasFS IO -> IO (IOCtx IO) #-}
 initIOCtx :: MonadMVar m => SomeHasFS m -> m (IOCtx m)
