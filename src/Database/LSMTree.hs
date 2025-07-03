@@ -24,7 +24,6 @@ module Database.LSMTree (
   withNewSession,
   withRestoreSession,
   openSession,
-  openSessionIO,
   newSession,
   restoreSession,
   closeSession,
@@ -275,7 +274,7 @@ import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
-import           System.FS.BlockIO.IO (ioHasBlockIO, withIOHasBlockIO)
+import           System.FS.BlockIO.IO (withIOHasBlockIO)
 import           System.FS.IO (HandleIO, ioHasFS)
 import           System.Random (randomIO)
 
@@ -621,22 +620,6 @@ openSession ::
   m (Session m)
 openSession tracer hasFS hasBlockIO sessionSalt sessionDir =
   Session <$> Internal.openSession tracer hasFS hasBlockIO sessionSalt sessionDir
-
--- | Variant of 'openSession' that is specialised to 'IO' using the real filesystem.
-openSessionIO ::
-  Tracer IO LSMTreeTrace ->
-  -- | The session directory.
-  FilePath ->
-  IO (Session IO)
-openSessionIO tracer sessionDir = do
-  let mountPoint = MountPoint sessionDir
-  let sessionDirFsPath = mkFsPath []
-  let hasFS = ioHasFS mountPoint
-  sessionSalt <- randomIO
-  let acquireHasBlockIO = ioHasBlockIO hasFS defaultIOCtxParams
-  let releaseHasBlockIO HasBlockIO{close} = close
-  bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
-    openSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath
 
 {- |
 Create a new session.

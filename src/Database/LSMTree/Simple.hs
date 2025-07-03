@@ -157,7 +157,8 @@ module Database.LSMTree.Simple (
 ) where
 
 import           Control.ActionRegistry (mapExceptionWithActionRegistry)
-import           Control.Exception.Base (Exception, SomeException (..))
+import           Control.Exception (Exception, SomeException (..),
+                     bracketOnError, finally)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
@@ -185,7 +186,14 @@ import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
                      serialiseValueIdentity, serialiseValueIdentityUpToSlicing,
                      toSnapshotName)
 import qualified Database.LSMTree as LSMT
+import qualified Database.LSMTree.Internal.Types as LSMT
+import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
+import           System.FS.API (MountPoint (..), mkFsPath)
+import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
+import           System.FS.BlockIO.IO (ioHasBlockIO)
+import           System.FS.IO (ioHasFS)
+import           System.Random (randomIO)
 
 --------------------------------------------------------------------------------
 -- Example
@@ -450,7 +458,14 @@ openSession ::
 openSession dir = do
     let tracer = mempty
     _convertSessionDirErrors dir $ do
-        Session <$> LSMT.openSessionIO tracer dir
+      let mountPoint = MountPoint dir
+      let sessionDirFsPath = mkFsPath []
+      let hasFS = ioHasFS mountPoint
+      sessionSalt <- randomIO
+      let acquireHasBlockIO = ioHasBlockIO hasFS defaultIOCtxParams
+      let releaseHasBlockIO HasBlockIO{close} = close
+      bracketOnError acquireHasBlockIO releaseHasBlockIO $ \hasBlockIO ->
+        Session <$> LSMT.openSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath
 
 {- |
 Close a session.
@@ -471,8 +486,10 @@ All other operations on a closed session will throw an exception.
 closeSession ::
     Session ->
     IO ()
-closeSession (Session session) =
-    LSMT.closeSession session
+closeSession (Session session@(LSMT.Session session')) = do
+    HasBlockIO{close} <- Internal.withKeepSessionOpen session' $
+                          pure . Internal.sessionHasBlockIO
+    LSMT.closeSession session `finally` close
 
 --------------------------------------------------------------------------------
 -- Tables
