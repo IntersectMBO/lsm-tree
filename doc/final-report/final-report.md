@@ -140,22 +140,23 @@ meets all its performance requirements, including stretch targets.
 
 [^2]: And previously on behalf of Input Output Global, Inc. (IOG).
 
-The backend is implemented as a Haskell library called `lsm-tree`[@lsm-tree], which
-provides efficient on-disk key–value storage using log-structured merge-trees,
-or LSM-trees for short. An LSM-tree is a data structure for key–value mappings
-that is optimized for large tables with a high insertion rate, such as the
-UTxO set and other stake-related data. The library has a number of custom
-features that are primarily tailored towards use cases of the consensus layer,
-but the library should be useful for the broader Haskell community as well.
+The backend is implemented as a Haskell library called `lsm-tree`[@lsm-tree],
+which provides efficient on-disk key–value storage using log-structured
+merge-trees, or LSM-trees for short. An LSM-tree is a data structure for
+key–value mappings that is optimized for large tables with a high insertion
+rate, such as the UTxO set and other stake-related data. The library has a
+number of custom features that are primarily tailored towards use cases of the
+consensus layer, but the library should be useful for the broader Haskell
+community as well.
 
 Currently, a UTxO-HD `cardano-node` already exists, but it is an MVP that uses
 off-the-shelf database software (LMDB) to store a part of the ledger state on
-disk[@utxo-db-api]. Though the LMDB-based solution is suitable for the current state of the
-Cardano blockchain, it is not suitable to achieve Cardano’s long-term business
-requirements[@utxo-db, Section 3], such as high throughput with limited system resources. The goal of
-`lsm-tree` is to pave the way for achieving said business requirements,
-providing the necessary foundation on which technologies like Ouroboros Leios
-can build.
+disk[@utxo-db-api]. Though the LMDB-based solution is suitable for the current
+state of the Cardano blockchain, it is not suitable to achieve Cardano’s
+long-term business requirements[@utxo-db, Section 3], such as high throughput
+with limited system resources. The goal of `lsm-tree` is to pave the way for
+achieving said business requirements, providing the necessary foundation on
+which technologies like Ouroboros Leios can build.
 
 Prior to development, an analysis was conducted, leading to a comprehensive
 requirements document[@utxo-db-lsm] outlining the functional and non-functional
@@ -179,24 +180,24 @@ It should be noted that the requirements of the `lsm-tree` component were
 specified in isolation from the consensus layer and `cardano-node`, but these
 requirements were of course chosen with the larger system in mind. This report
 only reviews the development of `lsm-tree` as a standalone component, while
-integration notes are provided in an accompanying document[@integration-notes]. Integration of
-`lsm-tree` with the consensus layer will happen as a separate phase of the
-UTxO-HD project.
+integration notes are provided in an accompanying document[@integration-notes].
+Integration of `lsm-tree` with the consensus layer will happen as a separate
+phase of the UTxO-HD project.
 
 Readers are advised to familiarise themselves with the API of the library by
 reading through the Haddock documentation of the public API. A version of the
 Haddock documentation that tracks the `main` branch of the repository is hosted
-using GitHub Pages[@lsm-tree-api-docs]. There are two modules that make up the public API: the
-`Database.LSMTree` module contains the full-featured public API, whereas the
-`Database.LSMTree.Simple` module offers a simplified version that is aimed at
-new users and use cases that do not require advanced features. Additional
-documentation can be found in the package description[@lsm-tree-package-desc]. This and the simple
-module should be good places to start at before moving on to the full-featured
-module.
+using GitHub Pages[@lsm-tree-api-docs]. There are two modules that make up the
+public API: the `Database.LSMTree` module contains the full-featured public API,
+whereas the `Database.LSMTree.Simple` module offers a simplified version that is
+aimed at new users and use cases that do not require advanced features.
+Additional documentation can be found in the package
+description[@lsm-tree-package-desc]. This and the simple module should be good
+places to start at before moving on to the full-featured module.
 
 The version of the library that is used as the basis for this report is tagged
-`alpha` in the `lsm-tree` Git repository [@lsm-tree]. It can be checked out using the
-following commands:
+`alpha` in the `lsm-tree` Git repository [@lsm-tree]. It can be checked out
+using the following commands:
 
 ```sh
 git clone git@github.com:IntersectMBO/lsm-tree.git
@@ -218,7 +219,8 @@ testing. Among the prototyping and design artefacts are the following:
 
 * A prototype for the incremental merge algorithm [@lsm-tree-prototype]
 * A library for high SSD throughput using asynchronous I/O [@blockio-uring]
-* Specifications of the formats of on-disk files and directories [@lsm-tree-format-docs]
+* Specifications of the formats of on-disk files and directories
+  [@lsm-tree-format-docs]
 
 In the spirit of test-driven development, we created a reference implementation
 for the library, modelling each of the basic and advanced features that the
@@ -275,9 +277,9 @@ for each completed feature.
 
 In the final stages, we reviewed and improved the public API, tests, benchmarks,
 documentation and library packaging. We constructed the final deliverables, such
-as this report and additional integration notes[@integration-notes], which should guide the
-integration of `lsm-tree` with the consensus layer. In April 2025, we reached
-the final milestone.
+as this report and additional integration notes[@integration-notes], which
+should guide the integration of `lsm-tree` with the consensus layer. In
+April 2025, we reached the final milestone.
 
 # Functional requirements
 
@@ -329,8 +331,8 @@ The tests are written in three styles:
 > interface used by the existing consensus layer for its on-disk backends.
 
 For the analysis of this functional requirement, we use a fixed version of the
-`ouroboros-consensus` repository[@ouroboros-consensus]. This version can be checked out using the
-following commands:
+`ouroboros-consensus` repository[@ouroboros-consensus]. This version can be
+checked out using the following commands:
 
 ```sh
 git clone git@github.com:IntersectMBO/ouroboros-consensus.git
@@ -339,25 +341,27 @@ git checkout 9d41590555954c511d5f81682ccf7bc963659708
 ```
 
 The consensus interface that has to be implemented using `lsm-tree` is given by
-the `LedgerTablesHandle` record type[@ouroboros-consensus-LedgerTablesHandle]. This type provides an abstract view
-on the table storage, so that the rest of the consensus layer does not have to
-concern itself with the concrete implementation of that storage, be it based on
-`lsm-tree` or not; `ouroboros-consensus` can freely pick any particular record
-as long as it constitutes a faithful implementation of the storage interface.
-This has advantages for initial functional integration because the integration
-effort is confined to the implementation of the record. To take full advantage
-of all of `lsm-tree`’s features, further integration efforts would be needed
-because changes to the interface and the rest of the consensus layer would be
-required. However, this is considered out of scope for the current phase of the
-UTxO-HD project.
+the `LedgerTablesHandle` record type[@ouroboros-consensus-LedgerTablesHandle].
+This type provides an abstract view on the table storage, so that the rest of
+the consensus layer does not have to concern itself with the concrete
+implementation of that storage, be it based on `lsm-tree` or not;
+`ouroboros-consensus` can freely pick any particular record as long as it
+constitutes a faithful implementation of the storage interface. This has
+advantages for initial functional integration because the integration effort is
+confined to the implementation of the record. To take full advantage of all of
+`lsm-tree`’s features, further integration efforts would be needed because
+changes to the interface and the rest of the consensus layer would be required.
+However, this is considered out of scope for the current phase of the UTxO-HD
+project.
 
 Currently, the consensus layer has one implementation of table storage for the
-ledger, which stores all data in main memory[@ouroboros-consensus-InMemory]. This implementation preserves
-much of the behaviour of a pre-UTxO-HD node. A closer look at it shows that
-there are two pieces of implementation-specific functionality that are not
-covered by the `LedgerTablesHandle` record: creating a fresh such record and
-producing such a record from an on-disk snapshot. It makes sense that these are
-standalone functions, as they produce the records in the first place.
+ledger, which stores all data in main memory[@ouroboros-consensus-InMemory].
+This implementation preserves much of the behaviour of a pre-UTxO-HD node. A
+closer look at it shows that there are two pieces of implementation-specific
+functionality that are not covered by the `LedgerTablesHandle` record: creating
+a fresh such record and producing such a record from an on-disk snapshot. It
+makes sense that these are standalone functions, as they produce the records in
+the first place.
 
 All in all, we are left with the following API to implement in the integration
 phase:
@@ -399,11 +403,11 @@ anticipated this when we defined the `LedgerTablesHandle` type and consequently
 accounted for it by using `Maybe Int` as the return type of `tablesSize`.
 
 The analysis above offers a simplified view on how the `lsm-tree` and consensus
-interfaces fit together; so this report is accompanied by integration notes[@integration-notes]
-that provide further guidance. These notes include, for example, an explanation
-of the need to store a session context in the ledger database. However,
-implementation details like these are not considered to be blockers for the
-integration efforts, as there are clear paths forward.
+interfaces fit together; so this report is accompanied by integration
+notes[@integration-notes] that provide further guidance. These notes include,
+for example, an explanation of the need to store a session context in the ledger
+database. However, implementation details like these are not considered to be
+blockers for the integration efforts, as there are clear paths forward.
 
 ## Requirement 2
 
@@ -419,11 +423,11 @@ We generally advise to prefer the bulk operations over the elementary ones. On
 Linux systems, lookups in particular will better utilise the storage bandwidth
 when the bulk version is used, especially in a concurrent setting. This is due
 to the method used to perform batches of I/O, which employs the `blockio-uring`
-package[@blockio-uring]: submitting many batches of I/O concurrently will lead to many I/O
-requests being in flight at once, so that the SSD bandwidth can be saturated.
-This is particularly relevant for the consensus layer, which will have to employ
-concurrent batching to meet higher performance targets, for example by using a
-pipelining design.
+package[@blockio-uring]: submitting many batches of I/O concurrently will lead
+to many I/O requests being in flight at once, so that the SSD bandwidth can be
+saturated. This is particularly relevant for the consensus layer, which will
+have to employ concurrent batching to meet higher performance targets, for
+example by using a pipelining design.
 
 It is not part of the requirements but does deserve to be mentioned that there
 is specific support for storing blobs (binary large objects). Morally, blobs are
@@ -439,11 +443,12 @@ about as expensive as if the blobs’ contents were included in the values.
 A naive implementation of updates entails latency spikes due to table merging,
 but the `lsm-tree` library can avoid such spikes by spreading out I/O over time,
 using an incremental merge algorithm: the algorithm that we prototyped at the
-start of the `lsm-tree` project[@lsm-tree-prototype]. Avoiding latency spikes is essential for
-`cardano-node` because `cardano-node` is a real-time system, which has to
-respond to input promptly. The use of the incremental merge algorithm does not
-improve the time complexity of updates as such, but it turns the *amortised*
-time complexity of the naive solution into a *worst-case* time complexity.
+start of the `lsm-tree` project[@lsm-tree-prototype]. Avoiding latency spikes is
+essential for `cardano-node` because `cardano-node` is a real-time system, which
+has to respond to input promptly. The use of the incremental merge algorithm
+does not improve the time complexity of updates as such, but it turns the
+*amortised* time complexity of the naive solution into a *worst-case* time
+ complexity.
 
 ## Requirement 3
 
@@ -648,9 +653,9 @@ simulation provided by the `fs-sim` package.
 We made some smaller changes to `fs-api` and `fs-sim` to facilitate the
 development of `lsm-tree`. Furthermore, we created an extension to `HasFS`
 called `HasBlockIO`. It captures both the submission of batches of I/O, for
-example using `blockio-uring`[@blockio-uring], and some functionality unrelated to batching
-that is nonetheless useful for `lsm-tree`. The latter could eventually be
-included in `fs-api` and `fs-sim`.
+example using `blockio-uring`[@blockio-uring], and some functionality unrelated
+to batching that is nonetheless useful for `lsm-tree`. The latter could
+eventually be included in `fs-api` and `fs-sim`.
 
 In the context of `lsm-tree`, startup or restoration means opening a table from
 a table snapshot. In the consensus layer, table snapshots would be part of the
