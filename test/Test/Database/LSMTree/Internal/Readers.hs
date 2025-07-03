@@ -416,7 +416,7 @@ instance RunLockstep ReadersState RealMonad where
       Pop {}          -> OEither . bimap OId (OTuple3 . trimap OId OId OId)
       DropWhileKey {} -> OEither . bimap OId (OTuple2 . bimap OId OId)
 
-runIO :: LockstepAction ReadersState a -> LookUp RealMonad -> RealMonad (Realized RealMonad a)
+runIO :: LockstepAction ReadersState a -> LookUp -> RealMonad a
 runIO act lu = case act of
     New offset srcDatas -> ReaderT $ \(hfs, hbio) -> do
       RealState numRuns mCtx <- get

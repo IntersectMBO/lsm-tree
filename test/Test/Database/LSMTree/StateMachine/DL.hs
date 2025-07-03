@@ -11,6 +11,7 @@ import           Control.Monad (void)
 import           Control.RefCount
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
+import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import           Database.LSMTree as R
 import qualified Database.LSMTree.Internal.Config as R (TableConfig (..))
@@ -42,7 +43,7 @@ tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
     , test_noSwallowedExceptions
     ]
 
-instance DynLogicModel (Lockstep (ModelState R.Table))
+instance DynLogicModel (Lockstep (ModelState IO R.Table))
 
 -- | An example of how dynamic logic formulas can be run.
 --
@@ -64,7 +65,7 @@ prop_example =
     tr = nullTracer
 
 -- | Create an initial "large" table
-dl_example :: DL (Lockstep (ModelState R.Table)) ()
+dl_example :: Typeable m => DL (Lockstep (ModelState m R.Table)) ()
 dl_example = do
     -- Create an initial table and fill it with some inserts
     var3 <- action $ Action Nothing $ NewTableWith (PrettyProxy @((Key, Value, Blob))) (R.TableConfig {
@@ -152,7 +153,7 @@ prop_noSwallowedExceptions salt = forAllDL dl_noSwallowExceptions runner
 
 -- | Run any number of actions using the default actions generator, and finally
 -- run a single action with errors *definitely* enabled.
-dl_noSwallowExceptions :: DL (Lockstep (ModelState R.Table)) ()
+dl_noSwallowExceptions :: Typeable m => DL (Lockstep (ModelState m R.Table)) ()
 dl_noSwallowExceptions = do
     -- Run any number of actions as normal
     anyActions_
