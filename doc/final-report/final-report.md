@@ -33,7 +33,7 @@ references:
     title: "Storing the Cardano ledger state on disk:
             analysis and design options"
     type: report
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db.pdf
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/references/utxo-db.pdf
   - id: utxo-db-api
     author:
       - given: Duncan
@@ -46,7 +46,7 @@ references:
     title: "Storing the Cardano ledger state on disk:
             API design concepts"
     type: report
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-api.pdf
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/references/utxo-db-api.pdf
   - id: utxo-db-lsm
     author:
       - given: Duncan
@@ -55,7 +55,7 @@ references:
     title: "Storing the Cardano ledger state on disk:
             requirements for high performance backend"
     type: report
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/master/doc/final-report/references/utxo-db-lsm.pdf
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/references/utxo-db-lsm.pdf
   - id: lsm-tree
     type: software
     title: "`lsm-tree`"
