@@ -1032,11 +1032,11 @@ common measure-batch-latency
   if flag(measure-batch-latency)
     cpp-options: -DMEASURE_BATCH_LATENCY
 
-benchmark lsm-tree-bench-wp8
+benchmark utxo-bench
   import:         language, warnings, wno-x-partial, measure-batch-latency
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
-  main-is:        lsm-tree-bench-wp8.hs
+  main-is:        utxo-bench.hs
   build-depends:
     , async
     , base                  <5
@@ -1064,11 +1064,11 @@ flag rocksdb
   default:     True
   manual:      False
 
-benchmark rocksdb-bench-wp8
+benchmark utxo-rocksdb-bench
   import:         language, warnings, wno-x-partial
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
-  main-is:        rocksdb-bench-wp8.hs
+  main-is:        utxo-rocksdb-bench.hs
 
   if !(os(linux) && flag(rocksdb))
     buildable: False

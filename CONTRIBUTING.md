@@ -25,7 +25,7 @@ executable using `--flag=+serialblockio`.
 > build.
 
 Installing `rocksdb` is entirely optional, and only required if one wants to
-build or run the `rocksdb-bench-wp8` comparison macro-benchmark.
+build or run the `utxo-rocksdb-bench` comparison macro-benchmark.
 
 * Ubuntu:
   ```
