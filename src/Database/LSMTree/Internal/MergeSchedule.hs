@@ -92,7 +92,7 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -------------------------------------------------------------------------------}
 
 data AtLevel a = AtLevel LevelNo a
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 data MergeTrace =
     TraceFlushWriteBuffer
@@ -118,7 +118,7 @@ data MergeTrace =
     -- | This is traced at the latest point the merge could complete.
   | TraceExpectCompletedMerge
       RunNumber
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Table content

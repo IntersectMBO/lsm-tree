@@ -140,13 +140,15 @@ import           Database.LSMTree.Internal.Paths (SessionRoot (..),
                      SnapshotMetaDataFile (..), SnapshotName)
 import qualified Database.LSMTree.Internal.Paths as Paths
 import           Database.LSMTree.Internal.Range (Range (..))
+import           Database.LSMTree.Internal.RawBytes (RawBytes)
 import           Database.LSMTree.Internal.Readers (OffsetKey (..))
 import qualified Database.LSMTree.Internal.Readers as Readers
 import           Database.LSMTree.Internal.Run (Run)
 import qualified Database.LSMTree.Internal.Run as Run
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue,
-                     SerialisedBlob (..), SerialisedKey, SerialisedValue)
+                     SerialisedBlob (..), SerialisedKey (SerialisedKey),
+                     SerialisedValue)
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
 import           Database.LSMTree.Internal.UniqCounter
@@ -206,7 +208,7 @@ data LSMTreeTrace =
       -- | Cursors are identified by a unique number.
       CursorId
       CursorTrace
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 -- | Sessions are identified by the path to their root directory.
 newtype SessionId = SessionId FsPath
@@ -243,7 +245,7 @@ data SessionTrace =
 
     -- | We are retrieving blobs.
   | TraceRetrieveBlobs Int
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 -- | Trace messages related to tables.
 data TableTrace =
@@ -313,7 +315,7 @@ data TableTrace =
     -- | INTERNAL: debug traces for the merge schedule
   | TraceMerge (AtLevel MergeTrace)
 #endif
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 contramapTraceMerge :: Monad m => Tracer m TableTrace -> Tracer m (AtLevel MergeTrace)
 #ifdef DEBUG_TRACES
@@ -333,7 +335,9 @@ data CursorTrace =
   | TraceNewCursor
       -- | The parent table
       TableId
-      OffsetKey
+      -- | The optional serialised key that is used as the initial offset for
+      -- the cursor.
+      (Maybe RawBytes)
 
     -- | We are closing the cursor. A 'TraceClosedCursor' message should follow
     -- if successful.
@@ -352,7 +356,7 @@ data CursorTrace =
       Int
       -- | Actual number of entries read.
       Int
-  deriving stock Show
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Session
@@ -1426,7 +1430,9 @@ newCursor !resolve !offsetKey t = withKeepTableOpen t $ \tEnv -> do
     cursorId <- uniqueToCursorId <$>
       incrUniqCounter (tableSessionUniqCounter t)
     let cursorTracer = TraceCursor cursorId `contramap` lsmTreeTracer cursorSession
-    traceWith cursorTracer $ TraceNewCursor (tableId t) offsetKey
+    traceWith cursorTracer $ TraceNewCursor (tableId t) $ case offsetKey of
+      NoOffsetKey                     -> Nothing
+      OffsetKey (SerialisedKey bytes) -> Just bytes
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
