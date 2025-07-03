@@ -6,6 +6,7 @@ index-state:
 packages:
   .
   ./blockio
+  ./bloomfilter-blocked
 
 tests: True
 benchmarks: True

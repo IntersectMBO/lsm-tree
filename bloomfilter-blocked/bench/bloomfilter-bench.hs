@@ -1,9 +1,8 @@
-module Main where
+module Main (main) where
 
 import           Criterion.Main (bench, bgroup, defaultMain, env, whnf)
 import qualified Data.BloomFilter.Blocked as B.Blocked
 import qualified Data.BloomFilter.Classic as B.Classic
-import           Data.BloomFilter.Hash (Hashable (..))
 import           Data.Word (Word64)
 import           System.Random (StdGen, newStdGen, uniform)
 

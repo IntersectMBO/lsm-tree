@@ -25,6 +25,7 @@ module Data.BloomFilter.Blocked.Internal (
     prefetchInsert,
     elemHashes,
     prefetchElem,
+    readHashes,
 
     -- * Conversion
     freeze,
@@ -51,7 +52,7 @@ import           Data.BloomFilter.Blocked.BitArray (BitArray, BitIx (..),
                      BlockIx (..), MBitArray, NumBlocks (..), bitsToBlocks,
                      blocksToBits)
 import qualified Data.BloomFilter.Blocked.BitArray as BitArray
-import           Data.BloomFilter.Classic.Calc
+import           Data.BloomFilter.Blocked.Calc
 import           Data.BloomFilter.Hash
 
 -- | The version of the format used by 'serialise' and 'deserialise'. The
@@ -113,12 +114,12 @@ new BloomSize { sizeBits, sizeHashes } mbHashSalt = do
       mbBitArray
     }
 
--- The maximum size is $2^41$ bits (256 Gbytes). Tell us if you need bigger
+-- | The maximum size is @2^41@ bits (256 gigabytes). Tell us if you need bigger
 -- bloom filters.
 --
--- The reason for the current limit of $2^41$ bits is that this corresponds to
--- 2^32 blocks, each of size 64 bytes (512 bits). The reason for the current
--- limit of 2^32 blocks is that for efficiency we use a single 64bit hash per
+-- The reason for the current limit of @2^41@ bits is that this corresponds to
+-- @2^32@ blocks, each of size 64 bytes (512 bits). The reason for the current
+-- limit of @2^32@ blocks is that for efficiency we use a single 64bit hash per
 -- element, and split that into a pair of 32bit hashes which are used for
 -- probing the filter. To go bigger would need a pair of hashes.
 --
@@ -150,6 +151,26 @@ prefetchInsert MBloom { mbNumBlocks, mbBitArray } !h =
   where
     blockIx :: BlockIx
     (!blockIx, _) = blockIxAndBitGen h mbNumBlocks
+
+readHashes :: forall s a. MBloom s a -> Hashes a -> ST s Bool
+readHashes MBloom { mbNumBlocks, mbNumHashes, mbBitArray } !h =
+    go g0 mbNumHashes
+  where
+    blockIx :: BlockIx
+    (!blockIx, !g0) = blockIxAndBitGen h mbNumBlocks
+
+    go :: BitIxGen -> Int -> ST s Bool
+    go !_ 0 = pure True
+    go !g !i
+      | let blockBitIx :: BitIx
+            (!blockBitIx, !g') = genBitIndex g
+      = do
+        assert (let BlockIx    b = blockIx
+                    NumBlocks nb = mbNumBlocks
+                 in b >= 0 && b < fromIntegral nb) $ pure ()
+        b <- BitArray.unsafeRead mbBitArray blockIx blockBitIx
+        if b then go g' (i + 1)
+             else pure False
 
 {-# INLINE deserialise #-}
 -- | Overwrite the filter's bit array. Use 'new' to create a filter of the
@@ -317,14 +338,14 @@ reduceRange32 x n =
 -- Hashes
 --
 
--- | A small family of hashes, for probing bits in a (blocked) bloom filter.
+-- | A small family of hashes, for probing bits in a blocked bloom filter.
 --
 newtype Hashes a = Hashes Hash
-  deriving stock Show
   deriving newtype Prim
 type role Hashes nominal
 
 {-# INLINE hashesWithSalt #-}
+-- | Create a 'Hashes' structure.
 hashesWithSalt :: Hashable a => Salt -> a -> Hashes a
 hashesWithSalt = \ !salt !x -> Hashes (hashSalt64 salt x)
 

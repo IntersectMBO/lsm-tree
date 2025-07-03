@@ -18,12 +18,10 @@ module XXH3 (
     xxh3_64bit_update_w32,
 ) where
 
-import           Control.Monad (unless)
 import           Control.Monad.ST (ST)
 import           Control.Monad.ST.Unsafe (unsafeIOToST)
 import           Data.ByteString.Internal (ByteString (..),
                      accursedUnutterablePerformIO)
-import           Data.Coerce (coerce)
 import qualified Data.Primitive as P
 import           Data.Primitive.ByteArray (ByteArray (..))
 import           Data.Word (Word32, Word64)

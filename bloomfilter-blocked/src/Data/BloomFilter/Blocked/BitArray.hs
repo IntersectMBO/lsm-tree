@@ -18,6 +18,7 @@ module Data.BloomFilter.Blocked.BitArray (
     new,
     unsafeSet,
     prefetchSet,
+    unsafeRead,
     freeze,
     unsafeFreeze,
     thaw,
@@ -154,6 +155,17 @@ prefetchSet (MBitArray (MutablePrimArray mba#)) (BlockIx blockIx) = do
     -- again (soon). So the caches can evict the value as soon as they like.
     ST (\s -> case prefetchMutableByteArray0# mba# i# s of
                 s' -> (# s', () #))
+
+unsafeRead :: MBitArray s -> BlockIx -> BitIx -> ST s Bool
+unsafeRead (MBitArray arr) blockIx blockBitIx = do
+#ifdef NO_IGNORE_ASSERTS
+    sz <- getSizeofMutablePrimArray arr
+    assert (wordIx >= 0 && wordIx < sz) $ pure ()
+#endif
+    w <- readPrimArray arr wordIx
+    pure $ unsafeTestBit w wordBitIx
+  where
+    (wordIx, wordBitIx) = wordAndBitIndex blockIx blockBitIx
 
 freeze :: MBitArray s -> ST s BitArray
 freeze (MBitArray arr) = do

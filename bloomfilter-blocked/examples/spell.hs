@@ -1,7 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 module Main (main) where
 
-import           Control.Monad (forM_, when)
+import           Control.Monad (forM_)
 import           System.Environment (getArgs)
 
 import qualified Data.BloomFilter as B

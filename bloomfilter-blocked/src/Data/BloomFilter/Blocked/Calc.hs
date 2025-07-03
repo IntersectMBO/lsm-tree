@@ -13,8 +13,7 @@ module Data.BloomFilter.Blocked.Calc (
     policyForBits,
 ) where
 
-import           Data.BloomFilter.Classic.Calc (BitsPerEntry, BloomPolicy (..),
-                     BloomSize (..), FPR, NumEntries)
+import           Data.BloomFilter.Classic.Calc (BitsPerEntry, FPR, NumEntries)
 
 {-
 Calculating the relationship between bits and FPR for the blocked
@@ -48,6 +47,32 @@ Fit {
 }
 
 -}
+
+-- | A policy on intended bloom filter size -- independent of the number of
+-- elements.
+--
+-- We can decide a policy based on:
+--
+-- 1. a target false positive rate (FPR) using 'policyForFPR'
+-- 2. a number of bits per entry using 'policyForBits'
+--
+-- A policy can be turned into a 'BloomSize' given a target 'NumEntries' using
+-- 'sizeForPolicy'.
+--
+-- Either way we define the policy, we can inspect the result to see:
+--
+-- 1. The bits per entry 'policyBits'. This will determine the
+--    size of the bloom filter in bits. In general the bits per entry can be
+--    fractional. The final bloom filter size in will be rounded to a whole
+--    number of bits.
+-- 2. The number of hashes 'policyHashes'.
+-- 3. The expected FPR for the policy using 'policyFPR'.
+--
+data BloomPolicy = BloomPolicy {
+       policyBits   :: !Double,
+       policyHashes :: !Int
+     }
+  deriving stock Show
 
 policyForFPR :: FPR -> BloomPolicy
 policyForFPR fpr | fpr <= 0 || fpr >= 1 =
@@ -102,6 +127,19 @@ policyFPR BloomPolicy {
     f2 = -5.03623760876204e-3
     f1 =  0.5251544487138062
     f0 = -0.10110451821280719
+
+-- | Parameters for constructing a Bloom filter.
+--
+data BloomSize = BloomSize {
+                   -- | The requested number of bits in the filter.
+                   --
+                   -- The actual size will be rounded up to the nearest 512.
+                   sizeBits   :: !Int,
+
+                   -- | The number of hash functions to use.
+                   sizeHashes :: !Int
+                 }
+  deriving stock Show
 
 sizeForFPR :: FPR -> NumEntries -> BloomSize
 sizeForFPR = sizeForPolicy . policyForFPR

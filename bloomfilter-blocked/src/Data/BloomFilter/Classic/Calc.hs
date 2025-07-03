@@ -127,8 +127,7 @@ policyFPR BloomPolicy {
 -- | Parameters for constructing a Bloom filter.
 --
 data BloomSize = BloomSize {
-                   -- | The requested number of bits in filter.
-                   -- The actual size will be rounded up to the nearest 512.
+                   -- | The requested number of bits in the filter.
                    sizeBits   :: !Int,
 
                    -- | The number of hash functions to use.

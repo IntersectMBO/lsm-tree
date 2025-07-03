@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 module Main (main) where
 
 import qualified Data.BloomFilter.Blocked as Bloom.Blocked
@@ -16,6 +17,7 @@ import           Test.QuickCheck.Instances ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
+import           Data.Kind (Type)
 import           Prelude hiding (elem, notElem)
 
 main :: IO ()
@@ -123,14 +125,14 @@ prop_calc_policy_fpr proxy (FPR lb, FPR ub) t (FPR fpr) =
   where
     (~~~) = withinTolerance t
 
-prop_calc_policy_bits :: BloomFilter bloom => Proxy bloom
+prop_calc_policy_bits :: forall bloom. BloomFilter bloom => Proxy bloom
                       -> (BitsPerEntry, BitsPerEntry) -> Double
                       -> BitsPerEntry -> Property
 prop_calc_policy_bits proxy (BitsPerEntry lb, BitsPerEntry ub) t
                       (BitsPerEntry c) =
   c >= lb && c <= ub ==>
   let policy  = policyForBits proxy c
-      c'      = B.policyBits policy
+      c'      = policyBits (Proxy @bloom) policy
       fpr     = policyFPR proxy policy
       policy' = policyForFPR proxy fpr
       fpr'    = policyFPR proxy policy'
@@ -139,22 +141,22 @@ prop_calc_policy_bits proxy (BitsPerEntry lb, BitsPerEntry ub) t
     (~~~) = withinTolerance t
 
 -- | Compare @sizeHashes . sizeForBits@ against @numHashFunctions@
-prop_calc_size_hashes_bits :: BloomFilter bloom => Proxy bloom
+prop_calc_size_hashes_bits :: forall bloom. BloomFilter bloom => Proxy bloom
                            -> BitsPerEntry -> NumEntries -> Property
 prop_calc_size_hashes_bits proxy (BitsPerEntry c) (NumEntries numEntries) =
   let bsize = sizeForBits proxy c numEntries
-   in numHashFunctions (fromIntegral (B.sizeBits bsize))
+   in numHashFunctions (fromIntegral (sizeBits (Proxy @bloom) bsize))
                        (fromIntegral numEntries)
-  === fromIntegral (B.sizeHashes bsize)
+  === fromIntegral (sizeHashes (Proxy @bloom) bsize)
 
 -- | Compare @sizeForFPR@ against @falsePositiveRate@ with some tolerance for deviations
-prop_calc_size_fpr_fpr :: BloomFilter bloom => Proxy bloom
+prop_calc_size_fpr_fpr :: forall bloom. BloomFilter bloom => Proxy bloom
                        -> FPR -> NumEntries -> Property
 prop_calc_size_fpr_fpr proxy (FPR fpr) (NumEntries numEntries) =
   let bsize = sizeForFPR proxy fpr numEntries
-   in falsePositiveRate (fromIntegral (B.sizeBits bsize))
+   in falsePositiveRate (fromIntegral (sizeBits (Proxy @bloom) bsize))
                         (fromIntegral numEntries)
-                        (fromIntegral (B.sizeHashes bsize))
+                        (fromIntegral (sizeHashes (Proxy @bloom) bsize))
    ~~~ fpr
   where
     (~~~) = withinTolerance tolerance
@@ -171,14 +173,14 @@ prop_calc_size_fpr_fpr proxy (FPR fpr) (NumEntries numEntries) =
               | otherwise   = 1e-3
 
 -- | Compare @sizeForBits@ against @falsePositiveRate@ with some tolerance for deviations
-prop_calc_size_fpr_bits :: BloomFilter bloom => Proxy bloom
+prop_calc_size_fpr_bits :: forall bloom. BloomFilter bloom => Proxy bloom
                         -> BitsPerEntry -> NumEntries -> Property
 prop_calc_size_fpr_bits proxy (BitsPerEntry bpe) (NumEntries numEntries) =
   let policy = policyForBits proxy bpe
       bsize  = sizeForPolicy proxy policy numEntries
-   in falsePositiveRate (fromIntegral (B.sizeBits bsize))
+   in falsePositiveRate (fromIntegral (sizeBits (Proxy @bloom) bsize))
                         (fromIntegral numEntries)
-                        (fromIntegral (B.sizeHashes bsize))
+                        (fromIntegral (sizeHashes (Proxy @bloom) bsize))
    ~~~ policyFPR proxy policy
   where
     (~~~) = withinTolerance tolerance
@@ -273,18 +275,36 @@ prop_insertMany (FPR fpr) keys =
 -------------------------------------------------------------------------------
 
 class BloomFilter bloom where
-  fromList :: Hashable a => B.BloomPolicy -> B.Salt -> [a] -> bloom a
+  type BloomPolicy bloom :: Type
+
+  policyBits :: Proxy bloom -> BloomPolicy bloom -> Double
+
+  type BloomSize bloom :: Type
+
+  sizeBits :: Proxy bloom -> BloomSize bloom -> Int
+  sizeHashes :: Proxy bloom -> BloomSize bloom -> Int
+
+  fromList :: Hashable a => BloomPolicy bloom -> B.Salt -> [a] -> bloom a
   elem     :: Hashable a => a -> bloom a -> Bool
   notElem  :: Hashable a => a -> bloom a -> Bool
 
-  sizeForFPR    :: Proxy bloom -> B.FPR          -> B.NumEntries -> B.BloomSize
-  sizeForBits   :: Proxy bloom -> B.BitsPerEntry -> B.NumEntries -> B.BloomSize
-  sizeForPolicy :: Proxy bloom -> B.BloomPolicy  -> B.NumEntries -> B.BloomSize
-  policyForFPR  :: Proxy bloom -> B.FPR          -> B.BloomPolicy
-  policyForBits :: Proxy bloom -> B.BitsPerEntry -> B.BloomPolicy
-  policyFPR     :: Proxy bloom -> B.BloomPolicy -> B.FPR
+  sizeForFPR    :: Proxy bloom -> B.FPR          -> B.NumEntries -> BloomSize bloom
+  sizeForBits   :: Proxy bloom -> B.BitsPerEntry -> B.NumEntries -> BloomSize bloom
+  sizeForPolicy :: Proxy bloom -> BloomPolicy bloom -> B.NumEntries -> BloomSize bloom
+  policyForFPR  :: Proxy bloom -> B.FPR          -> BloomPolicy bloom
+  policyForBits :: Proxy bloom -> B.BitsPerEntry -> BloomPolicy bloom
+  policyFPR     :: Proxy bloom -> BloomPolicy bloom -> B.FPR
 
 instance BloomFilter Bloom.Classic.Bloom where
+  type instance BloomPolicy Bloom.Classic.Bloom = Bloom.Classic.BloomPolicy
+
+  policyBits _ = Bloom.Classic.policyBits
+
+  type instance BloomSize Bloom.Classic.Bloom = Bloom.Classic.BloomSize
+
+  sizeBits _ = Bloom.Classic.sizeBits
+  sizeHashes _ = Bloom.Classic.sizeHashes
+
   fromList = Bloom.Classic.fromList
   elem     = Bloom.Classic.elem
   notElem  = Bloom.Classic.notElem
@@ -297,6 +317,15 @@ instance BloomFilter Bloom.Classic.Bloom where
   policyFPR     _ = Bloom.Classic.policyFPR
 
 instance BloomFilter Bloom.Blocked.Bloom where
+  type instance BloomPolicy Bloom.Blocked.Bloom = Bloom.Blocked.BloomPolicy
+
+  policyBits _ = Bloom.Blocked.policyBits
+
+  type instance BloomSize Bloom.Blocked.Bloom = Bloom.Blocked.BloomSize
+
+  sizeBits _ = Bloom.Blocked.sizeBits
+  sizeHashes _ = Bloom.Blocked.sizeHashes
+
   fromList = Bloom.Blocked.fromList
   elem     = Bloom.Blocked.elem
   notElem  = Bloom.Blocked.notElem
