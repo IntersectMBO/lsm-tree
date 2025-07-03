@@ -113,25 +113,26 @@ references:
 
 # Introduction
 
-As part of the project to reduce `cardano-node`’s memory use [@utxo-db], by
-storing the bulk of the ledger state on disk (colloquially known as
-"UTxO-HD"[^1]), a high-performance disk backend has been developed as an
-arm’s-length project by Well-Typed LLP on behalf of Intersect MBO[^2]. The
-intent is for the backend to be integrated into the consensus layer of
-`cardano-node`, specifically to be used for storing the large parts of the
-Cardano ledger state.
+As part of the project to reduce `cardano-node`’s memory use [@utxo-db] by
+storing the bulk of the ledger state on disk, colloquially known as UTxO-HD[^1],
+a high-performance disk backend was developed as an arm’s-length project by
+Well-Typed LLP on behalf of Intersect MBO[^2]. The intent is for the backend to
+be integrated into the consensus layer of `cardano-node`, specifically to be
+used for storing the larger parts of the Cardano ledger state.
 
-This backend is now complete. It satisfies all its functional requirements, and
-meets all its performance requirements, including stretch targets.
-
-[^1]: "UTxO-HD" is a classic project-manager's misnomer. It is not just about
-      the UTxO, but all of the ledger state, and it is not about hard drives.
-      Indeed the performance of hard drives is too low to support the feature.
-      A better project name would be "On-disk ledger state", but there's no way
-      to remove poorly chosen names from people's heads once they're firmly
+[^1]: ‘UTxO-HD’ is a classic project-manager’s misnomer. The project is not just
+      about the UTxO but also other parts of the ledger state, and it is not
+      about hard drives. Indeed, the performance of hard drives is too low to
+      support the feature; faster drives like SSDs are needed instead. A better
+      project name would be ‘On-disk ledger state’, but there is no way to
+      remove poorly chosen names from people’s heads once they are firmly
       engrained.
 
-[^2]: And previously on behalf of Input Output Global, Inc. (IOG).
+[^2]: In its early stages, it was developed on behalf of Input Output Global,
+      Inc. (IOG).
+
+This backend is now complete. It satisfies all its functional requirements and
+meets all its performance requirements, including stretch targets.
 
 The backend is implemented as a Haskell library called `lsm-tree` [@lsm-tree],
 which provides efficient on-disk key–value storage using log-structured
