@@ -76,7 +76,7 @@ references:
   - id: lsm-tree-api-docs
     type: webpage
     title: "`lsm-tree` API documentation"
-    URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha/doc
+    URL: https://intersectmbo.github.io/lsm-tree/index.html
   - id: integration-notes
     author:
       - given: Duncan
