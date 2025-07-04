@@ -201,3 +201,23 @@ Bloom filter for each table run, which involves reading each run and inserting
 into a new Bloom filter, and writing out the new Bloom filter. This would of
 course be additional development work, but the infrastructure needed is
 present already.
+
+# Possible file system incompatibility with XFS
+
+The authors have seen at least one platform environment where there was a
+failure when using a table configuration with no disk caching (i.e.
+`DiskCacheNone`). It is unconfirmed, but the suspicion is that some versions of
+the Linux XFS file system (and at least the version on the default AWS Amazon
+Linux 2023 AMI) do not support the system call that underlies [`fileSetCaching`]
+from the `unix` package. This is an `fcntl` call, used to set the file status
+flag `O_DIRECT`. XFS certainly supports `O_DIRECT`, but it may support it only
+when the file is opened using this flag, and not when trying to set the flag on
+an already open file.
+
+A workaround is to use the EXT4 file system, or use `DiskCacheAll` for the
+table configuration (at the cost of using more memory and putting pressure on
+the page cache). If this issue is confirmed to be a widespread problem, it may
+become necessary to extend the `unix` package to allow setting the `O_DIRECT`
+flag for file open.
+
+[`fileSetCaching`]: https://hackage-content.haskell.org/package/unix-2.8.7.0/docs/System-Posix-Fcntl.html#v:fileSetCaching
