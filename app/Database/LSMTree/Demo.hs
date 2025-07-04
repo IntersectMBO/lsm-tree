@@ -28,7 +28,6 @@ import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FS
 import qualified System.FS.BlockIO.Sim as FSSim
-import qualified System.FS.IO as FS
 import qualified System.FS.Sim.MockFS as FSSim
 import           System.IO.Unsafe (unsafePerformIO)
 
@@ -151,8 +150,7 @@ demo = do
           print' (fmap getValue os)
 
   do
-    let hasFS = FS.ioHasFS (FS.MountPoint "")
-    FS.withIOHasBlockIO hasFS FS.defaultIOCtxParams $ \hasBlockIO -> do
+    FS.withIOHasBlockIO (FS.MountPoint "") FS.defaultIOCtxParams $ \hasFS hasBlockIO -> do
       simpleAction hasFS hasBlockIO
       pause -- [16]
 

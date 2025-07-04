@@ -274,9 +274,9 @@ import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
 import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
 import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO (..), defaultIOCtxParams)
-import           System.FS.BlockIO.IO (withIOHasBlockIO)
-import           System.FS.IO (HandleIO, ioHasFS)
+import           System.FS.BlockIO.API (HasBlockIO (..))
+import           System.FS.BlockIO.IO (defaultIOCtxParams, withIOHasBlockIO)
+import           System.FS.IO (HandleIO)
 import           System.Random (randomIO)
 
 --------------------------------------------------------------------------------
@@ -471,9 +471,8 @@ withOpenSessionIO ::
 withOpenSessionIO tracer sessionDir action = do
   let mountPoint = MountPoint sessionDir
   let sessionDirFsPath = mkFsPath []
-  let hasFS = ioHasFS mountPoint
   sessionSalt <- randomIO
-  withIOHasBlockIO hasFS defaultIOCtxParams $ \hasBlockIO ->
+  withIOHasBlockIO mountPoint defaultIOCtxParams $ \hasFS hasBlockIO ->
     withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
 
 {- |
