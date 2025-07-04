@@ -1,9 +1,25 @@
-# Storing the Cardano ledger state on disk: integration notes for high-performance backend
+---
+title: "Storing the Cardano ledger state on disk:
+        integration notes for high-performance backend"
+author:
+  - Duncan Coutts
+  - Joris Dral
+  - Wolfgang Jeltsch
+date: May 2025
 
-Authors: Joris Dral, Wolfgang Jeltsch
-Date: May 2025
+toc: true
+numbersections: true
+classoption:
+ - 11pt
+ - a4paper
+geometry:
+ - margin=2.5cm
+header-includes:
+ - \usepackage{microtype}
+ - \usepackage{mathpazo}
+---
 
-## Sessions
+# Sessions
 
 Creating new empty tables or opening tables from snapshots requires a `Session`.
 The session can be created using `openSession`, which has to be done in the
@@ -15,7 +31,7 @@ Closing the session will automatically close all tables, but this is only
 intended to be a backup functionality: ideally the user closes all tables
 manually.
 
-## The compact index
+# The compact index
 
 The compact index is a memory-efficient data structure that maintains serialised
 keys. Rather than storing full keys, it only stores the first 64 bits of each
@@ -60,7 +76,7 @@ keys is as good as any other total ordering. However, the consensus layer will
 face the situation where a range lookup or a cursor read returns key–value pairs
 slightly out of order. Currently, we do not expect this to cause problems.
 
-## Snapshots
+# Snapshots
 
 Snapshots currently require support for hard links. This means that on Windows
 the library only works when using NTFS. Support for other file systems could be
@@ -84,7 +100,7 @@ a cheaper non-SSD drive. This feature was unfortunately not anticipated in the
 project specification and so is not currently included. As discussed above, it
 could be added with some additional work.
 
-## Value resolving
+# Value resolving
 
 When instantiating the `ResolveValue` class, it is usually advisable to
 implement `resolveValue` such that it works directly on the serialised values.
@@ -94,7 +110,7 @@ function is intended to work like `(+)`, then `resolveValue` could add the raw
 bytes of the serialised values and would likely achieve better performance this
 way.
 
-## `io-classes` incompatibility
+# `io-classes` incompatibility
 
 At the time of writing, various packages in the `cardano-node` stack depend on
 `io-classes-1.5` and the 1.5-versions of its daughter packages, like
@@ -124,3 +140,84 @@ It is known to us that the `ouroboros-consensus` stack has not been updated to
 https://github.com/IntersectMBO/ouroboros-network/pull/4951. We would advise to
 fix this Nix-related bug rather than downgrading `lsm-tree`’s dependency on
 `io-classes` to version 1.5.
+
+# Security of hash based data structures
+
+Data structures based on hashing have to be considered carefully when they may
+be used with untrusted data. If the attacker can control the keys in a hash
+table for example, they may be able to arrange for all their keys to have hash
+collisions which may cause unexpected performance problems. This is why the
+Haskell Cardano node implementation does not use hash tables, and uses
+ordering-based containers instead (such as `Data.Map`).
+
+The Bloom filters in an LSM tree are hash based data structures. For performance
+they do not use cryptographic hashes. So in principle it would be possibile for
+an attacker to arrange that all their keys hash to a common set of bits. This
+would be a potential problem for the UTxO and other stake related tables in
+Cardano, since it is the users that get to pick (with old modest grinding
+difficulty) their UTxO keys (TxIn) and stake keys (verification key hashes). It
+would be even more serious if an attacker can grind their set of malicious keys
+locally, in the knowledge that the same set of keys will hash the same way on
+all other Cardano nodes.
+
+This issue was not considered in the original project specification, but we
+have considered it and included a mitigation. The mitigation is that on the
+initial creation of a lsm-tree session, a random salt is conjured (from
+`/dev/random`) and stored persistenly as part of the session. This salt is then
+used as part of the Bloom filter hashing for all runs in all tables in the
+session.
+
+The result is that while it is in principle still possible to produce hash
+collisions in the Bloom filter, this now depends on knowing the salt. And now
+every node has a different salt. So a system wide attack becomes impossible;
+instead it is only plausible to target individual nodes. Discovering a node's
+salt would also be impractically difficult. In principle there is a timing
+side channel, in that collisions will cause more I/O and thus take longer.
+An attacker would need to get upstream of a victim node, supply a valid block
+and measure the timing of receiving the block downstream. There is however a
+large amount of noise.
+
+Overall, our judgement is that this mitigation is practically sufficient, but
+it merits a securit review from others who may make a different judgement. It
+is also worth noting that this issue may occur in other LSM-trees used in other
+Cardano and non-Cardano implementations. In particular, RocksDB does not appear
+to use a salt at all.
+
+Note that a per-run or per-table hash salt would incur non-trivial costs,
+because it would reduce the sharing available in bulk Bloom filter lookups
+(looking up N keys in M filters). The Bloom filter lookup is a performance
+sensitive part of the overall database implementation.
+
+In the Cardano context, a downside of a per-session (and thus per-node) Bloom
+filter salt is that it may interact poorly with sharing of pre-created
+databases. While it will work to copy a whole database session (since this
+includes the salt), it means the salt is then shared between the nodes. If SPOs
+share databases widely with each other (to avoid syning the entire chain), then
+the salt diversity is lost. This would be especially acute with Mithril which
+shares a single copy of the database. It may be necesary for proper Mithril
+support to add a re-salting operation, and to perform this re-salting operation
+after cloning a Mithril snapshot. Re-salting would involve re-creating the
+Bloom filter for each table run, which involves reading each run and inserting
+into a new Bloom filter, and writing out the new Bloom filter. This would of
+course be additional development work, but the infrastructure needed is
+present already.
+
+# Possible file system incompatibility with XFS
+
+The authors have seen at least one platform environment where there was a
+failure when using a table configuration with no disk caching (i.e.
+`DiskCacheNone`). It is unconfirmed, but the suspicion is that some versions of
+the Linux XFS file system (and at least the version on the default AWS Amazon
+Linux 2023 AMI) do not support the system call that underlies [`fileSetCaching`]
+from the `unix` package. This is an `fcntl` call, used to set the file status
+flag `O_DIRECT`. XFS certainly supports `O_DIRECT`, but it may support it only
+when the file is opened using this flag, and not when trying to set the flag on
+an already open file.
+
+A workaround is to use the EXT4 file system, or use `DiskCacheAll` for the
+table configuration (at the cost of using more memory and putting pressure on
+the page cache). If this issue is confirmed to be a widespread problem, it may
+become necessary to extend the `unix` package to allow setting the `O_DIRECT`
+flag for file open.
+
+[`fileSetCaching`]: https://hackage-content.haskell.org/package/unix-2.8.7.0/docs/System-Posix-Fcntl.html#v:fileSetCaching
