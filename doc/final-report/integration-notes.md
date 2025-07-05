@@ -141,66 +141,66 @@ https://github.com/IntersectMBO/ouroboros-network/pull/4951. We would advise to
 fix this Nix-related bug rather than downgrading `lsm-tree`’s dependency on
 `io-classes` to version 1.5.
 
-# Security of hash based data structures
+# Security of hash-based data structures
 
 Data structures based on hashing have to be considered carefully when they may
-be used with untrusted data. If the attacker can control the keys in a hash
-table for example, they may be able to arrange for all their keys to have hash
-collisions which may cause unexpected performance problems. This is why the
-Haskell Cardano node implementation does not use hash tables, and uses
-ordering-based containers instead (such as `Data.Map`).
+be used with untrusted data. For example, an attacker who can control the keys
+in a hash table may be able to provoke hash collisions and cause unexpected
+performance problems this way. This is why the Haskell Cardano node
+implementation does not use hash tables but ordering-based containers, such as
+those provided by `Data.Map`.
 
-The Bloom filters in an LSM tree are hash based data structures. For performance
-they do not use cryptographic hashes. So in principle it would be possibile for
-an attacker to arrange that all their keys hash to a common set of bits. This
-would be a potential problem for the UTxO and other stake related tables in
-Cardano, since it is the users that get to pick (with old modest grinding
-difficulty) their UTxO keys (TxIn) and stake keys (verification key hashes). It
-would be even more serious if an attacker can grind their set of malicious keys
-locally, in the knowledge that the same set of keys will hash the same way on
-all other Cardano nodes.
+The Bloom filters in an LSM-Tree are hash-based data structures. For the sake of
+performance, they do not use cryptographic hashes. Thus, without additional
+measures, an attacker can in principle choose keys whose hashs identify mostly
+the same bits. This is a potential problem for the UTxO and other stake-related
+tables in Cardano, since it is the users who get to pick their UTxO keys (TxIn)
+and stake keys (verification key hashes) and these keys will hash the same way
+on all other Cardano nodes.
 
-This issue was not considered in the original project specification, but we
-have considered it and included a mitigation. The mitigation is that on the
-initial creation of a lsm-tree session, a random salt is conjured (from
-`/dev/random`) and stored persistenly as part of the session. This salt is then
-used as part of the Bloom filter hashing for all runs in all tables in the
-session.
+This issue was not considered in the original project specification, but we have
+taken it into account and have included a mitigation in `lsm-tree`. The
+mitigation is that, on the initial creation of a session, a random salt is
+conjured and stored persistenly as part of the session. This salt is then used
+as part of the Bloom filter hashing for all runs in all tables of the session.
 
-The result is that while it is in principle still possible to produce hash
-collisions in the Bloom filter, this now depends on knowing the salt. And now
-every node has a different salt. So a system wide attack becomes impossible;
-instead it is only plausible to target individual nodes. Discovering a node's
-salt would also be impractically difficult. In principle there is a timing
-side channel, in that collisions will cause more I/O and thus take longer.
-An attacker would need to get upstream of a victim node, supply a valid block
-and measure the timing of receiving the block downstream. There is however a
-large amount of noise.
+The consequence is that, while it is in principle still possible to produce hash
+collisions in the Bloom filter, this now depends on knowing the salt. However,
+every node has a different salt. Thus a system-wide attack becomes impossible.
+It is only plausible to target individual nodes, but discovering a node’s salt
+is extremely difficult. In principle there is a timing side channel, in that
+collisions will cause more I/O and thus cause longer running times. To exploit
+this, an attacker would need to get upstream of a victim node, supply a valid
+block and measure the timing of receiving the block downstream. There would,
+however, be a large amount of noise spoiling such an attack.
 
-Overall, our judgement is that this mitigation is practically sufficient, but
-it merits a securit review from others who may make a different judgement. It
-is also worth noting that this issue may occur in other LSM-trees used in other
-Cardano and non-Cardano implementations. In particular, RocksDB does not appear
-to use a salt at all.
+Overall, our judgement is that our mitigation is sufficient, but it merits a
+security review from others who may make a different judgement. It is also worth
+noting that the described hash clash issue may occur in other LSM-tree
+implementations used in other software, related and unrelated to Cardano. In
+particular, RocksDB does not appear to use a salt at all.
 
-Note that a per-run or per-table hash salt would incur non-trivial costs,
-because it would reduce the sharing available in bulk Bloom filter lookups
-(looking up N keys in M filters). The Bloom filter lookup is a performance
-sensitive part of the overall database implementation.
+Note that using a per-run or per-table hash salt would incur non-trivial costs,
+because it would reduce the sharing available in bulk Bloom filter lookups,
+where several keys are looked up in several filters. Given that the Bloom filter
+lookup is a performance-sensitive part of the overall database implementation,
+such an approach to salting does not seem feasible.
 
-In the Cardano context, a downside of a per-session (and thus per-node) Bloom
-filter salt is that it may interact poorly with sharing of pre-created
-databases. While it will work to copy a whole database session (since this
-includes the salt), it means the salt is then shared between the nodes. If SPOs
-share databases widely with each other (to avoid syning the entire chain), then
-the salt diversity is lost. This would be especially acute with Mithril which
-shares a single copy of the database. It may be necesary for proper Mithril
-support to add a re-salting operation, and to perform this re-salting operation
-after cloning a Mithril snapshot. Re-salting would involve re-creating the
-Bloom filter for each table run, which involves reading each run and inserting
-into a new Bloom filter, and writing out the new Bloom filter. This would of
-course be additional development work, but the infrastructure needed is
-present already.
+In the Cardano context, a downside of picking Bloom filter salts per session and
+thus per node is that this interacts poorly with sharing of pre-created
+databases. While it would still be possible to copy a whole database session,
+since this includes the salt, doing so would result in the salt being shared
+between nodes. If SPOs shared databases widely with each other, to avoid
+processing the entire chain, then the salt diversity would be lost.
+
+Picking Bloom filter salts per session is particularly problematic in Mithril,
+which shares a single copy of the database. It may be necessary for proper
+Mithril support to add a re-salting operation and to perform this operation
+after cloning a Mithril snapshot. Re-salting would involve re-creating the Bloom
+filters for all table runs, which would mean reading each run, inserting its
+keys into a new Bloom filter and finally writing out the new Bloom filter.
+Adding such a feature would, of course, incur additional development work, but
+the infrastructure needed is present already.
 
 # Possible file system incompatibility with XFS
 
