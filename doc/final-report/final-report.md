@@ -63,7 +63,6 @@ references:
   - id: lsm-tree-prototype
     type: webpage
     title: "`lsm-tree` prototype"
-    locator: "ScheduledMerges.hs"
     URL: https://github.com/IntersectMBO/lsm-tree/blob/alpha/prototypes/ScheduledMerges.hs
   - id: blockio-uring
     type: software
