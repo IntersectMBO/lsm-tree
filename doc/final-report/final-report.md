@@ -834,9 +834,9 @@ which must be capable of performing random reads with at least 10 k IOPS at
 queue depth 1 and at least 100 k IOPS at queue depth 32, as measured by the
 `fio` I/O benchmarking tool. We have interpreted this specification such that it
 refers to `fio` running on one core and using direct I/O, where the latter
-ensures that we measure actual SSD hardware performance. The appendix *[SSD
-benchmarking script]* shows the `fio` script that we have used for determining
-SSD performance.
+ensures that we measure actual SSD hardware performance. The subsection *[SSD
+benchmarking script]* in the appendix shows the `fio` script that we have used
+for determining SSD performance.
 
 All our performance results are for Linux only. This is not a deficiency, since
 the performance requirements concern only Linux, while the functional
@@ -913,11 +913,11 @@ performance benchmarks:
   better.
 
 * For I/O performance, we have used the `fio` benchmark tool with the
-  configuration detailed in the appendix *[SSD benchmarking script]*, measuring
-  random 4 KiB reads at QD 32. For submitting the I/O requests, we have used one
-  core as well as two cores, the latter only for machines with two or more
-  *physical* cores. Note that the two-core results we report are aggregates
-  across both cores, not per-core results.
+  configuration detailed in the appendix in the subsection *[SSD benchmarking
+  script]*, measuring random 4 KiB reads at QD 32. For submitting the I/O
+  requests, we have used one core as well as two cores, the latter only for
+  machines with two or more *physical* cores. Note that the two-core results we
+  report are aggregates across both cores, not per-core results.
 
 Furthermore, we have determined the results of a couple of micro-benchmarks
 created as part of the project:
@@ -1058,7 +1058,7 @@ library provides. By using different handles, we can isolate lookups from
 subsequent updates while still allowing parallel execution. Traditional
 transactional databases also support transaction isolation but require
 additional synchronisation for this. We elaborate on this topic in the appendix
-*[Functional persistence]*.
+in the subsection *[Functional persistence]*.
 
 The advanced design of the pipelined mode makes its correctness less obvious
 than the correctness of the straightforward serial mode. Therefore, we compare
@@ -1439,7 +1439,7 @@ bs=4k
 In the subsubsection *[Serial and pipelined execution]*, we described how to
 implement a form of pipelining using the `lsm-tree` package and briefly
 mentioned that implementing such pipelining using traditional databases is only
-possible with additional synchronization. In this appendix, we elaborate on
+possible with additional synchronization. In this subsection, we elaborate on
 this.
 
 Suppose we have the following two transactions:
