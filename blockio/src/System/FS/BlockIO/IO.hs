@@ -2,8 +2,9 @@
 --
 -- The implementation of the 'HasBlockIO' interface provided in this module is
 -- platform-dependent. Most importantly, on Linux, the implementation of
--- 'submitIO' is backed by @blockio-uring@: a library for asynchronous I/O. On
--- Windows and MacOS, the implementation of 'submitIO' only supports serial I/O.
+-- 'submitIO' is backed by @blockio-uring@: a library for asynchronous I\/O. On
+-- Windows and MacOS, the implementation of 'submitIO' only supports serial
+-- I\/O.
 module System.FS.BlockIO.IO (
     -- * Implementation details #impl#
     -- $impl
@@ -36,9 +37,9 @@ import           System.FS.IO (HandleIO, ioHasFS)
   reason, we include below some documentation about the effects of calling the
   interface functions on different platforms.
 
-  Note: if the @serialblockio@ Cabal flag is enabled, then the Linux implementation
-  uses a mocked context and serial I/O for 'close' and 'submitIO', just like the
-  MacOS and Windows implementations do.
+  Note: if the @serialblockio@ Cabal flag is enabled, then the Linux
+  implementation uses a mocked context and serial I\/O for 'close' and
+  'submitIO', just like the MacOS and Windows implementations do.
 
   [IO context]:  When an instance of the 'HasBlockIO' interface for Linux
     systems is initialised, an @io_uring@ context is created using the
@@ -57,11 +58,11 @@ import           System.FS.IO (HandleIO, ioHasFS)
     * MacOS: close the mocked context
     * Windows: close the mocked context
 
-  ['submitIO']: Submit a batch of I/O operations using:
+  ['submitIO']: Submit a batch of I\/O operations using:
 
     * Linux: the @submitIO@ function from the @blockio-uring@ package
-    * MacOS: serial I/O using a 'HasFS'
-    * Windows: serial I/O using a 'HasFS'
+    * MacOS: serial I\/O using a 'HasFS'
+    * Windows: serial I\/O using a 'HasFS'
 
   ['hSetNoCache']:
 

@@ -1,14 +1,23 @@
 cabal-version:   3.4
 name:            blockio
 version:         0.1.0.0
-synopsis:        Abstract interface for batched, asynchronous I/O
+synopsis:        Perform batches of disk I/O operations.
 description:
-  This packages defines an abstract interface for batched, asynchronous I\/O,
-  for use with the abstract interface for file system I\/O defined by the
-  [fs-api](https://hackage.haskell.org/package/fs-api) package.
+  Perform batches of disk I\/O operations. Performing batches of disk I\/O can
+  lead to performance improvements over performing each disk I\/O operation
+  individually. Performing batches of disk I\/O /concurrently/ can lead to an
+  even bigger performance improvement depending on the implementation of batched
+  I\/O.
 
-  The /sim/ sub-library of this package defines /simulated/ batched, asynchronous I\/O
-  for use with the [fs-sim](https://hackage.haskell.org/package/fs-sim) package.
+  The batched I\/O functionality in the library is separated into an /abstract/
+  /interface/ and /implementations/ of that abstract interface. The advantage of
+  programming against an abstract interface is that code can be agnostic to the
+  implementation of the interface, allowing implementations to be freely swapped
+  out. The library provides multiple implementations of batched I\/O:
+  platform-dependent implementations using the /real/ file system (with
+  asynchronous I\/O), and a simulated implementation for testing purposes.
+
+  See the "System.FS.BlockIO" module for an example of how to use the library.
 
 license:         Apache-2.0
 license-files:
@@ -65,6 +74,7 @@ library
   import:          language, warnings
   hs-source-dirs:  src
   exposed-modules:
+    System.FS.BlockIO
     System.FS.BlockIO.API
     System.FS.BlockIO.IO
     System.FS.BlockIO.Serial.Internal

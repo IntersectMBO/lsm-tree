@@ -28,7 +28,7 @@ import qualified System.FS.BlockIO.IO.Internal as IOI
   -> IO (API.HasBlockIO IO h)
   #-}
 -- | IO instantiation of 'HasBlockIO', using an existing 'HasFS'. Thus this
--- implementation does not take advantage of parallel I/O.
+-- implementation does not take advantage of parallel I\/O.
 serialHasBlockIO ::
      (MonadThrow m, MonadMVar m, PrimMonad m, Eq h)
   => (Handle h -> Bool -> m ())

@@ -65,23 +65,12 @@ import           Text.Printf
 -- again. Instead, the user should create a new instance of the interface.
 --
 -- Note: there are a bunch of functions in the interface that have nothing to do
--- with submitting large batches of I/O operations. In fact, only 'close' and
+-- with submitting large batches of I\/O operations. In fact, only 'close' and
 -- 'submitIO' are related to that. All other functions were put in this record
 -- for simplicity because the authors of the library needed them and it was more
 -- straightforward to add them here then to add them to @fs-api@. Still these
 -- unrelated functions could and should all be moved into @fs-api@ at some point
 -- in the future.
---
--- === Implementations
---
--- There are currently two known implementations of the interface:
---
--- * An implementation using the real file system, which can be found in the
---   "System.FS.BlockIO.IO" module. This implementation is platform-dependent.
---
--- * An implementation using a simulated file system, which can be found in the
---   @System.FS.BlockIO.Sim@ module of the @blockio:sim@ sublibrary. This
---   implementation is uniform across platforms.
 --
 data HasBlockIO m h = HasBlockIO {
     -- | (Idempotent) close the IO context that is required for running
@@ -206,6 +195,7 @@ ioopByteCount (IOOpWrite _ _ _ _ c) = c
 
 -- | Number of read/written bytes.
 newtype IOResult = IOResult ByteCount
+  deriving stock (Show, Eq)
   deriving newtype VP.Prim
 
 newtype instance VUM.MVector s IOResult = MV_IOResult (VP.MVector s IOResult)

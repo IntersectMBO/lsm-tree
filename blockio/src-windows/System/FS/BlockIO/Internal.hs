@@ -17,7 +17,7 @@ import qualified System.Win32.File as Windows
 import qualified System.Win32.HardLink as Windows
 
 -- | For now we use the portable serial implementation of HasBlockIO. If you
--- want to provide a proper async I/O implementation for Windows, then this is
+-- want to provide a proper async I\/O implementation for Windows, then this is
 -- where you should put it.
 --
 -- The recommended choice would be to use the Win32 IOCP API.

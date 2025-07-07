@@ -92,7 +92,7 @@ unsafeFromHasFS hfs =
       hfs
   where
     -- TODO: It should be possible for the implementations and simulation to
-    -- throw an FsError when doing file I/O with misaligned byte arrays after
+    -- throw an FsError when doing file I\/O with misaligned byte arrays after
     -- hSetNoCache. Maybe they should? It might be nicest to move hSetNoCache
     -- into fs-api and fs-sim because we'd need access to the internals.
     hSetNoCache _h _b = pure ()

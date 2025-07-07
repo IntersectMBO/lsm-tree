@@ -14,7 +14,7 @@ import qualified System.Posix.Files as Unix
 import qualified System.Posix.Unistd as Unix
 
 -- | For now we use the portable serial implementation of HasBlockIO. If you
--- want to provide a proper async I/O implementation for OSX, then this is where
+-- want to provide a proper async I\/O implementation for OSX, then this is where
 -- you should put it.
 --
 -- The recommended choice would be to use the POSIX AIO API.
