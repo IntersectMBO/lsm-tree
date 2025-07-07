@@ -1,0 +1,123 @@
+name: Check release builds
+
+on:
+  push:
+    tags:
+      - blockio-*
+      - bloomfilter-blocked-*
+      - lsm-tree-*
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Set the default shell on all platforms.
+defaults:
+  run:
+    shell: sh
+
+jobs:
+  ################################################################################
+  # Build
+  ################################################################################
+  build:
+    name: |
+      ${{ format(
+            'Check release build on {0}{1}{2}',
+            startsWith(matrix.os, 'ubuntu-') && 'Linux' || startsWith(matrix.os, 'macOS-') && 'macOS' || startsWith(matrix.os, 'windows-') && 'Windows',
+            matrix.ghc-version && format(' with GHC {0}', matrix.ghc-version),
+            matrix.cabal-version && format(' and Cabal {0}', matrix.cabal-version)
+          )
+       }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macOS-latest", "windows-latest"]
+        ghc-version: ["9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
+        cabal-version: ["3.12"]
+
+    env:
+      tag-name: ${{ github.ref_name }}
+      release-build-target: |
+        ${{ startsWith(github.ref_name, 'blockio') && './blockio/blockio.cabal' || startsWith(github.ref_name, 'bloomfilter-blocked') && './bloomfilter-blocked/bloomfilter-blocked.cabal' || startsWith(github.ref_name, 'lsm-tree') && './lsm-tree.cabal' }}
+
+    steps:
+    - name: 🗄️ Print release build target
+      run: |
+        echo ${{ env.tag-name }}
+        echo ${{ env.release-build-target }}
+
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🗄️ Print Job info
+      run: |
+        echo 'matrix.os: ${{ matrix.os }}'
+        echo 'matrix.ghc-version: ${{ matrix.ghc-version }}'
+        echo 'matrix.cabal-version: ${{ matrix.cabal-version }}'
+        echo 'toJSON(matrix): ${{ toJSON(matrix) }}'
+
+    - name: 🛠️ Setup Haskell
+      id: setup-haskell
+      uses:  haskell-actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc-version }}
+        cabal-version: ${{ matrix.cabal-version }}
+
+    - name: 🛠️ Setup system dependencies (Linux)
+      if: ${{ runner.os == 'Linux' }}
+      run: sudo apt-get update && sudo apt-get -y install liburing-dev librocksdb-dev
+      env:
+        DEBIAN_FRONTEND: "noninteractive"
+
+    - name: 🛠️ Configure
+      run: |
+        echo "packages: ${{ env.release-build-target }}" > cabal.project.temp
+        cabal configure \
+          --project-file="cabal.project.temp" \
+          --disable-tests \
+          --disable-benchmarks \
+          --index-state=HEAD \
+          --ghc-options="-Werror"
+        cat "cabal.project.temp.local"
+
+    - name: 💾 Generate Cabal plan
+      run: |
+        cabal build all \
+          --project-file="cabal.project.temp" \
+          --dry-run
+
+    - name: 💾 Restore Cabal dependencies
+      uses: actions/cache/restore@v4
+      if: ${{ !env.ACT }}
+      id: cache-cabal
+      env:
+        key: check-release-build-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ env.key }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
+        restore-keys: ${{ env.key }}-
+
+    - name: 🛠️ Build Cabal dependencies
+      run: |
+        cabal build all \
+          --project-file="cabal.project.temp" \
+          --only-dependencies
+
+    - name: 💾 Save Cabal dependencies
+      uses: actions/cache/save@v4
+      if: ${{ !env.ACT && steps.cache-cabal.outputs.cache-hit != 'true' }}
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ steps.cache-cabal.outputs.cache-primary-key }}
+
+    - name: 🏗️ Build
+      run: |
+        cabal build all \
+          --project-file="cabal.project.temp"
