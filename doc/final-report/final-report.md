@@ -1305,11 +1305,11 @@ table. The reason is that for smaller tables there is less merging work to do.
 ### Reproducing the results
 
 The primary benchmark’s code is in the repository in
-`bench/macro/lsm-tree-bench-wp8.hs`. It can be executed using commands of the
-following shape:
+`bench/macro/utxo-bench.hs`. It can be executed using commands of the following
+shape:
 
 ```
-cabal run lsm-tree-bench-wp8 -- [subcommand] [options]
+cabal run utxo-bench -- [subcommand] [options]
 ```
 
 For the full command line help use the following commands:
@@ -1317,19 +1317,19 @@ For the full command line help use the following commands:
 * Global help:
 
     ```
-    cabal run lsm-tree-bench-wp8 -- --help
+    cabal run utxo-bench -- --help
     ```
 
 * Help on the `setup` subcommand:
 
     ```
-    cabal run lsm-tree-bench-wp8 -- setup --help
+    cabal run utxo-bench -- setup --help
     ```
 
 * Help on the `run` subcommand:
 
     ```
-    cabal run lsm-tree-bench-wp8 -- run --help
+    cabal run utxo-bench -- run --help
     ```
 
 The execution of the benchmark is in two phases:
