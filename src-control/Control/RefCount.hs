@@ -605,12 +605,14 @@ enableForgottenRefChecks :: IO ()
 disableForgottenRefChecks :: IO ()
 
 #ifdef NO_IGNORE_ASSERTS
-enableForgottenRefChecks =
+enableForgottenRefChecks = do
+    performMajorGCWithBlockingIfAvailable
     modifyIORef globalForgottenRef $ \case
       Disabled -> Enabled Nothing
       Enabled _  -> error "enableForgottenRefChecks: already enabled"
 
-disableForgottenRefChecks =
+disableForgottenRefChecks = do
+    performMajorGCWithBlockingIfAvailable
     modifyIORef globalForgottenRef $ \case
       Disabled -> error "disableForgottenRefChecks: already disabled"
       Enabled Nothing -> Disabled
