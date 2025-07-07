@@ -63,9 +63,7 @@ import qualified Options.Applicative as O
 import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
 import qualified System.FS.API as FS
-import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FsIO
-import qualified System.FS.IO as FsIO
 import           System.IO
 import           System.Mem (performMajorGC)
 import qualified System.Random as Random
@@ -438,17 +436,8 @@ doSetup gopts opts = do
     void $ timed_ $ doSetup' gopts opts
 
 doSetup' :: GlobalOpts -> SetupOpts -> IO ()
-doSetup' gopts opts = do
-    let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint (rootDir gopts)
-
-    let hasFS :: FS.HasFS IO FsIO.HandleIO
-        hasFS = FsIO.ioHasFS mountPoint
-
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
-
-    let name = LSM.toSnapshotName ("bench_" ++ show (initialSize gopts))
-
+doSetup' gopts opts =
+    FsIO.withIOHasBlockIO mountPoint FsIO.defaultIOCtxParams $ \hasFS hasBlockIO ->
     LSM.withOpenSession (mkTracer gopts) hasFS hasBlockIO benchSalt (FS.mkFsPath []) $ \session -> do
         tbl <- LSM.newTableWith @IO @K @V @B (mkTableConfigSetup gopts opts benchTableConfig) session
 
@@ -462,6 +451,12 @@ doSetup' gopts opts = do
                 ]
 
         LSM.saveSnapshot name label tbl
+  where
+    mountPoint :: FS.MountPoint
+    mountPoint = FS.MountPoint (rootDir gopts)
+
+    name = LSM.toSnapshotName ("bench_" ++ show (initialSize gopts))
+
 
 -------------------------------------------------------------------------------
 -- dry-run
@@ -600,17 +595,8 @@ toOperations lookups inserts = (batch1, batch2)
 -------------------------------------------------------------------------------
 
 doRun :: GlobalOpts -> RunOpts -> IO ()
-doRun gopts opts = do
-    let mountPoint :: FS.MountPoint
-        mountPoint = FS.MountPoint (rootDir gopts)
-
-    let hasFS :: FS.HasFS IO FsIO.HandleIO
-        hasFS = FsIO.ioHasFS mountPoint
-
-    hasBlockIO <- FsIO.ioHasBlockIO hasFS FS.defaultIOCtxParams
-
-    let name = LSM.toSnapshotName "bench"
-
+doRun gopts opts =
+    FsIO.withIOHasBlockIO mountPoint FsIO.defaultIOCtxParams $ \hasFS hasBlockIO ->
     LSM.withOpenSession (mkTracer gopts) hasFS hasBlockIO benchSalt (FS.mkFsPath []) $ \session ->
       withLatencyHandle $ \h -> do
         -- open snapshot
@@ -652,6 +638,11 @@ doRun gopts opts = do
 
         let ops = batchCount opts * batchSize opts
         printf "Operations per second: %7.01f ops/sec\n" (fromIntegral ops / time)
+  where
+    mountPoint :: FS.MountPoint
+    mountPoint = FS.MountPoint (rootDir gopts)
+
+    name = LSM.toSnapshotName ("bench_" ++ show (initialSize gopts))
 
 -------------------------------------------------------------------------------
 -- sequential

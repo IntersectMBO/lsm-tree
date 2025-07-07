@@ -1,14 +1,23 @@
 cabal-version:   3.4
 name:            blockio
 version:         0.1.0.0
-synopsis:        Abstract interface for batched, asynchronous I/O
+synopsis:        Perform batches of disk I/O operations.
 description:
-  This packages defines an abstract interface for batched, asynchronous I\/O,
-  for use with the abstract interface for file system I\/O defined by the
-  [fs-api](https://hackage.haskell.org/package/fs-api) package.
+  Perform batches of disk I\/O operations. Performing batches of disk I\/O can
+  lead to performance improvements over performing each disk I\/O operation
+  individually. Performing batches of disk I\/O /concurrently/ can lead to an
+  even bigger performance improvement depending on the implementation of batched
+  I\/O.
 
-  The /sim/ sub-library of this package defines /simulated/ batched, asynchronous I\/O
-  for use with the [fs-sim](https://hackage.haskell.org/package/fs-sim) package.
+  The batched I\/O functionality in the library is separated into an /abstract/
+  /interface/ and /implementations/ of that abstract interface. The advantage of
+  programming against an abstract interface is that code can be agnostic to the
+  implementation of the interface, allowing implementations to be freely swapped
+  out. The library provides multiple implementations of batched I\/O:
+  platform-dependent implementations using the /real/ file system (with
+  asynchronous I\/O), and a simulated implementation for testing purposes.
+
+  See the "System.FS.BlockIO" module for an example of how to use the library.
 
 license:         Apache-2.0
 license-files:
@@ -18,7 +27,7 @@ license-files:
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:      TODO: MAINTAINER EMAIL
+maintainer:      joris@well-typed.com
 copyright:
   (c) 2023 Input Output Global, Inc. (IOG)
   (c) 2023-2025 INTERSECT
@@ -33,13 +42,11 @@ source-repository head
   location: https://github.com/IntersectMBO/lsm-tree
   subdir:   blockio
 
--- TODO: this tag obviously does not exist yet because the package has not
--- been published
 source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
-  tag:      blockio-0.1.0.0
   subdir:   blockio
+  tag:      blockio-0.1.0.0
 
 common warnings
   ghc-options:
@@ -67,8 +74,13 @@ library
   import:          language, warnings
   hs-source-dirs:  src
   exposed-modules:
+    System.FS.BlockIO
     System.FS.BlockIO.API
     System.FS.BlockIO.IO
+    System.FS.BlockIO.Serial.Internal
+
+  other-modules:
+    System.FS.BlockIO.IO.Internal
     System.FS.BlockIO.Serial
 
   build-depends:
@@ -113,7 +125,7 @@ test-suite test
     , bytestring
     , fs-api
     , primitive
-    , QuickCheck        ^>=2.15.0.1
+    , QuickCheck        >=2.15.0.1
     , tasty
     , tasty-hunit
     , tasty-quickcheck
@@ -128,12 +140,12 @@ library sim
   hs-source-dirs:  src-sim
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
-    , base                   >=4.16      && <4.22
+    , base                   >=4.16  && <4.22
     , blockio
-    , bytestring             ^>=0.11.4.0 || ^>=0.12.1.0
+    , bytestring             ^>=0.11 || ^>=0.12
     , fs-api                 ^>=0.4
     , fs-sim                 ^>=0.4
-    , io-classes             ^>=1.6      || ^>=1.7      || ^>=1.8.0.1
+    , io-classes             ^>=1.6  || ^>=1.7  || ^>=1.8.0.1
     , io-classes:strict-stm
     , primitive              ^>=0.9
 

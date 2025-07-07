@@ -39,7 +39,6 @@ import qualified System.FS.API as FS
 import qualified System.FS.API.Lazy as FSL
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FS
-import qualified System.FS.IO as FsIO
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified System.IO.Temp as Temp
 import           Test.Database.LSMTree.Internal.RunReader (readKOps)
@@ -105,8 +104,7 @@ testSalt = 4
 -- | Runs in IO, with a real file system.
 testSingleInsert :: FilePath -> SerialisedKey -> SerialisedValue -> Maybe SerialisedBlob -> IO ()
 testSingleInsert sessionRoot key val mblob =
-    let fs = FsIO.ioHasFS (FS.MountPoint sessionRoot) in
-    FS.withIOHasBlockIO fs FS.defaultIOCtxParams $ \hbio -> do
+    FS.withIOHasBlockIO (FS.MountPoint sessionRoot) FS.defaultIOCtxParams $ \fs hbio -> do
     -- flush write buffer
     let e = case mblob of Nothing -> Insert val; Just blob -> InsertWithBlob val blob
         wb = Map.singleton key e

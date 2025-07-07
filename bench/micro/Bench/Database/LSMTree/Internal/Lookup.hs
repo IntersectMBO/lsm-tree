@@ -191,8 +191,7 @@ lookupsInBatchesEnv Config {..} = do
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "lookupsInBatchesEnv"
     (storedKeys, lookupKeys) <- lookupsEnv (mkStdGen 17) nentries npos nneg
-    let hasFS = FS.ioHasFS (FS.MountPoint benchTmpDir)
-    hasBlockIO <- FS.ioHasBlockIO hasFS (fromMaybe FS.defaultIOCtxParams ioctxps)
+    (hasFS, hasBlockIO) <- FS.ioHasBlockIO (FS.MountPoint benchTmpDir) (fromMaybe FS.defaultIOCtxParams ioctxps)
     wbblobs <- WBB.new hasFS (FS.mkFsPath ["0.wbblobs"])
     wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hasFS wbblobs)) storedKeys
     let fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)

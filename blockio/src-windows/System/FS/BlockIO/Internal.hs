@@ -6,9 +6,8 @@ import           Control.Exception (throwIO)
 import           Control.Monad (unless)
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
-import qualified System.FS.BlockIO.API as FS
-import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO,
-                     IOCtxParams)
+import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO)
+import qualified System.FS.BlockIO.IO.Internal as IOI
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
@@ -18,23 +17,23 @@ import qualified System.Win32.File as Windows
 import qualified System.Win32.HardLink as Windows
 
 -- | For now we use the portable serial implementation of HasBlockIO. If you
--- want to provide a proper async I/O implementation for Windows, then this is
+-- want to provide a proper async I\/O implementation for Windows, then this is
 -- where you should put it.
 --
 -- The recommended choice would be to use the Win32 IOCP API.
 ioHasBlockIO ::
      HasFS IO HandleIO
-  -> IOCtxParams
+  -> IOI.IOCtxParams
   -> IO (HasBlockIO IO HandleIO)
 ioHasBlockIO hfs _params =
     Serial.serialHasBlockIO
       hSetNoCache
       hAdvise
       hAllocate
-      (FS.tryLockFileIO hfs)
+      (IOI.tryLockFileIO hfs)
       hSynchronise
       (synchroniseDirectory hfs)
-      (FS.createHardLinkIO hfs Windows.createHardLink)
+      (IOI.createHardLinkIO hfs Windows.createHardLink)
       hfs
 
 hSetNoCache :: Handle HandleIO -> Bool -> IO ()
