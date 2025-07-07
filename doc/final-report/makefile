@@ -2,6 +2,8 @@
 
 .SILENT:
 
+.SUFFIXES:
+
 .PHONY: all
 all: final-report.pdf integration-notes.pdf
 
