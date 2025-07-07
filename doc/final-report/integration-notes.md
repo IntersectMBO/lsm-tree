@@ -40,9 +40,9 @@ key.
 The compact index only works properly if in most cases it can determine the
 order of two serialised keys by looking at their 64-bit prefixes. This is the
 case, for example, when the keys are hashes: the probability that two hashes
-have the same 64-bit prefixes is $\frac{1}{2}^{64}$ and thus very small. If the
-hashes are 256 bits in size, then the compact index uses 4 times less memory
-than if it would store the full keys.
+have the same 64-bit prefixes is $2^{-64}$ and thus very small. If the hashes
+are 256 bits in size, then the compact index uses 4 times less memory than if it
+would store the full keys.
 
 There is a backup mechanism in place for the case when the 64-bit prefixes of
 keys are not sufficient to make a comparison. This backup mechanism is less
