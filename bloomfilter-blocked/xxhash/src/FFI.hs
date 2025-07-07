@@ -19,7 +19,7 @@ module FFI (
 ) where
 
 import           Data.Word (Word32, Word64, Word8)
-import           Foreign.C.Types (CInt (..), CSize (..))
+import           Foreign.C.Types (CSize (..))
 import           Foreign.Ptr (Ptr)
 import           GHC.Exts (ByteArray#, MutableByteArray#)
 
