@@ -33,7 +33,7 @@ references:
     title: "Storing the Cardano ledger state on disk:
             analysis and design options"
     type: report
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/references/utxo-db.pdf
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/final-report/doc/final-report/references/utxo-db.pdf
   - id: utxo-db-api
     author:
       - given: Duncan
@@ -46,7 +46,7 @@ references:
     title: "Storing the Cardano ledger state on disk:
             API design concepts"
     type: report
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/references/utxo-db-api.pdf
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/final-report/doc/final-report/references/utxo-db-api.pdf
   - id: utxo-db-lsm
     author:
       - given: Duncan
@@ -55,7 +55,7 @@ references:
     title: "Storing the Cardano ledger state on disk:
             requirements for high performance backend"
     type: report
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/references/utxo-db-lsm.pdf
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/final-report/doc/final-report/references/utxo-db-lsm.pdf
   - id: lsm-tree
     type: software
     title: "`lsm-tree`"
@@ -63,7 +63,7 @@ references:
   - id: lsm-tree-prototype
     type: webpage
     title: "`lsm-tree` prototype"
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/alpha/prototypes/ScheduledMerges.hs
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/final-report/prototypes/ScheduledMerges.hs
   - id: blockio-uring
     type: software
     title: "`blockio-uring`"
@@ -71,7 +71,7 @@ references:
   - id: lsm-tree-format-docs
     type: webpage
     title: "`lsm-tree` format specifications"
-    URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha/doc
+    URL: https://github.com/IntersectMBO/lsm-tree/tree/final-report/doc
   - id: lsm-tree-api-docs
     type: webpage
     title: "`lsm-tree` API documentation"
@@ -91,7 +91,7 @@ references:
   - id: lsm-tree-package-desc
     type: webpage
     title: "`lsm-tree` package description"
-    URL: https://github.com/IntersectMBO/lsm-tree/blob/main/lsm-tree.cabal
+    URL: https://github.com/IntersectMBO/lsm-tree/blob/final-report/lsm-tree.cabal
   - id: ouroboros-consensus
     type: software
     title: "`ouroboros-consensus`"
