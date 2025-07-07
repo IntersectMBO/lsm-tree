@@ -16,7 +16,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "blockio:test-sim" [
+tests = testGroup "blockio-api:test-sim" [
       testProperty "prop_tryLockFileTwice" prop_tryLockFileTwice
     ]
 

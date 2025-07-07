@@ -3,7 +3,7 @@ name: Check release builds
 on:
   push:
     tags:
-      - blockio-*
+      - blockio-api-*
       - bloomfilter-blocked-*
       - lsm-tree-*
 
@@ -45,7 +45,7 @@ jobs:
     env:
       tag-name: ${{ github.ref_name }}
       release-build-target: |
-        ${{ startsWith(github.ref_name, 'blockio') && './blockio/blockio.cabal' || startsWith(github.ref_name, 'bloomfilter-blocked') && './bloomfilter-blocked/bloomfilter-blocked.cabal' || startsWith(github.ref_name, 'lsm-tree') && './lsm-tree.cabal' }}
+        ${{ startsWith(github.ref_name, 'blockio-api') && './blockio/blockio-api.cabal' || startsWith(github.ref_name, 'bloomfilter-blocked') && './bloomfilter-blocked/bloomfilter-blocked.cabal' || startsWith(github.ref_name, 'lsm-tree') && './lsm-tree.cabal' }}
 
     steps:
     - name: 🗄️ Print release build target

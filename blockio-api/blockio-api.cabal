@@ -1,5 +1,5 @@
 cabal-version:   3.4
-name:            blockio
+name:            blockio-api
 version:         0.1.0.0
 synopsis:        Perform batches of disk I/O operations.
 description:
@@ -40,13 +40,13 @@ tested-with:     GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
 source-repository head
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
-  subdir:   blockio
+  subdir:   blockio-api
 
 source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
-  subdir:   blockio
-  tag:      blockio-0.1.0.0
+  subdir:   blockio-api
+  tag:      blockio-api-0.1.0.0
 
 common warnings
   ghc-options:
@@ -121,7 +121,7 @@ test-suite test
   build-depends:
     , async
     , base              <5
-    , blockio
+    , blockio-api
     , bytestring
     , fs-api
     , primitive
@@ -141,7 +141,7 @@ library sim
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
     , base                   >=4.16  && <4.22
-    , blockio
+    , blockio-api
     , bytestring             ^>=0.11 || ^>=0.12
     , fs-api                 ^>=0.4
     , fs-sim                 ^>=0.4
@@ -156,8 +156,8 @@ test-suite test-sim
   main-is:        Main.hs
   build-depends:
     , base                   <5
-    , blockio
-    , blockio:sim
+    , blockio-api
+    , blockio-api:sim
     , fs-api
     , fs-sim
     , io-classes:strict-stm

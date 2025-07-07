@@ -35,7 +35,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "blockio:test" [
+tests = testGroup "blockio-api:test" [
       testCase "example_initClose" example_initClose
     , testCase "example_closeIsIdempotent" example_closeIsIdempotent
     , testProperty "prop_readWrite" prop_readWrite

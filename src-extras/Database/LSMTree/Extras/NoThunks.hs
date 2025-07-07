@@ -883,7 +883,7 @@ deriving via OnlyCheckWhnf FsPath
     instance NoThunks FsPath
 
 {-------------------------------------------------------------------------------
-  blockio
+  blockio-api
 -------------------------------------------------------------------------------}
 
 -- TODO: check heap?

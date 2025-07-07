@@ -19,11 +19,6 @@ has to be enabled, either by setting the flag in
 `cabal.project`/`cabal.project.local`, or by passing the flag to the `cabal`
 executable using `--flag=+serialblockio`.
 
-> :warning: **When enabling `serialblockio`, disable the
-> `cabal.project.blockio-uring` import in `cabal.project`!** Unfortunately, this
-> line has to be removed/commented out manually (for now), or the project won't
-> build.
-
 Installing `rocksdb` is entirely optional, and only required if one wants to
 build or run the `utxo-rocksdb-bench` comparison macro-benchmark.
 

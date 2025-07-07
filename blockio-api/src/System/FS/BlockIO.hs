@@ -31,7 +31,7 @@ import           System.FS.BlockIO.IO
     but has largely similar observable behaviour.
 
   * An implementation using a simulated file system, which can be found in the
-    @System.FS.BlockIO.Sim@ module of the @blockio:sim@ sublibrary. This
+    @System.FS.BlockIO.Sim@ module of the @blockio-api:sim@ sublibrary. This
     implementation is uniform across platforms.
 
   The 'HasBlockIO' abstract interface is an extension of the 'HasFS' abstract
@@ -39,7 +39,7 @@ import           System.FS.BlockIO.IO
   [@fs-api@](https://hackage.haskell.org/package/fs-api) package. Whereas
   'HasFS' defines many primitive functions, for example for opening a file, the
   main feature of 'HasBlockIO' is to define a function for performing batched
-  I\/O. As such, users of @blockio@ will more often than not need to pass both a
+  I\/O. As such, users of @blockio-api@ will more often than not need to pass both a
   'HasFS' and a 'HasBlockIO' instance to their functions.
 -}
 
@@ -172,7 +172,7 @@ import           System.FS.BlockIO.IO
   shines: @writeReadFile@ is agnostic to the implementations of the the abstract
   interfaces, so we could pick any implementations and slot them in. For this
   example we will use the /real/ implementation from "System.FS.BlockIO.IO", but
-  we could have used the /simulated/ implementation from the @blockio:sim@
+  we could have used the /simulated/ implementation from the @blockio-api:sim@
   sub-library just as well. We define the @example@ function, which uses
   'withIOHasBlockIO' to instantiate both a 'HasFS' and 'HasBlockIO' instance,
   which we pass to 'writeReadFile'.

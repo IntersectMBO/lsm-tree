@@ -600,8 +600,8 @@ library
   build-depends:
     , base                    >=4.16      && <4.22
     , bitvec                  ^>=1.1
-    , blockio                 ^>=0.1
-    , bloomfilter-blocked
+    , blockio-api             ^>=0.1
+    , bloomfilter-blocked     ^>=0.1
     , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
     , cborg                   ^>=0.2.10.0
     , containers              ^>=0.6      || ^>=0.7
@@ -647,7 +647,7 @@ library extras
   build-depends:
     , base                    >=4.16 && <4.22
     , bitvec
-    , blockio
+    , blockio-api
     , bytestring
     , containers
     , contra-tracer
@@ -741,8 +741,8 @@ test-suite lsm-tree-test
     , barbies
     , base                    <5
     , bitvec
-    , blockio
-    , blockio:sim
+    , blockio-api
+    , blockio-api:sim
     , bloomfilter-blocked
     , bytestring
     , cborg
@@ -809,7 +809,7 @@ benchmark lsm-tree-micro-bench
 
   build-depends:
     , base                 <5
-    , blockio
+    , blockio-api
     , bloomfilter-blocked
     , bytestring
     , containers
@@ -852,7 +852,7 @@ benchmark lsm-tree-bench-lookups
   main-is:        lsm-tree-bench-lookups.hs
   build-depends:
     , base                 <5
-    , blockio
+    , blockio-api
     , bloomfilter-blocked
     , deepseq
     , fs-api
@@ -919,7 +919,7 @@ benchmark utxo-bench
   build-depends:
     , async
     , base                  <5
-    , blockio
+    , blockio-api
     , bytestring
     , clock
     , containers
@@ -1138,9 +1138,9 @@ executable demo
   main-is:        Main.hs
   other-modules:  Database.LSMTree.Demo
   build-depends:
-    , base           <5
-    , blockio
-    , blockio:sim
+    , base             <5
+    , blockio-api
+    , blockio-api:sim
     , contra-tracer
     , directory
     , fs-api

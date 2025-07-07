@@ -41,8 +41,8 @@ ${cabal_docspec} \
     -XTypeFamilies \
     -XNumericUnderscores \
     -XInstanceSigs \
-    --extra-package blockio \
-    --extra-package blockio:sim \
+    --extra-package blockio-api \
+    --extra-package blockio-api:sim \
     --extra-package directory \
     --extra-package lsm-tree:prototypes \
     --extra-package process \

@@ -1,4 +1,4 @@
-# blockio
+# blockio-api
 
 Perform batches of disk I/O operations. Performing batches of disk I/O can lead
 to performance improvements over performing each disk I/O operation
@@ -35,15 +35,15 @@ performant implementation is available. Lastly, the abstract interface allows us
 to program against the file system in a uniform manner across different
 platforms, i.e., operating systems.
 
-The `blockio` library defines the abstract interface for batched I/O. The
+The `blockio-api` library defines the abstract interface for batched I/O. The
 library is an extension of the
 [fs-api](https://hackage.haskell.org/package/fs-api) library, which defines an
-abstract interface for (basic) file system I/O. Both `blockio` and `fs-api`
+abstract interface for (basic) file system I/O. Both `blockio-api` and `fs-api`
 provide an implementation of their interfaces using the real file system in
 `IO`.
 
-The `blockio:sim` sub-library defines an implementation of the abstract
-interface from `blockio` that *simulates* batched I/O. This sub-library is an
+The `blockio-api:sim` sub-library defines an implementation of the abstract
+interface from `blockio-api` that *simulates* batched I/O. This sub-library is an
 extension of the [fs-sim](https://hackage.haskell.org/package/fs-sim) library,
 which defines an implementation of the abstract interface from `fs-api` that
 simulates (basic) file system I/O.

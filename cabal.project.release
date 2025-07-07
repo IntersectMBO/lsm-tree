@@ -5,7 +5,7 @@ index-state:
 
 packages:
   .
-  ./blockio
+  ./blockio-api
   ./bloomfilter-blocked
 
 tests: True

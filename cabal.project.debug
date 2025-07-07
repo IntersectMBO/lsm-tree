@@ -9,7 +9,7 @@ package lsm-tree
   -- there are no cpp-options in cabal.project files
   ghc-options: -optP -DNO_IGNORE_ASSERTS -DDEBUG_TRACES
 
-package blockio
+package blockio-api
   -- apply this to all components
   -- relevant mostly only for development & testing
   ghc-options: -fno-ignore-asserts
@@ -23,7 +23,7 @@ if impl(ghc >=9.4.6 && <9.5 || >=9.6.3)
   package lsm-tree
     ghc-options: -fcheck-prim-bounds
 
-  package blockio
+  package blockio-api
     ghc-options: -fcheck-prim-bounds
 
   package primitive

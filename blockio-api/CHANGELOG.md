@@ -1,4 +1,4 @@
-# Revision history for blockio
+# Revision history for blockio-api
 
 ## 0.1.0.0 -- YYYY-mm-dd
 
