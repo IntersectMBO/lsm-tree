@@ -907,8 +907,8 @@ performance benchmarks:
 
 * For CPU performance, we have used a simple `sysbench` benchmark:
 
-  ```
-  $ sysbench cpu --cpu-max-prime=20000 --time=0 --events=10000 run
+  ```sh
+  sysbench cpu --cpu-max-prime=20000 --time=0 --events=10000 run
   ```
 
   We report the `sysbench` CPU results as events per second, with more being
@@ -1310,7 +1310,7 @@ The primary benchmark’s code is in the repository in
 `bench/macro/utxo-bench.hs`. It can be executed using commands of the following
 shape:
 
-```
+```sh
 cabal run utxo-bench -- [subcommand] [options]
 ```
 
@@ -1318,19 +1318,19 @@ For the full command line help use the following commands:
 
 * Global help:
 
-    ```
+    ```sh
     cabal run utxo-bench -- --help
     ```
 
 * Help on the `setup` subcommand:
 
-    ```
+    ```sh
     cabal run utxo-bench -- setup --help
     ```
 
 * Help on the `run` subcommand:
 
-    ```
+    ```sh
     cabal run utxo-bench -- run --help
     ```
 
