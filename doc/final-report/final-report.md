@@ -189,13 +189,13 @@ description [@lsm-tree-package-desc]. This and the simple module should be good
 places to start at before moving on to the full-featured module.
 
 The version of the library that is used as the basis for this report is tagged
-`alpha` in the `lsm-tree` Git repository [@lsm-tree]. It can be checked out
-using the following commands:
+`final-report` in the `lsm-tree` Git repository [@lsm-tree]. It can be checked
+out using the following commands:
 
 ```sh
 git clone git@github.com:IntersectMBO/lsm-tree.git
 cd lsm-tree
-git checkout alpha
+git checkout final-report
 ```
 
 # Development history
