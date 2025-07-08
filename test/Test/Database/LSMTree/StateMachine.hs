@@ -53,10 +53,11 @@ import           Control.ActionRegistry (AbortActionRegistryError (..),
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
-import           Control.Monad (forM_, void, (<=<))
+import           Control.Monad (forM_, (<=<))
+import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
-                     MonadCatch (..), MonadThrow (..), SomeException, catches,
-                     displayException, fromException)
+                     MonadCatch (..), MonadMask, MonadThrow (..), SomeException,
+                     catches, displayException, fromException)
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
@@ -119,10 +120,6 @@ import           Test.Database.LSMTree.StateMachine.Op (HasBlobRef (getBlobRef),
                      Op (..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary, Gen, Property)
-import qualified Test.QuickCheck.Extras as QD
-import qualified Test.QuickCheck.Monadic as QC
-import           Test.QuickCheck.Monadic (PropertyM)
-import qualified Test.QuickCheck.StateModel as QD
 import           Test.QuickCheck.StateModel hiding (Var)
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep.Defaults
@@ -157,7 +154,7 @@ tests = testGroup "Test.Database.LSMTree.StateMachine" [
     ]
 
 labelledExamples :: IO ()
-labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState R.Table))
+labelledExamples = QC.labelledExamples $ Lockstep.Run.tagActions (Proxy @(ModelState IO R.Table))
 
 {-------------------------------------------------------------------------------
   propLockstep: reference implementation
@@ -171,11 +168,11 @@ deriving via AllowThunk (ModelIO.Session IO)
     instance NoThunks (ModelIO.Session IO)
 
 propLockstep_ModelIOImpl ::
-     Actions (Lockstep (ModelState ModelIO.Table))
+     Actions (Lockstep (ModelState IO ModelIO.Table))
   -> QC.Property
 propLockstep_ModelIOImpl =
     runActionsBracket
-      (Proxy @(ModelState ModelIO.Table))
+      (Proxy @(ModelState IO ModelIO.Table))
       CheckCleanup
       NoCheckRefs -- there are no references to check for in the ModelIO implementation
       acquire
@@ -290,11 +287,11 @@ instance Arbitrary R.FencePointerIndexType where
 propLockstep_RealImpl_RealFS_IO ::
      Tracer IO R.LSMTreeTrace
   -> QC.Fixed R.Salt
-  -> Actions (Lockstep (ModelState R.Table))
+  -> Actions (Lockstep (ModelState IO R.Table))
   -> QC.Property
 propLockstep_RealImpl_RealFS_IO tr (QC.Fixed salt) =
     runActionsBracket
-      (Proxy @(ModelState R.Table))
+      (Proxy @(ModelState IO R.Table))
       CheckCleanup
       CheckRefs
       acquire
@@ -338,11 +335,11 @@ propLockstep_RealImpl_MockFS_IO ::
   -> CheckFS
   -> CheckRefs
   -> QC.Fixed R.Salt
-  -> Actions (Lockstep (ModelState R.Table))
+  -> Actions (Lockstep (ModelState IO R.Table))
   -> QC.Property
 propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) =
     runActionsBracket
-      (Proxy @(ModelState R.Table))
+      (Proxy @(ModelState IO R.Table))
       cleanupFlag
       refsFlag
       (acquire_RealImpl_MockFS tr salt)
@@ -364,49 +361,37 @@ propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) =
         )
       tagFinalState'
 
--- We can not use @bracket@ inside @PropertyM@, so @acquire_RealImpl_MockFS@ and
--- @release_RealImpl_MockFS@ are not run in a masked state and it is not
--- guaranteed that the latter runs if the former succeeded. Therefore, if
--- @runActions@ fails (with exceptions), then not having @bracket@ might lead to
--- more exceptions, which can obfuscate the original reason that the property
--- failed. Because of this, if @prop@ fails, it's probably best to also try
--- running the @IO@ version of this property with the failing seed, and compare
--- the counterexamples to see which one is more interesting.
 propLockstep_RealImpl_MockFS_IOSim ::
      (forall s. Tracer (IOSim s) R.LSMTreeTrace)
   -> CheckCleanup
   -> CheckFS
   -> CheckRefs
   -> QC.Fixed R.Salt
-  -> Actions (Lockstep (ModelState R.Table))
+  -> Actions (Lockstep (ModelState (IOSim RealWorld) R.Table))
   -> QC.Property
-propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) actions =
-    monadicIOSim_ prop
-  where
-    prop :: forall s. PropertyM (IOSim s) Property
-    prop = do
-        (fsVar, session, errsVar, logVar) <- QC.run (acquire_RealImpl_MockFS tr salt)
-        faultsVar <- QC.run $ newMutVar []
-        let
-          env :: RealEnv R.Table (IOSim s)
-          env = RealEnv {
-              envSession = session
-            , envHandlers = realErrorHandlers @(IOSim s)
-            , envErrors = errsVar
-            , envErrorsLog = logVar
-            , envInjectFaultResults = faultsVar
-            }
-        void $ QD.runPropertyReaderT
-                (QD.runActions @(Lockstep (ModelState R.Table)) actions)
-                env
-        faults <- QC.run $ readMutVar faultsVar
-        p <- QC.run $ propCleanup cleanupFlag $
-          release_RealImpl_MockFS fsFlag (fsVar, session, errsVar, logVar)
-        p' <- QC.run $ propRefs refsFlag
-        pure
-          $ tagFinalState actions tagFinalState'
-          $ QC.tabulate "Fault results" (fmap show faults)
-          $ p QC..&&. p'
+propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) =
+    runActionsBracket
+      (Proxy @(ModelState (IOSim RealWorld) R.Table))
+      cleanupFlag
+      refsFlag
+      (acquire_RealImpl_MockFS tr salt)
+      (release_RealImpl_MockFS fsFlag)
+      (\r (_, session, errsVar, logVar) -> do
+            faultsVar <- newMutVar []
+            let
+              env :: RealEnv R.Table (IOSim RealWorld)
+              env = RealEnv {
+                  envSession = session
+                , envHandlers = realErrorHandlers @(IOSim RealWorld)
+                , envErrors = errsVar
+                , envErrorsLog = logVar
+                , envInjectFaultResults = faultsVar
+                }
+            prop <- runReaderT r env
+            faults <- readMutVar faultsVar
+            pure $ QC.tabulate "Fault results" (fmap show faults) prop
+        )
+      tagFinalState'
 
 acquire_RealImpl_MockFS ::
      R.IOLike m
@@ -595,22 +580,22 @@ instance R.ResolveValue Value where
   Model state
 -------------------------------------------------------------------------------}
 
-type ModelState :: ((Type -> Type) -> Type -> Type -> Type -> Type) -> Type
-data ModelState h = ModelState Model.Model Stats
+type ModelState :: (Type -> Type) -> ((Type -> Type) -> Type -> Type -> Type -> Type) -> Type
+data ModelState m h = ModelState Model.Model Stats
   deriving stock Show
 
-initModelState :: ModelState h
+initModelState :: ModelState m h
 initModelState = ModelState Model.initModel initStats
 
 {-------------------------------------------------------------------------------
   Type synonyms
 -------------------------------------------------------------------------------}
 
-type Act h a = Action (Lockstep (ModelState h)) a
-type Act' h a = Action' h (Either Model.Err a)
-type Var h a = ModelVar (ModelState h) a
-type Val h a = ModelValue (ModelState h) a
-type Obs h a = Observable (ModelState h) a
+type Act m h a = Action (Lockstep (ModelState m h)) a
+type Act' m h a = Action' m h (Either Model.Err a)
+type Var m h a = ModelVar (ModelState m h) a
+type Val m h a = ModelValue (ModelState m h) a
+type Obs m h a = Observable (ModelState m h) a
 
 type K a = (
     Class.C_ a
@@ -646,9 +631,10 @@ instance ( Show (Class.TableConfig h)
          , Eq (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         ) => StateModel (Lockstep (ModelState h)) where
-  data instance Action (Lockstep (ModelState h)) a where
-    Action :: Maybe Errors -> Action' h a -> Act h a
+         , Typeable m
+         ) => StateModel (Lockstep (ModelState m h)) where
+  data instance Action (Lockstep (ModelState m h)) a where
+    Action :: Maybe Errors -> Action' m h a -> Act m h a
 
   initialState    = Lockstep.Defaults.initialState initModelState
   nextState       = Lockstep.Defaults.nextState
@@ -661,115 +647,116 @@ instance ( Show (Class.TableConfig h)
   actionName (Action _ action') = head . words . show $ action'
 
 deriving stock instance Show (Class.TableConfig h)
-                     => Show (LockstepAction (ModelState h) a)
+                     => Show (LockstepAction (ModelState m h) a)
 
 instance ( Eq (Class.TableConfig h)
          , Typeable h
-         ) => Eq (LockstepAction (ModelState h) a) where
-  (==) :: LockstepAction (ModelState h) a -> LockstepAction (ModelState h) a -> Bool
+         , Typeable m
+         ) => Eq (LockstepAction (ModelState m h) a) where
+  (==) :: LockstepAction (ModelState m h) a -> LockstepAction (ModelState m h) a -> Bool
   Action merrs1 x == Action merrs2 y = merrs1 == merrs2 && x == y
     where
-      _coveredAllCases :: Action (Lockstep (ModelState h)) a -> ()
+      _coveredAllCases :: Action (Lockstep (ModelState m h)) a -> ()
       _coveredAllCases = \case
           Action{} -> ()
 
-data Action' h a where
+data Action' m h a where
   -- Tables
   NewTableWith ::
        C k v b
     => {-# UNPACK #-} !(PrettyProxy (k, v, b))
     -> Class.TableConfig h
-    -> Act' h (WrapTable h IO k v b)
+    -> Act' m h (WrapTable h m k v b)
   CloseTable ::
        C k v b
-    => Var h (WrapTable h IO k v b)
-    -> Act' h ()
+    => Var m h (WrapTable h m k v b)
+    -> Act' m h ()
   -- Queries
   Lookups ::
        C k v b
-    => V.Vector k -> Var h (WrapTable h IO k v b)
-    -> Act' h (V.Vector (LookupResult v (WrapBlobRef h IO b)))
+    => V.Vector k -> Var m h (WrapTable h m k v b)
+    -> Act' m h (V.Vector (LookupResult v (WrapBlobRef h m b)))
   RangeLookup ::
        (C k v b, Ord k)
-    => R.Range k -> Var h (WrapTable h IO k v b)
-    -> Act' h (V.Vector (Entry k v (WrapBlobRef h IO b)))
+    => R.Range k -> Var m h (WrapTable h m k v b)
+    -> Act' m h (V.Vector (Entry k v (WrapBlobRef h m b)))
   -- Cursor
   NewCursor ::
        C k v b
     => Maybe k
-    -> Var h (WrapTable h IO k v b)
-    -> Act' h (WrapCursor h IO k v b)
+    -> Var m h (WrapTable h m k v b)
+    -> Act' m h (WrapCursor h m k v b)
   CloseCursor ::
        C k v b
-    => Var h (WrapCursor h IO k v b)
-    -> Act' h ()
+    => Var m h (WrapCursor h m k v b)
+    -> Act' m h ()
   ReadCursor ::
        C k v b
     => Int
-    -> Var h (WrapCursor h IO k v b)
-    -> Act' h (V.Vector (Entry k v (WrapBlobRef h IO b)))
+    -> Var m h (WrapCursor h m k v b)
+    -> Act' m h (V.Vector (Entry k v (WrapBlobRef h m b)))
   -- Updates
   Updates ::
        C k v b
-    => V.Vector (k, R.Update v b) -> Var h (WrapTable h IO k v b)
-    -> Act' h ()
+    => V.Vector (k, R.Update v b) -> Var m h (WrapTable h m k v b)
+    -> Act' m h ()
   Inserts ::
        C k v b
-    => V.Vector (k, v, Maybe b) -> Var h (WrapTable h IO k v b)
-    -> Act' h ()
+    => V.Vector (k, v, Maybe b) -> Var m h (WrapTable h m k v b)
+    -> Act' m h ()
   Deletes ::
        C k v b
-    => V.Vector k -> Var h (WrapTable h IO k v b)
-    -> Act' h ()
+    => V.Vector k -> Var m h (WrapTable h m k v b)
+    -> Act' m h ()
   Upserts ::
        C k v b
-    => V.Vector (k, v) -> Var h (WrapTable h IO k v b)
-    -> Act' h ()
+    => V.Vector (k, v) -> Var m h (WrapTable h m k v b)
+    -> Act' m h ()
   -- Blobs
   RetrieveBlobs ::
        B b
-    => Var h (V.Vector (WrapBlobRef h IO b))
-    -> Act' h (V.Vector (WrapBlob b))
+    => Var m h (V.Vector (WrapBlobRef h m b))
+    -> Act' m h (V.Vector (WrapBlob b))
   -- Snapshots
   SaveSnapshot ::
        C k v b
     => Maybe SilentCorruption
     -> R.SnapshotName
     -> R.SnapshotLabel
-    -> Var h (WrapTable h IO k v b)
-    -> Act' h ()
+    -> Var m h (WrapTable h m k v b)
+    -> Act' m h ()
   OpenTableFromSnapshot ::
        C k v b
     => {-# UNPACK #-} !(PrettyProxy (k, v, b))
     -> R.SnapshotName
     -> R.SnapshotLabel
-    -> Act' h (WrapTable h IO k v b)
-  DeleteSnapshot :: R.SnapshotName -> Act' h ()
-  ListSnapshots  :: Act' h [R.SnapshotName]
+    -> Act' m h (WrapTable h m k v b)
+  DeleteSnapshot :: R.SnapshotName -> Act' m h ()
+  ListSnapshots  :: Act' m h [R.SnapshotName]
   -- Duplicate tables
   Duplicate ::
        C k v b
-    => Var h (WrapTable h IO k v b)
-    -> Act' h (WrapTable h IO k v b)
+    => Var m h (WrapTable h m k v b)
+    -> Act' m h (WrapTable h m k v b)
   -- Table union
   Union ::
        C k v b
-    => Var h (WrapTable h IO k v b)
-    -> Var h (WrapTable h IO k v b)
-    -> Act' h (WrapTable h IO k v b)
+    => Var m h (WrapTable h m k v b)
+    -> Var m h (WrapTable h m k v b)
+    -> Act' m h (WrapTable h m k v b)
   Unions ::
        C k v b
-    => NonEmpty (Var h (WrapTable h IO k v b))
-    -> Act' h (WrapTable h IO k v b)
+    => NonEmpty (Var m h (WrapTable h m k v b))
+    -> Act' m h (WrapTable h m k v b)
   RemainingUnionDebt ::
        C k v b
-    => Var h (WrapTable h IO k v b)
-    -> Act' h R.UnionDebt
+    => Var m h (WrapTable h m k v b)
+    -> Act' m h R.UnionDebt
   SupplyUnionCredits ::
        C k v b
-    => Var h (WrapTable h IO k v b)
+    => Var m h (WrapTable h m k v b)
     -> R.UnionCredits
-    -> Act' h R.UnionCredits
+    -> Act' m h R.UnionCredits
   -- | Alternative version of 'SupplyUnionCredits' that supplies a portion of
   -- the table's current union debt as union credits.
   --
@@ -780,9 +767,9 @@ data Action' h a where
   -- so that unions are more likely to finish during a sequence of actions.
   SupplyPortionOfDebt ::
        C k v b
-    => Var h (WrapTable h IO k v b)
+    => Var m h (WrapTable h m k v b)
     -> Portion
-    -> Act' h R.UnionCredits
+    -> Act' m h R.UnionCredits
 
 portionOf :: Portion -> R.UnionDebt -> R.UnionCredits
 portionOf (Portion denominator) (R.UnionDebt debt)
@@ -794,14 +781,15 @@ newtype Portion = Portion Int -- ^ Denominator: should be non-negative
   deriving stock (Show, Eq)
 
 deriving stock instance Show (Class.TableConfig h)
-                     => Show (Action' h a)
+                     => Show (Action' m h a)
 
 instance ( Eq (Class.TableConfig h)
          , Typeable h
-         ) => Eq (Action' h a) where
+         , Typeable m
+         ) => Eq (Action' m h a) where
   x == y = go x y
     where
-      go :: Action' h a -> Action' h a -> Bool
+      go :: Action' m h a -> Action' m h a -> Bool
       go
         (NewTableWith (PrettyProxy :: PrettyProxy kvb) conf1)
         (NewTableWith (PrettyProxy :: PrettyProxy kvb) conf2) =
@@ -852,7 +840,7 @@ instance ( Eq (Class.TableConfig h)
         Just var1 == cast var2 && portion1 == portion2
       go _ _ = False
 
-      _coveredAllCases :: Action' h a -> ()
+      _coveredAllCases :: Action' m h a -> ()
       _coveredAllCases = \case
           NewTableWith{} -> ()
           CloseTable{} -> ()
@@ -895,72 +883,73 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         ) => InLockstep (ModelState h) where
-  type instance ModelOp (ModelState h) = Op
+         , Typeable m
+         ) => InLockstep (ModelState m h) where
+  type instance ModelOp (ModelState m h) = Op
 
-  data instance ModelValue (ModelState h) a where
+  data instance ModelValue (ModelState m h) a where
     -- handle-like
     MTable ::
       Model.Table k v b ->
-      Val h (WrapTable h IO k v b)
-    MCursor :: Model.Cursor k v b -> Val h (WrapCursor h IO k v b)
+      Val m h (WrapTable h m k v b)
+    MCursor :: Model.Cursor k v b -> Val m h (WrapCursor h m k v b)
     MBlobRef ::
       (Class.C_ b) =>
       Model.BlobRef b ->
-      Val h (WrapBlobRef h IO b)
+      Val m h (WrapBlobRef h m b)
     -- values
     MLookupResult ::
       (Class.C_ v, Class.C_ b) =>
-      LookupResult v (Val h (WrapBlobRef h IO b)) ->
-      Val h (LookupResult v (WrapBlobRef h IO b))
+      LookupResult v (Val m h (WrapBlobRef h m b)) ->
+      Val m h (LookupResult v (WrapBlobRef h m b))
     MEntry ::
       (Class.C k v b) =>
-      Entry k v (Val h (WrapBlobRef h IO b)) ->
-      Val h (Entry k v (WrapBlobRef h IO b))
+      Entry k v (Val m h (WrapBlobRef h m b)) ->
+      Val m h (Entry k v (WrapBlobRef h m b))
     MBlob ::
       (Show b, Typeable b, Eq b) =>
       WrapBlob b ->
-      Val h (WrapBlob b)
-    MSnapshotName :: R.SnapshotName -> Val h R.SnapshotName
-    MUnionDebt :: R.UnionDebt -> Val h R.UnionDebt
-    MUnionCredits :: R.UnionCredits -> Val h R.UnionCredits
-    MUnionCreditsPortion :: R.UnionCredits -> Val h R.UnionCredits
-    MErr :: Model.Err -> Val h Model.Err
+      Val m h (WrapBlob b)
+    MSnapshotName :: R.SnapshotName -> Val m h R.SnapshotName
+    MUnionDebt :: R.UnionDebt -> Val m h R.UnionDebt
+    MUnionCredits :: R.UnionCredits -> Val m h R.UnionCredits
+    MUnionCreditsPortion :: R.UnionCredits -> Val m h R.UnionCredits
+    MErr :: Model.Err -> Val m h Model.Err
     -- combinators
-    MUnit :: () -> Val h ()
-    MPair :: (Val h a, Val h b) -> Val h (a, b)
-    MEither :: Either (Val h a) (Val h b) -> Val h (Either a b)
-    MList :: [Val h a] -> Val h [a]
-    MVector :: V.Vector (Val h a) -> Val h (V.Vector a)
+    MUnit :: () -> Val m h ()
+    MPair :: (Val m h a, Val m h b) -> Val m h (a, b)
+    MEither :: Either (Val m h a) (Val m h b) -> Val m h (Either a b)
+    MList :: [Val m h a] -> Val m h [a]
+    MVector :: V.Vector (Val m h a) -> Val m h (V.Vector a)
 
-  data instance Observable (ModelState h) a where
+  data instance Observable (ModelState m h) a where
     -- handle-like (opaque)
-    OTable :: Obs h (WrapTable h IO k v b)
-    OCursor :: Obs h (WrapCursor h IO k v b)
-    OBlobRef :: Obs h (WrapBlobRef h IO b)
+    OTable :: Obs m h (WrapTable h m k v b)
+    OCursor :: Obs m h (WrapCursor h m k v b)
+    OBlobRef :: Obs m h (WrapBlobRef h m b)
     -- values
     OLookupResult ::
       (Class.C_ v, Class.C_ b) =>
-      LookupResult v (Obs h (WrapBlobRef h IO b)) ->
-      Obs h (LookupResult v (WrapBlobRef h IO b))
+      LookupResult v (Obs m h (WrapBlobRef h m b)) ->
+      Obs m h (LookupResult v (WrapBlobRef h m b))
     OEntry ::
       (Class.C k v b) =>
-      Entry k v (Obs h (WrapBlobRef h IO b)) ->
-      Obs h (Entry k v (WrapBlobRef h IO b))
+      Entry k v (Obs m h (WrapBlobRef h m b)) ->
+      Obs m h (Entry k v (WrapBlobRef h m b))
     OBlob ::
       (Show b, Typeable b, Eq b) =>
       WrapBlob b ->
-      Obs h (WrapBlob b)
-    OUnionCredits :: R.UnionCredits -> Obs h R.UnionCredits
-    OUnionCreditsPortion :: R.UnionCredits -> Obs h R.UnionCredits
-    OId :: (Show a, Typeable a, Eq a) => a -> Obs h a
+      Obs m h (WrapBlob b)
+    OUnionCredits :: R.UnionCredits -> Obs m h R.UnionCredits
+    OUnionCreditsPortion :: R.UnionCredits -> Obs m h R.UnionCredits
+    OId :: (Show a, Typeable a, Eq a) => a -> Obs m h a
     -- combinators
-    OPair :: (Obs h a, Obs h b) -> Obs h (a, b)
-    OEither :: Either (Obs h a) (Obs h b) -> Obs h (Either a b)
-    OList :: [Obs h a] -> Obs h [a]
-    OVector :: V.Vector (Obs h a) -> Obs h (V.Vector a)
+    OPair :: (Obs m h a, Obs m h b) -> Obs m h (a, b)
+    OEither :: Either (Obs m h a) (Obs m h b) -> Obs m h (Either a b)
+    OList :: [Obs m h a] -> Obs m h [a]
+    OVector :: V.Vector (Obs m h a) -> Obs m h (V.Vector a)
 
-  observeModel :: Val h a -> Obs h a
+  observeModel :: Val m h a -> Obs m h a
   observeModel = \case
       MTable _               -> OTable
       MCursor _              -> OCursor
@@ -980,19 +969,19 @@ instance ( Eq (Class.TableConfig h)
       MVector x              -> OVector $ V.map observeModel x
 
   modelNextState ::  forall a.
-       LockstepAction (ModelState h) a
-    -> ModelVarContext (ModelState h)
-    -> ModelState h
-    -> (ModelValue (ModelState h) a, ModelState h)
+       LockstepAction (ModelState m h) a
+    -> ModelVarContext (ModelState m h)
+    -> ModelState m h
+    -> (ModelValue (ModelState m h) a, ModelState m h)
   modelNextState action ctx (ModelState state stats) =
       auxStats $ runModel (lookupVar ctx) action state
     where
-      auxStats :: (Val h a, Model.Model) -> (Val h a, ModelState h)
+      auxStats :: (Val m h a, Model.Model) -> (Val m h a, ModelState m h)
       auxStats (result, state') = (result, ModelState state' stats')
         where
           stats' = updateStats action (lookupVar ctx) state state' result stats
 
-  usedVars :: LockstepAction (ModelState h) a -> [AnyGVar (ModelOp (ModelState h))]
+  usedVars :: LockstepAction (ModelState m h) a -> [AnyGVar (ModelOp (ModelState m h))]
   usedVars (Action _ action') = case action' of
       NewTableWith _ _               -> []
       CloseTable tableVar            -> [SomeGVar tableVar]
@@ -1018,31 +1007,31 @@ instance ( Eq (Class.TableConfig h)
       SupplyPortionOfDebt tableVar _ -> [SomeGVar tableVar]
 
   arbitraryWithVars ::
-       ModelVarContext (ModelState h)
-    -> ModelState h
-    -> Gen (Any (LockstepAction (ModelState h)))
+       ModelVarContext (ModelState m h)
+    -> ModelState m h
+    -> Gen (Any (LockstepAction (ModelState m h)))
   arbitraryWithVars ctx st =
     QC.scale (max 100) $
     arbitraryActionWithVars (Proxy @(Key, Value, Blob)) keyValueBlobLabel ctx st
 
   shrinkWithVars ::
-       ModelVarContext (ModelState h)
-    -> ModelState h
-    -> LockstepAction (ModelState h) a
-    -> [Any (LockstepAction (ModelState h))]
+       ModelVarContext (ModelState m h)
+    -> ModelState m h
+    -> LockstepAction (ModelState m h) a
+    -> [Any (LockstepAction (ModelState m h))]
   shrinkWithVars = shrinkActionWithVars
 
   tagStep ::
-       (ModelState h, ModelState h)
-    -> LockstepAction (ModelState h) a
-    -> Val h a
+       (ModelState m h, ModelState m h)
+    -> LockstepAction (ModelState m h) a
+    -> Val m h a
     -> [String]
   tagStep states action = map show . tagStep' states action
 
-deriving stock instance Show (Class.TableConfig h) => Show (Val h a)
-deriving stock instance Show (Obs h a)
+deriving stock instance Show (Class.TableConfig h) => Show (Val m h a)
+deriving stock instance Show (Obs m h a)
 
-instance Eq (Obs h a) where
+instance Eq (Obs m h a) where
   obsReal == obsModel = case (obsReal, obsModel) of
       -- The model is conservative about blob retrieval: the model invalidates a
       -- blob reference immediately after an update to the table, and if the SUT
@@ -1113,7 +1102,7 @@ instance Eq (Obs h a) where
       (OVector x, OVector y) -> x == y
       (_, _) -> False
     where
-      _coveredAllCases :: Obs h a -> ()
+      _coveredAllCases :: Obs m h a -> ()
       _coveredAllCases = \case
           OTable{} -> ()
           OCursor{} -> ()
@@ -1185,12 +1174,12 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         ) => RunLockstep (ModelState h) (RealMonad h IO) where
+         ) => RunLockstep (ModelState IO h) (RealMonad h IO) where
   observeReal ::
        Proxy (RealMonad h IO)
-    -> LockstepAction (ModelState h) a
-    -> Realized (RealMonad h IO) a
-    -> Obs h a
+    -> LockstepAction (ModelState IO h) a
+    -> a
+    -> Obs IO h a
   observeReal _proxy (Action _ action') result = case action' of
       NewTableWith{}          -> OEither $ bimap OId (const OTable) result
       CloseTable{}            -> OEither $ bimap OId OId result
@@ -1220,8 +1209,8 @@ instance ( Eq (Class.TableConfig h)
 
   showRealResponse ::
        Proxy (RealMonad h IO)
-    -> LockstepAction (ModelState h) a
-    -> Maybe (Dict (Show (Realized (RealMonad h IO) a)))
+    -> LockstepAction (ModelState IO h) a
+    -> Maybe (Dict (Show a))
   showRealResponse _ (Action _ action') = case action' of
       NewTableWith{}          -> Nothing
       CloseTable{}            -> Just Dict
@@ -1251,12 +1240,13 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         ) => RunLockstep (ModelState h) (RealMonad h (IOSim s)) where
+         , Typeable s
+         ) => RunLockstep (ModelState (IOSim s) h) (RealMonad h (IOSim s)) where
   observeReal ::
        Proxy (RealMonad h (IOSim s))
-    -> LockstepAction (ModelState h) a
-    -> Realized (RealMonad h (IOSim s)) a
-    -> Obs h a
+    -> LockstepAction (ModelState (IOSim s) h) a
+    -> a
+    -> Obs (IOSim s) h a
   observeReal _proxy (Action _ action') result = case action' of
       NewTableWith{}          -> OEither $ bimap OId (const OTable) result
       CloseTable{}            -> OEither $ bimap OId OId result
@@ -1286,8 +1276,8 @@ instance ( Eq (Class.TableConfig h)
 
   showRealResponse ::
        Proxy (RealMonad h (IOSim s))
-    -> LockstepAction (ModelState h) a
-    -> Maybe (Dict (Show (Realized (RealMonad h (IOSim s)) a)))
+    -> LockstepAction (ModelState (IOSim s) h) a
+    -> Maybe (Dict (Show a))
   showRealResponse _ (Action _ action') = case action' of
       NewTableWith{}          -> Nothing
       CloseTable{}            -> Just Dict
@@ -1321,7 +1311,7 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         ) => RunModel (Lockstep (ModelState h)) (RealMonad h IO) where
+         ) => RunModel (Lockstep (ModelState IO h)) (RealMonad h IO) where
   perform _     = runIO
   postcondition = Lockstep.Defaults.postcondition
   monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h IO))
@@ -1331,7 +1321,8 @@ instance ( Eq (Class.TableConfig h)
          , Show (Class.TableConfig h)
          , Arbitrary (Class.TableConfig h)
          , Typeable h
-         ) => RunModel (Lockstep (ModelState h)) (RealMonad h (IOSim s)) where
+         , Typeable s
+         ) => RunModel (Lockstep (ModelState (IOSim s) h)) (RealMonad h (IOSim s)) where
   perform _     = runIOSim
   postcondition = Lockstep.Defaults.postcondition
   monitoring    = Lockstep.Defaults.monitoring (Proxy @(RealMonad h (IOSim s)))
@@ -1347,9 +1338,9 @@ instance ( Eq (Class.TableConfig h)
 -- we start generating injected errors for these actions and testing with them.
 
 runModel ::
-     ModelLookUp (ModelState h)
-  -> LockstepAction (ModelState h) a
-  -> Model.Model -> (Val h a, Model.Model)
+     ModelLookUp (ModelState m h)
+  -> LockstepAction (ModelState m h) a
+  -> Model.Model -> (Val m h a, Model.Model)
 runModel lookUp (Action merrs action') = case action' of
     NewTableWith _ _cfg ->
       wrap MTable
@@ -1466,22 +1457,22 @@ runModel lookUp (Action merrs action') = case action' of
           (pure ()) -- TODO(err)
   where
     getTable ::
-         ModelValue (ModelState h) (WrapTable h IO k v b)
+         ModelValue (ModelState m h) (WrapTable h m k v b)
       -> Model.Table k v b
     getTable (MTable t) = t
 
     getCursor ::
-         ModelValue (ModelState h) (WrapCursor h IO k v b)
+         ModelValue (ModelState m h) (WrapCursor h m k v b)
       -> Model.Cursor k v b
     getCursor (MCursor t) = t
 
-    getBlobRefs :: ModelValue (ModelState h) (V.Vector (WrapBlobRef h IO b)) -> V.Vector (Model.BlobRef b)
+    getBlobRefs :: ModelValue (ModelState m h) (V.Vector (WrapBlobRef h m b)) -> V.Vector (Model.BlobRef b)
     getBlobRefs (MVector brs) = fmap (\(MBlobRef br) -> br) brs
 
 wrap ::
-     (a -> Val h b)
+     (a -> Val m h b)
   -> (Either Model.Err a, Model.Model)
-  -> (Val h (Either Model.Err b), Model.Model)
+  -> (Val m h (Either Model.Err b), Model.Model)
 wrap f = first (MEither . bimap MErr f)
 
 {-------------------------------------------------------------------------------
@@ -1497,16 +1488,16 @@ wrap f = first (MEither . bimap MErr f)
 
 runIO ::
      forall a h. Class.IsTable h
-  => LockstepAction (ModelState h) a
-  -> LookUp (RealMonad h IO)
-  -> RealMonad h IO (Realized (RealMonad h IO) a)
+  => LockstepAction (ModelState IO h) a
+  -> LookUp
+  -> RealMonad h IO a
 runIO action lookUp = ReaderT $ \ !env -> do
     aux env action
   where
     aux ::
          RealEnv h IO
-      -> LockstepAction (ModelState h) a
-      -> IO (Realized IO a)
+      -> LockstepAction (ModelState IO h) a
+      -> IO a
     aux env (Action merrs action') = case action' of
         NewTableWith _ cfg ->
           runRealWithInjectedErrors "NewTableWith" env merrs
@@ -1603,21 +1594,21 @@ runIO action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
 
-    lookUp' :: Var h x -> Realized IO x
-    lookUp' = realLookupVar (Proxy @(RealMonad h IO)) lookUp
+    lookUp' :: Var m h x -> x
+    lookUp' = realLookupVar lookUp
 
 runIOSim ::
      forall s a h. Class.IsTable h
-  => LockstepAction (ModelState h) a
-  -> LookUp (RealMonad h (IOSim s))
-  -> RealMonad h (IOSim s) (Realized (RealMonad h (IOSim s)) a)
+  => LockstepAction (ModelState (IOSim s) h) a
+  -> LookUp
+  -> RealMonad h (IOSim s) a
 runIOSim action lookUp = ReaderT $ \ !env -> do
     aux env action
   where
     aux ::
          RealEnv h (IOSim s)
-      -> LockstepAction (ModelState h) a
-      -> IOSim s (Realized (IOSim s) a)
+      -> LockstepAction (ModelState (IOSim s) h) a
+      -> IOSim s a
     aux env (Action merrs action') = case action' of
         NewTableWith _ cfg ->
           runRealWithInjectedErrors "NewTableWith" env merrs
@@ -1714,8 +1705,8 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
       where
         session = envSession env
 
-    lookUp' :: Var h x -> Realized (IOSim s) x
-    lookUp' = realLookupVar (Proxy @(RealMonad h (IOSim s))) lookUp
+    lookUp' :: Var m h x -> x
+    lookUp' = realLookupVar lookUp
 
 -- | @'runRealWithInjectedErrors' _ errsVar merrs action rollback@ runs @action@
 -- with injected errors if available in @merrs@.
@@ -1793,19 +1784,20 @@ catchErr hs action = catches (Right <$> action) (fmap f hs)
 -------------------------------------------------------------------------------}
 
 arbitraryActionWithVars ::
-     forall h k v b. (
+     forall m h k v b. (
        C k v b
      , Ord k
      , Eq (Class.TableConfig h)
      , Show (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
+     , Typeable m
      )
   => Proxy (k, v, b)
   -> R.SnapshotLabel
-  -> ModelVarContext (ModelState h)
-  -> ModelState h
-  -> Gen (Any (LockstepAction (ModelState h)))
+  -> ModelVarContext (ModelState m h)
+  -> ModelState m h
+  -> Gen (Any (LockstepAction (ModelState m h)))
 arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     QC.frequency $
       concat
@@ -1816,10 +1808,10 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , genActionsBlobRef
         ]
   where
-    _coveredAllCases :: LockstepAction (ModelState h) a -> ()
+    _coveredAllCases :: LockstepAction (ModelState m h) a -> ()
     _coveredAllCases (Action _ action') = _coveredAllCases' action'
 
-    _coveredAllCases' :: Action' h a -> ()
+    _coveredAllCases' :: Action' m h a -> ()
     _coveredAllCases' = \case
         NewTableWith{} -> ()
         CloseTable{} -> ()
@@ -1846,7 +1838,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genTableVar = QC.elements tableVars
 
-    tableVars :: [Var h (WrapTable h IO k v b)]
+    tableVars :: [Var m h (WrapTable h m k v b)]
     tableVars =
       [ fromRight v
       | v <- findVars ctx Proxy
@@ -1858,7 +1850,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genUnionDescendantTableVar = QC.elements unionDescendantTableVars
 
-    unionDescendantTableVars :: [Var h (WrapTable h IO k v b)]
+    unionDescendantTableVars :: [Var m h (WrapTable h m k v b)]
     unionDescendantTableVars =
         [ v
         | v <- tableVars
@@ -1869,7 +1861,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genCursorVar = QC.elements cursorVars
 
-    cursorVars :: [Var h (WrapCursor h IO k v b)]
+    cursorVars :: [Var m h (WrapCursor h m k v b)]
     cursorVars =
       [ fromRight v
       | v <- findVars ctx Proxy
@@ -1881,12 +1873,12 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
 
     genBlobRefsVar = QC.elements blobRefsVars
 
-    blobRefsVars :: [Var h (V.Vector (WrapBlobRef h IO b))]
+    blobRefsVars :: [Var m h (V.Vector (WrapBlobRef h m b))]
     blobRefsVars = fmap (mapGVar (OpComp OpLookupResults)) lookupResultVars
                 ++ fmap (mapGVar (OpComp OpEntrys))  queryResultVars
       where
-        lookupResultVars :: [Var h (V.Vector (LookupResult  v (WrapBlobRef h IO b)))]
-        queryResultVars  :: [Var h (V.Vector (Entry k v (WrapBlobRef h IO b)))]
+        lookupResultVars :: [Var m h (V.Vector (LookupResult  v (WrapBlobRef h m b)))]
+        queryResultVars  :: [Var m h (V.Vector (Entry k v (WrapBlobRef h m b)))]
 
         lookupResultVars = fromRight <$> findVars ctx Proxy
         queryResultVars  = fromRight <$> findVars ctx Proxy
@@ -1904,7 +1896,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , let snapshotname = R.toSnapshotName name
         ]
 
-    genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsSession :: [(Int, Gen (Any (LockstepAction (ModelState m h))))]
     genActionsSession =
         [ (1, fmap Some $ (Action <$> genErrors <*>) $
             NewTableWith @k @v @b <$> pure PrettyProxy <*> QC.arbitrary)
@@ -1938,7 +1930,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         , let genErrors = pure Nothing -- TODO: generate errors
         ]
 
-    genActionsTables :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsTables :: [(Int, Gen (Any (LockstepAction (ModelState m h))))]
     genActionsTables
       | null tableVars = []
       | otherwise      =
@@ -1993,7 +1985,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         ]
 
     -- | Generate table actions that have to do with unions.
-    genActionsUnion :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsUnion :: [(Int, Gen (Any (LockstepAction (ModelState m h))))]
     genActionsUnion
       | null tableVars = []
       | otherwise =
@@ -2040,7 +2032,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         -- TODO: tweak distribution once table unions are implemented
         genPortion = Portion <$> QC.elements [1, 2, 3]
 
-    genActionsCursor :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsCursor :: [(Int, Gen (Any (LockstepAction (ModelState m h))))]
     genActionsCursor
       | null cursorVars = []
       | otherwise       =
@@ -2053,7 +2045,7 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         | let genErrors = pure Nothing -- TODO: generate errors
         ]
 
-    genActionsBlobRef :: [(Int, Gen (Any (LockstepAction (ModelState h))))]
+    genActionsBlobRef :: [(Int, Gen (Any (LockstepAction (ModelState m h))))]
     genActionsBlobRef =
         [ (5, fmap Some $ (Action <$> genErrors <*>) $
             RetrieveBlobs <$> genBlobRefsVar)
@@ -2062,8 +2054,8 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
         ]
 
     fromRight ::
-         Var h (Either Model.Err a)
-      -> Var h a
+         Var m h (Either Model.Err a)
+      -> Var m h a
     fromRight = mapGVar (\op -> OpFromRight `OpComp` op)
 
     genLookupKeys :: Gen (V.Vector k)
@@ -2098,15 +2090,16 @@ arbitraryActionWithVars _ label ctx (ModelState st _stats) =
     genBlob = QC.arbitrary
 
 shrinkActionWithVars ::
-     forall h a. (
+     forall m h a. (
        Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
+     , Typeable m
      )
-  => ModelVarContext (ModelState h)
-  -> ModelState h
-  -> LockstepAction (ModelState h) a
-  -> [Any (LockstepAction (ModelState h))]
+  => ModelVarContext (ModelState m h)
+  -> ModelState m h
+  -> LockstepAction (ModelState m h) a
+  -> [Any (LockstepAction (ModelState m h))]
 shrinkActionWithVars _ctx _st (Action merrs action') =
         [ -- TODO: it's somewhat unfortunate, but we have to dynamically
           -- construct evidence that @a@ is typeable, which is a requirement
@@ -2121,7 +2114,7 @@ shrinkActionWithVars _ctx _st (Action merrs action') =
 
 -- | Dynamically construct evidence that the result type @a@ of an action is
 -- typeable.
-dictIsTypeable :: Typeable h => Action' h a -> Dict (Typeable a)
+dictIsTypeable :: (Typeable m, Typeable h) => Action' m h a -> Dict (Typeable a)
 dictIsTypeable = \case
       NewTableWith{}          -> Dict
       CloseTable{}            -> Dict
@@ -2147,15 +2140,16 @@ dictIsTypeable = \case
       SupplyPortionOfDebt{}   -> Dict
 
 shrinkAction'WithVars ::
-     forall h a. (
+     forall m h a. (
        Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
+     , Typeable m
      )
-  => ModelVarContext (ModelState h)
-  -> ModelState h
-  -> Action' h a
-  -> [Any (Action' h)]
+  => ModelVarContext (ModelState m h)
+  -> ModelState m h
+  -> Action' m h a
+  -> [Any (Action' m h)]
 shrinkAction'WithVars _ctx _st a = case a of
     NewTableWith p conf -> [
         Some $ NewTableWith p conf'
@@ -2230,7 +2224,7 @@ shrinkAction'WithVars _ctx _st a = case a of
   Interpret 'Op' against 'ModelValue'
 -------------------------------------------------------------------------------}
 
-instance InterpretOp Op (ModelValue (ModelState h)) where
+instance InterpretOp Op (ModelValue (ModelState m h)) where
   intOp = \case
     OpId                 -> Just
     OpFst                -> \case MPair   x -> Just (fst x)
@@ -2308,16 +2302,17 @@ initStats = Stats {
     }
 
 updateStats ::
-     forall h a. ( Show (Class.TableConfig h)
+     forall m h a. ( Show (Class.TableConfig h)
      , Eq (Class.TableConfig h)
      , Arbitrary (Class.TableConfig h)
      , Typeable h
+     , Typeable m
      )
-  => LockstepAction (ModelState h) a
-  -> ModelLookUp (ModelState h)
+  => LockstepAction (ModelState m h) a
+  -> ModelLookUp (ModelState m h)
   -> Model.Model
   -> Model.Model
-  -> Val h a
+  -> Val m h a
   -> Stats
   -> Stats
 updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result =
@@ -2351,7 +2346,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
       (Lookups _ _, MEither (Right (MVector lrs))) -> stats {
           numLookupsResults =
             let count :: (Int, Int, Int)
-                      -> Val h (LookupResult v (WrapBlobRef h IO blob))
+                      -> Val m h (LookupResult v (WrapBlobRef h m blob))
                       -> (Int, Int, Int)
                 count (nf, f, fwb) (MLookupResult x) = case x of
                   NotFound        -> (nf+1, f  , fwb  )
@@ -2456,7 +2451,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
 
         -- Note that batches (of inserts lookups etc) count as one action.
         updateCount :: forall k v b.
-                       Var h (WrapTable h IO k v b)
+                       Var m h (WrapTable h m k v b)
                     -> Stats
         updateCount tableVar =
           let tid = getTableId (lookUp tableVar)
@@ -2500,7 +2495,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
 
     -- insert an entry into the parentTable for a table derived from a parent
     insertParentTableDerived :: forall k v b.
-                                [GVar Op (WrapTable h IO k v b)]
+                                [GVar Op (WrapTable h m k v b)]
                              -> Model.Table k v b -> Stats -> Stats
     insertParentTableDerived ptblVars tbl stats =
       let uptblIds :: [Model.TableID] -- the set of ultimate parent table ids
@@ -2557,7 +2552,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
       where
         -- add the current table to the front of the list of tables, if it's
         -- not the latest one already
-        updateLastActionLog :: GVar Op (WrapTable h IO k v b) -> Stats
+        updateLastActionLog :: GVar Op (WrapTable h m k v b) -> Stats
         updateLastActionLog tableVar =
           stats {
             dupTableActionLog = List.foldl'
@@ -2595,7 +2590,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
           | otherwise
           = stats
 
-    getTableId :: ModelValue (ModelState h) (WrapTable h IO k v b)
+    getTableId :: ModelValue (ModelState m h) (WrapTable h m k v b)
                      -> Model.TableID
     getTableId (MTable t) = Model.tableID t
 
@@ -2624,9 +2619,9 @@ data Tag =
 
 -- | This is run for after every action
 tagStep' ::
-     (ModelState h, ModelState h)
-  -> LockstepAction (ModelState h) a
-  -> Val h a
+     (ModelState m h, ModelState m h)
+  -> LockstepAction (ModelState m h) a
+  -> Val m h a
   -> [Tag]
 tagStep' (ModelState _stateBefore statsBefore,
           ModelState _stateAfter _statsAfter)
@@ -2743,7 +2738,7 @@ data FinalTag =
   deriving stock Show
 
 -- | This is run only after completing every action
-tagFinalState' :: Lockstep (ModelState h) -> [(String, [FinalTag])]
+tagFinalState' :: Lockstep (ModelState m h) -> [(String, [FinalTag])]
 tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
       tagNumLookupsResults
     , tagNumUpdates
@@ -2846,18 +2841,21 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
 -- count how often something happens over the course of running these actions,
 -- then we would want to only tag the final state, not intermediate steps.
 runActionsBracket ::
-     forall state st m e prop.  (
+     forall state st m n e prop.  (
        RunLockstep state m
-     , e ~ Error (Lockstep state)
+     , e ~ Error (Lockstep state) m
      , forall a. IsPerformResult e a
      , QC.Testable prop
+     , MonadMask n
+     , MonadST n
+     , QLS.IOProperty n
      )
   => Proxy state
   -> CheckCleanup
   -> CheckRefs
-  -> IO st
-  -> (st -> IO prop)
-  -> (m QC.Property -> st -> IO QC.Property)
+  -> n st
+  -> (st -> n prop)
+  -> (m QC.Property -> st -> n QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
 runActionsBracket p cleanupFlag refsFlag init cleanup runner tagger actions =
