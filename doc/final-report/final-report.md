@@ -992,12 +992,12 @@ benchmark may give too rosy a picture if the physical machine was not saturated
 at the time the benchmark was run, or the benchmark was not run long enough, or
 the benchmark does not use the same amount of I/O parallelism as the deployment.
 
-Finally, the dev laptop’s scores of 262 k IOPS on 1 core and 487 k on 2 cores
-are well below the laptop’s rated 1.4 M IOPS. The explanation is that the 1.4 M
-is for the SSD device as a whole and it takes multiple cores to saturate the
-SSD, while the benchmark numbers above are for a single core. On the same
-machine, the scores of the `fio` and `blockio-uring` benchmarks for 8 cores are
-1,449 k and 1,337 k IOPS respectively.
+Finally, the dev laptop’s `fio` scores of 262 k IOPS on 1 core and 487 k on
+2 cores are well below the laptop’s rated 1.4 M IOPS. The explanation is that
+the 1.4 M is for the SSD device as a whole and it takes multiple cores to
+saturate the SSD, while the benchmark numbers above are for a single core. On
+the same machine, the scores of the `fio` and `blockio-uring` benchmarks for
+8 cores are 1,449 k and 1,337 k IOPS respectively.
 
 ## Setup of the primary benchmark
 
