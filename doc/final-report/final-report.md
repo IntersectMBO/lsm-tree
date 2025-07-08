@@ -1089,9 +1089,9 @@ Bloom filters with a false positive rate (FPR) of $1/1000$.
 
 Indexes of the compact type.
 
-: This takes advantage of the keys being uniformly distributed. It reduces the
-  size of the in-memory indexes, leaving more memory available for the Bloom
-  filters and the write buffer.
+: This takes advantage of the keys being roughly uniformly distributed. It
+  reduces the size of the in-memory indexes, leaving more memory available for
+  the Bloom filters and the write buffer.
 
 Write buffer size of 20,000 elements.
 
