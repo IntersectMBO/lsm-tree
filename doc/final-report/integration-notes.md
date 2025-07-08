@@ -184,7 +184,8 @@ Note that using a per-run or per-table hash salt would incur non-trivial costs,
 because it would reduce the sharing available in bulk Bloom filter lookups,
 where several keys are looked up in several filters. Given that the Bloom filter
 lookup is a performance-sensitive part of the overall database implementation,
-such an approach to salting does not seem feasible.
+such an approach to salting does not seem feasible. Therefore, we chose to
+generate hash salts per session.
 
 In the Cardano context, a downside of picking Bloom filter salts per session and
 thus per node is that this interacts poorly with sharing of pre-created
