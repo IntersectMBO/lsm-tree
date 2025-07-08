@@ -1043,7 +1043,7 @@ constraints:
 These constraints leave room for concurrent and parallel execution, because they
 allow overlapped execution of multiple batches in a pipelined way. The reason
 why such an execution is possible is somewhat subtle though. The updates have to
-be serialised, but the lookups can be executed out of order, provided the
+be executed serially, but the lookups can be executed out of order, provided the
 results we ultimately report for the lookups are correct. The trick is to
 perform the lookups using an older value of the database and then adjust their
 results using the updates from the later batches. This allows starting the
