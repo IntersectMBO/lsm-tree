@@ -457,9 +457,9 @@ The library offers two alternatives for key–range lookups:
   position a cursor at a specific key and then read database entries from there
   either one by one or in bulk, with bulk reading being the recommended method.
   A cursor offers a stable view of a table much like an independently writeable
-  reference (see functional requirement 5), meaning that updates to the original
-  table are not visible through the cursor. Currently, reading from a cursor
-  simultaneously advances the cursor position.
+  reference (see [functional requirement 5](#requirement-5)), meaning that
+  updates to the original table are not visible through the cursor. Currently,
+  reading from a cursor simultaneously advances the cursor position.
 
 Internally, `rangeLookup` is defined in terms of the cursor interface but is
 provided for convenience nonetheless. A range lookup always returns as many
@@ -522,18 +522,19 @@ elaborate: it can be run in a debug mode that checks, amongst other things, that
 all references are ultimately released.
 
 The story for mutable data is slightly more tricky. Most importantly,
-incremental merges (see functional requirement 2) are shared between tables and
-their duplicates. Continuing the analogy with Haskell’s persistent data
-structures and sharing, we can view an incremental merge as similar to a thunk.
-Incremental merges only progress, which does not involve modifying data in
-place, and each table and its duplicates share the same progress. Special care
-is taken to ensure that incremental merges can progress concurrently without
-threads waiting much on other threads. The design here is to only perform actual
-I/O in batches, while tracking in memory how much I/O should be performed and
-when. The in-memory tracking data can be updated concurrently and relatively
-quickly, and ideally only one of the threads will do I/O from time to time.
-Garbage collection for shared incremental merges uses the same reference
-counting approach as garbage collection for immutable on-disk data.
+incremental merges (see [functional requirement 2](#requirement-2)) are shared
+between tables and their duplicates. Continuing the analogy with Haskell’s
+persistent data structures and sharing, we can view an incremental merge as
+similar to a thunk. Incremental merges only progress, which does not involve
+modifying data in place, and each table and its duplicates share the same
+progress. Special care is taken to ensure that incremental merges can progress
+concurrently without threads waiting much on other threads. The design here is
+to only perform actual I/O in batches, while tracking in memory how much I/O
+should be performed and when. The in-memory tracking data can be updated
+concurrently and relatively quickly, and ideally only one of the threads will do
+I/O from time to time. Garbage collection for shared incremental merges uses the
+same reference counting approach as garbage collection for immutable on-disk
+data.
 
 ## Requirement 6
 
@@ -561,12 +562,13 @@ entries in a table is $n$, then taking a snapshot requires $O(\log n)$ disk
 operations.
 
 Opening a snapshot is more costly because the contents of all files involved in
-the snapshot are validated (see functional requirement 8). Moreover, the state
-of ongoing merges is not stored in a snapshot but recomputed when the snapshot
-is opened, which takes additional time. Another downside of not storing merge
-state is that any sharing of in-memory data is lost when creating a snapshot and
-opening it later. A more sophisticated design could conceivably restore sharing,
-but we chose the current design for the sake of simplicity.
+the snapshot are validated (see [functional requirement 8](#requirement-8)).
+Moreover, the state of ongoing merges is not stored in a snapshot but recomputed
+when the snapshot is opened, which takes additional time. Another downside of
+not storing merge state is that any sharing of in-memory data is lost when
+creating a snapshot and opening it later. A more sophisticated design could
+conceivably restore sharing, but we chose the current design for the sake of
+simplicity.
 
 ## Requirement 7
 
@@ -581,9 +583,9 @@ call this operation a table *union* instead. Moreover, ‘union’ is a more fit
 name, since the behavior of table union is similar to that of
 `Data.Map.unionWith`: all logical key–value pairs with unique keys are
 preserved, but pairs that have the same key are combined using the resolve
-function that is also used for upserts (see functional requirement 4). When the
-resolve function is `const`, table union behaves like `Data.Map.union`, which
-computes a left-biased union.
+function that is also used for upserts (see [functional
+requirement 4](#requirement-4)). When the resolve function is `const`, table
+union behaves like `Data.Map.union`, which computes a left-biased union.
 
 We make a distinction between *immediate* and *incremental* unions:
 
