@@ -1343,9 +1343,9 @@ The execution of the benchmark is in two phases:
   the remaining parameters.
 
 * During the *run* phase, the actual benchmark is performed based on the
-  database created during the setup phase. The user can decide on the number of
-  batches, the disk cache policy and the benchmark mode: serial (the default),
-  pipelined or lookup only.
+  database created during the setup phase. The user can decide, amongst other
+  things, on the number of batches, the disk cache policy and the benchmark
+  mode: serial (the default), pipelined or lookup only.
 
 The checking mode, which compares the lookup results of each batch against the
 corresponding results of the reference implementation, can be activated using
