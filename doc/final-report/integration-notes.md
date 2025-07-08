@@ -5,7 +5,7 @@ author:
   - Duncan Coutts
   - Joris Dral
   - Wolfgang Jeltsch
-date: May 2025
+date: July 2025
 
 toc: true
 numbersections: true
