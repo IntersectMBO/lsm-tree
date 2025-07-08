@@ -14,13 +14,13 @@ TraceTable (TableId 0) (TraceUpdated 1)
 TraceTable (TableId 0) (TraceLookups 1)
 TraceTable (TableId 0) (TraceLookups 1)
 TraceTable (TableId 0) (TraceRangeLookup (FromToExcluding (SerialisedKey [0,0,0,0,0,0,0,0]) (SerialisedKey [0,0,0,0,0,0,0,3])))
-TraceCursor (CursorId 2) (TraceNewCursor (TableId 0) (OffsetKey (SerialisedKey [0,0,0,0,0,0,0,0])))
+TraceCursor (CursorId 2) (TraceNewCursor (TableId 0) (Just [0,0,0,0,0,0,0,0]))
 TraceCursor (CursorId 2) (TraceCreatedCursor (SessionId session-dir))
 TraceCursor (CursorId 2) (TraceReadingCursor 500)
 TraceCursor (CursorId 2) (TraceReadCursor 500 2)
 TraceCursor (CursorId 2) TraceCloseCursor
 TraceCursor (CursorId 2) TraceClosedCursor
-TraceCursor (CursorId 3) (TraceNewCursor (TableId 0) (OffsetKey (SerialisedKey [0,0,0,0,0,0,0,1])))
+TraceCursor (CursorId 3) (TraceNewCursor (TableId 0) (Just [0,0,0,0,0,0,0,1]))
 TraceCursor (CursorId 3) (TraceCreatedCursor (SessionId session-dir))
 TraceCursor (CursorId 3) (TraceReadingCursor 2)
 TraceCursor (CursorId 3) (TraceReadCursor 2 1)
@@ -66,7 +66,7 @@ TraceTable (TableId 0) TraceCloseTable
 TraceTable (TableId 0) TraceClosedTable
 TraceTable (TableId 21) (TraceNewTable (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 20000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 20000}))
 TraceTable (TableId 21) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 20000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 20000}))
-TraceCursor (CursorId 23) (TraceNewCursor (TableId 21) NoOffsetKey)
+TraceCursor (CursorId 23) (TraceNewCursor (TableId 21) Nothing)
 TraceCursor (CursorId 23) (TraceCreatedCursor (SessionId session-dir))
 TraceSession (SessionId session-dir) TraceCloseSession
 TraceCursor (CursorId 23) TraceCloseCursor
