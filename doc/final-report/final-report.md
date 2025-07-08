@@ -250,7 +250,7 @@ the library, beyond the basic key–value operations, including some special
 features that are not provided by off-the-shelf database software. The following
 features are worth mentioning:
 
-* Monoidal updates
+* Upserts
 * Separate blob retrieval
 * Range lookups and cursors
 * Incremental merges
