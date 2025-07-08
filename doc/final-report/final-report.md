@@ -1337,10 +1337,10 @@ For the full command line help use the following commands:
 The execution of the benchmark is in two phases:
 
 * During the *setup* phase, the initial database is prepared. The user can
-  decide on the number of database entries (default: 100 M) and the Bloom filter
-  FPR (default: $1/1000$). After preparation, the database can be used by
-  multiple benchmark runs, picking different values for the remaining
-  parameters.
+  decide, amongst other things, on the number of database entries (default:
+  100 M) and the Bloom filter FPR (default: $1/1000$). After preparation, the
+  database can be used by multiple benchmark runs, picking different values for
+  the remaining parameters.
 
 * During the *run* phase, the actual benchmark is performed based on the
   database created during the setup phase. The user can decide on the number of
