@@ -39,7 +39,12 @@ import           Test.Util.PrettyProxy
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
       QC.testProperty "prop_example" prop_example
-    , QC.testProperty "prop_noSwallowedExceptions" prop_noSwallowedExceptions
+    , QC.testProperty "prop_noSwallowedExceptions" $
+        -- TODO: see #781. I observed a timeout when this test was running,
+        -- which might have to do with shrinking taking too long. For now, we'll
+        -- turn off shrinking until we see a test failure that might explain
+        -- what's going wrong.
+        noShrinking prop_noSwallowedExceptions
     ]
 
 instance DynLogicModel (Lockstep (ModelState IO R.Table))
