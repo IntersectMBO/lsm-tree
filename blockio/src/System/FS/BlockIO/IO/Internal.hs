@@ -5,6 +5,7 @@ module System.FS.BlockIO.IO.Internal (
     IOCtxParams (..)
   , defaultIOCtxParams
   , mkClosedError
+  , mkNotPinnedError
   , tryLockFileIO
   , createHardLinkIO
   ) where
@@ -12,11 +13,12 @@ module System.FS.BlockIO.IO.Internal (
 import           Control.DeepSeq (NFData (..))
 import           Control.Monad.Class.MonadThrow (MonadCatch (bracketOnError),
                      MonadThrow (..), bracketOnError, try)
-import           GHC.IO.Exception (IOErrorType (ResourceVanished))
+import           GHC.IO.Exception
+                     (IOErrorType (InvalidArgument, ResourceVanished))
 import qualified GHC.IO.Handle.Lock as GHC
 import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
-import           System.FS.API (FsError (..), FsPath, HasFS, SomeHasFS (..))
+import           System.FS.API (FsError (..), FsPath, HasFS)
 import           System.FS.BlockIO.API (LockFileHandle (..))
 import           System.FS.IO (HandleIO)
 import qualified System.IO as GHC
@@ -54,12 +56,27 @@ defaultIOCtxParams = IOCtxParams {
       ioctxConcurrencyLimit = 64 * 3
     }
 
-mkClosedError :: HasCallStack => SomeHasFS m -> String -> FsError
-mkClosedError (SomeHasFS hasFS) loc = FS.ioToFsError (FS.mkFsErrorPath hasFS (FS.mkFsPath [])) ioerr
-  where ioerr =
-          ioeSetErrorString
-            (mkIOError ResourceVanished loc Nothing Nothing)
-            ("HasBlockIO closed: " <> loc)
+{-------------------------------------------------------------------------------
+  Errors
+-------------------------------------------------------------------------------}
+
+mkClosedError :: HasCallStack => HasFS m h -> String -> FsError
+mkClosedError hasFS loc =
+    FS.ioToFsError (FS.mkFsErrorPath hasFS (FS.mkFsPath [])) ioerr
+  where
+    ioerr =
+        ioeSetErrorString
+          (mkIOError ResourceVanished loc Nothing Nothing)
+          ("HasBlockIO closed: " <> loc)
+
+mkNotPinnedError :: HasCallStack => HasFS m h -> String -> FsError
+mkNotPinnedError hasFS loc =
+    FS.ioToFsError (FS.mkFsErrorPath hasFS (FS.mkFsPath [])) ioerr
+  where
+    ioerr =
+        ioeSetErrorString
+          (mkIOError InvalidArgument loc Nothing Nothing)
+          ("MutableByteArray is unpinned: " <> loc)
 
 {-------------------------------------------------------------------------------
   File locks

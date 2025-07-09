@@ -88,6 +88,9 @@ data HasBlockIO m h = HasBlockIO {
     --
     -- If any of the I\/O operations fails, an 'FsError' exception will be thrown.
     --
+    -- The buffers in the 'IOOp's should be pinned memory. If any buffer is
+    -- unpinned memory, an 'FsError' exception will be thrown.
+    --
   , submitIO :: HasCallStack => V.Vector (IOOp (PrimState m) h) -> m (VU.Vector IOResult)
 
     -- TODO: once file caching is disabled, subsequent reads/writes with
