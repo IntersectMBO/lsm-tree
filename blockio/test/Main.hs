@@ -5,20 +5,24 @@ module Main (main) where
 import           Control.Concurrent (modifyMVar_, newMVar, threadDelay,
                      withMVar)
 import           Control.Concurrent.Async
-import           Control.Exception (SomeException (SomeException), bracket, try)
+import           Control.Exception (Exception (..),
+                     SomeException (SomeException), bracket, try)
 import           Control.Monad
 import           Control.Monad.Primitive
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Lazy as LBS
 import           Data.Foldable (traverse_)
 import           Data.Functor.Compose (Compose (Compose))
+import qualified Data.List as List
 import           Data.Maybe (catMaybes)
 import           Data.Primitive.ByteArray
 import           Data.Typeable
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import           System.FS.API
+import qualified System.FS.API.Lazy as FS
 import qualified System.FS.API.Strict as FS
 import           System.FS.API.Strict (hPutAllStrict)
 import qualified System.FS.BlockIO.API as FS
@@ -40,7 +44,18 @@ tests = testGroup "blockio:test" [
     , testCase "example_closeIsIdempotent" example_closeIsIdempotent
     , testProperty "prop_readWrite" prop_readWrite
     , testProperty "prop_submitToClosedCtx" prop_submitToClosedCtx
+
+      -- Context
+    , testProperty "prop_submitIO_contextClosed" prop_submitIO_contextClosed
+
+      -- Pinned vs. unpinned buffers
+    , testProperty "prop_submitIO_buffersPinned" prop_submitIO_buffersPinned
+    , testProperty "prop_submitIO_buffersUnpinned" prop_submitIO_buffersUnpinned
+
+      -- File locks
     , testProperty "prop_tryLockFileExclusiveTwice" prop_tryLockFileExclusiveTwice
+
+      -- Storage synchronisation
     , testProperty "prop_synchronise" prop_synchronise
     , testProperty "prop_synchroniseFile_fileDoesNotExist"
         prop_synchroniseFile_fileDoesNotExist
@@ -117,6 +132,104 @@ prop_submitToClosedCtx bs = ioProperty $ withSystemTempDirectory "prop_a" $ \dir
               pure $ case eith of
                 Left _  -> Just $ tabulate "submitIO successful" [show False] $ counterexample "expected failure, but got success" (b === True)
                 Right _ -> Just $ tabulate "submitIO successful" [show True]  $ counterexample "expected success, but got failure" (b === False)
+
+{-------------------------------------------------------------------------------
+  Closed context
+-------------------------------------------------------------------------------}
+
+-- | Test that 'submitIO' on a closed context returns a "context closed" error
+prop_submitIO_contextClosed :: Property
+prop_submitIO_contextClosed =
+    ioProperty $
+    withTempIOHasBlockIO "prop_submitIO_unpinnedBuffers" $ \hfs hbio ->
+    FS.withFile hfs path (FS.ReadWriteMode FS.MustBeNew) $ \h -> do
+      void $ FS.hPutAll hfs h $ LBS.pack [1..100]
+      buf <- newByteArray 17
+      let ioops = V.fromList [
+              IOOpWrite h 0 buf 0 17
+            , IOOpRead h 0 buf 0 17
+            ]
+      close hbio
+      eith <- try @FsError $ submitIO hbio ioops
+      pure $ case eith of
+        Left e
+          | isClosedError e
+          -> property True
+          | otherwise
+          -> counterexample ("Unexpected error: " <> displayException e) False
+        Right _
+          -> counterexample ("Unexpected success") False
+  where
+    path = FS.mkFsPath ["temp-file"]
+
+-- TODO: add a property that checks @isClosedError . mkClosedError = True@
+isClosedError :: FsError -> Bool
+isClosedError e
+    -- TODO: add an FsResourceVanished constructor to FsErrorType?
+  | fsErrorType e == FsOther
+  , "HasBlockIO closed: " `List.isPrefixOf` (fsErrorString e)
+  = True
+  | otherwise
+  = False
+
+{-------------------------------------------------------------------------------
+  Pinned vs. unpinned buffers
+-------------------------------------------------------------------------------}
+
+-- | Test that 'submitIO' using pinned buffers returns /no/ "unpinned buffers"
+-- error
+prop_submitIO_buffersPinned :: Property
+prop_submitIO_buffersPinned =
+    ioProperty $
+    withTempIOHasBlockIO "prop_submitIO_pinnedBuffers" $ \hfs hbio ->
+    FS.withFile hfs path (FS.ReadWriteMode FS.MustBeNew) $ \h -> do
+      void $ FS.hPutAll hfs h $ LBS.pack [1..100]
+      buf <- newPinnedByteArray 17
+      let ioops = V.fromList [
+              IOOpWrite h 0 buf 0 17
+            , IOOpRead h 0 buf 0 17
+            ]
+      eith <- try @FsError $ submitIO hbio ioops
+      pure $ case eith of
+        Left e
+          -> counterexample ("Unexpected error: " <> displayException e) False
+        Right _
+          -> property True
+  where
+    path = FS.mkFsPath ["temp-file"]
+
+-- | Test that 'submitIO' using unpinned buffers returns an "unpinned buffers" error
+prop_submitIO_buffersUnpinned :: Property
+prop_submitIO_buffersUnpinned =
+    ioProperty $
+    withTempIOHasBlockIO "prop_submitIO_unpinnedBuffers" $ \hfs hbio ->
+    FS.withFile hfs path (FS.ReadWriteMode FS.MustBeNew) $ \h -> do
+      void $ FS.hPutAll hfs h $ LBS.pack [1..100]
+      buf <- newByteArray 17
+      let ioops = V.fromList [
+              IOOpWrite h 0 buf 0 17
+            , IOOpRead h 0 buf 0 17
+            ]
+      eith <- try @FsError $ submitIO hbio ioops
+      pure $ case eith of
+        Left e
+          | isNotPinnedError e
+          -> property True
+          | otherwise
+          -> counterexample ("Unexpected error: " <> displayException e) False
+        Right _
+          -> counterexample ("Unexpected success") False
+  where
+    path = FS.mkFsPath ["temp-file"]
+
+-- TODO: add a property that checks @isNotPinnedError . mkNotPinnedError = True@
+isNotPinnedError :: FsError -> Bool
+isNotPinnedError e
+  | fsErrorType e == FsInvalidArgument
+  , "MutableByteArray is unpinned: " `List.isPrefixOf` (fsErrorString e)
+  = True
+  | otherwise
+  = False
 
 {-------------------------------------------------------------------------------
   File locks

@@ -6,6 +6,7 @@ import           Control.Concurrent.Class.MonadMVar
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad, PrimState, RealWorld)
+import           Data.Primitive (MutableByteArray, isMutableByteArrayPinned)
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 import qualified Data.Vector.Unboxed.Mutable as VUM
@@ -59,7 +60,9 @@ data IOCtx m = IOCtx { ctxFS :: SomeHasFS m, openVar :: MVar m Bool }
 {-# SPECIALISE guardIsOpen :: IOCtx IO -> IO () #-}
 guardIsOpen :: (HasCallStack, MonadMVar m, MonadThrow m) => IOCtx m -> m ()
 guardIsOpen ctx = readMVar (openVar ctx) >>= \b ->
-    unless b $ throwIO (IOI.mkClosedError (ctxFS ctx) "submitIO")
+    case ctxFS ctx of
+      SomeHasFS hfs ->
+        unless b $ throwIO $ IOI.mkClosedError hfs "submitIO"
 
 {-# SPECIALISE initIOCtx :: SomeHasFS IO -> IO (IOCtx IO) #-}
 initIOCtx :: MonadMVar m => SomeHasFS m -> m (IOCtx m)
@@ -90,10 +93,23 @@ ioop ::
   => HasFS m h
   -> IOOp (PrimState m) h
   -> m IOResult
-ioop hfs (IOOpRead h off buf bufOff c) =
+ioop hfs (IOOpRead h off buf bufOff c) = do
+    guardPinned hfs buf "submitIO"
     IOResult <$> hGetBufExactlyAt hfs h buf bufOff c (fromIntegral off)
-ioop hfs (IOOpWrite h off buf bufOff c) =
+ioop hfs (IOOpWrite h off buf bufOff c) = do
+    guardPinned hfs buf "submitIO"
     IOResult <$> hPutBufExactlyAt hfs h buf bufOff c (fromIntegral off)
+
+{-# SPECIALISE guardPinned :: HasFS IO h -> MutableByteArray RealWorld -> String -> IO () #-}
+guardPinned ::
+     MonadThrow m
+  => HasFS m h
+  -> MutableByteArray (PrimState m)
+  -> String
+  -> m ()
+guardPinned hfs buf loc =
+    unless (isMutableByteArrayPinned buf) $
+      throwIO (IOI.mkNotPinnedError hfs loc)
 
 {-# SPECIALISE hmapM ::
      VUM.Unbox b

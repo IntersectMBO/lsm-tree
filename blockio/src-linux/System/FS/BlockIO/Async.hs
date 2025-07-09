@@ -12,7 +12,7 @@ import           Foreign.C.Error
 import           GHC.IO.Exception
 import           GHC.Stack
 import           System.FS.API (BufferOffset (..), FsErrorPath, FsPath,
-                     Handle (..), HasFS (..), SomeHasFS (..), ioToFsError)
+                     Handle (..), HasFS (..), ioToFsError)
 import qualified System.FS.BlockIO.API as API
 import           System.FS.BlockIO.API (IOOp (..), IOResult (..), LockMode,
                      ioopHandle)
@@ -20,7 +20,8 @@ import qualified System.FS.BlockIO.IO.Internal as IOI
 import           System.FS.IO (HandleIO)
 import           System.FS.IO.Handle
 import qualified System.IO.BlockIO as I
-import           System.IO.Error (ioeSetErrorString, isResourceVanishedError)
+import           System.IO.Error (ioeGetErrorType, ioeSetErrorString,
+                     isResourceVanishedError)
 import           System.Posix.Types
 
 -- | IO instantiation of 'HasBlockIO', using @blockio-uring@.
@@ -64,17 +65,22 @@ submitIO ::
   -> IO (VU.Vector IOResult)
 submitIO hasFS ioctx ioops = do
     ioops' <- mapM ioopConv ioops
-    ress <- I.submitIO ioctx ioops' `catch` rethrowClosedError
+    ress <- I.submitIO ioctx ioops' `catch` rethrowFsError
     hzipWithM rethrowErrno ioops ress
   where
-    rethrowClosedError :: IOError -> IO a
-    rethrowClosedError e@IOError{} =
-        -- Pattern matching on the error is brittle, because the structure of
-        -- the exception might change between versions of @blockio-uring@.
-        -- Nonetheless, it's better than nothing.
-        if isResourceVanishedError e && ioe_location e == "IOCtx closed"
-          then throwIO (IOI.mkClosedError (SomeHasFS hasFS) "submitIO")
-          else throwIO e
+    rethrowFsError :: IOError -> IO a
+    rethrowFsError e@IOError{}
+      -- Pattern matching on the error is brittle, because the structure of
+      -- the exception might change between versions of @blockio-uring@.
+      -- Nonetheless, it's better than nothing.
+      | isResourceVanishedError e
+      , ioe_location e == "IOCtx closed"
+      = throwIO (IOI.mkClosedError hasFS "submitIO")
+      | ioeGetErrorType e == InvalidArgument
+      , ioe_location e == "MutableByteArray is unpinned"
+      = throwIO (IOI.mkNotPinnedError hasFS "submitIO")
+      | otherwise
+      = throwIO e
 
     rethrowErrno ::
          HasCallStack
