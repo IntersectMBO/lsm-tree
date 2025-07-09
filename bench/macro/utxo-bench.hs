@@ -160,8 +160,7 @@ data RunOpts = RunOpts
     , batchSize  :: !Int
     , check      :: !Bool
     , seed       :: !Word64
-    , pipelined  :: !Bool
-    , lookuponly :: !Bool
+    , mode       :: !RunMode
     }
   deriving stock Show
 
@@ -189,21 +188,25 @@ mkTableConfigSetup GlobalOpts{diskCachePolicy}
     }
 
 mkTableConfigRun :: GlobalOpts -> RunOpts -> LSM.TableConfig -> LSM.TableConfig
-mkTableConfigRun GlobalOpts{diskCachePolicy} RunOpts {pipelined} conf =
+mkTableConfigRun GlobalOpts{diskCachePolicy} RunOpts {mode} conf =
     conf {
       LSM.confDiskCachePolicy = diskCachePolicy,
-      LSM.confMergeBatchSize  = if pipelined
-                                  then LSM.MergeBatchSize 1
-                                  else LSM.confMergeBatchSize conf
+      LSM.confMergeBatchSize  =
+        case mode of
+          Sequential -> LSM.confMergeBatchSize conf
+          Pipelined  -> LSM.MergeBatchSize 1
+          LookupOnly -> LSM.confMergeBatchSize conf
     }
 
 mkTableConfigOverride :: GlobalOpts -> RunOpts -> LSM.TableConfigOverride
-mkTableConfigOverride GlobalOpts{diskCachePolicy} RunOpts {pipelined} =
+mkTableConfigOverride GlobalOpts{diskCachePolicy} RunOpts {mode} =
     LSM.noTableConfigOverride {
       LSM.overrideDiskCachePolicy = Just diskCachePolicy,
-      LSM.overrideMergeBatchSize  = if pipelined
-                                      then Just (LSM.MergeBatchSize 1)
-                                      else Nothing
+      LSM.overrideMergeBatchSize  =
+        case mode of
+          Sequential -> Nothing
+          Pipelined  -> Just $ LSM.MergeBatchSize 1
+          LookupOnly -> Nothing
     }
 
 mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
@@ -269,8 +272,20 @@ runOptsP = pure RunOpts
     <*> O.option O.auto (O.long "batch-size" <> O.value 256 <> O.showDefault <> O.help "Batch size")
     <*> O.switch (O.long "check" <> O.help "Check generated key distribution")
     <*> O.option O.auto (O.long "seed" <> O.value 1337 <> O.showDefault <> O.help "Random seed")
-    <*> O.switch (O.long "pipelined" <> O.help "Use pipelined mode")
-    <*> O.switch (O.long "lookup-only" <> O.help "Use lookup only mode")
+    <*> O.option O.auto (O.long "mode" <> O.value Sequential <> O.showDefault
+          <> O.help "Mode [Sequential | Pipelined | LookupOnly]")
+
+-- | The run mode affects the method of performing
+data RunMode =
+    -- | Use sequential mode: wait for a batch of operations to complete before
+    -- starting the next one.
+    Sequential
+    -- | Use pipelined mode: overlap batches of operations.
+  | Pipelined
+    -- | Use lookup-only sequential mode: like sequential mode, but only perform
+    -- the lookups and not the updates.
+  | LookupOnly
+  deriving stock (Show, Eq, Read)
 
 deriving stock instance Read LSM.DiskCachePolicy
 deriving stock instance Read LSM.BloomFilterAlloc
@@ -620,10 +635,10 @@ doRun gopts opts =
                 fail $ "lookup result mismatch in batch " ++ show b
               writeIORef checkvar xs
 
-        let benchmarkIterations
-              | pipelined opts = pipelinedIterations h
-              | lookuponly opts= sequentialIterationsLO
-              | otherwise      = sequentialIterations h
+        let benchmarkIterations = case mode opts of
+              Sequential -> sequentialIterations h
+              Pipelined  -> pipelinedIterations h
+              LookupOnly -> sequentialIterationsLO
             !progressInterval  = max 1 ((batchCount opts) `div` 100)
             madeProgress b     = b `mod` progressInterval == 0
         (time, _, _) <- timed_ $ do
