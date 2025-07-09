@@ -59,15 +59,16 @@ instance NFData BlobSpan where
 --
 -- ASYNC: this should be called with asynchronous exceptions masked because it
 -- allocates/creates resources.
-{-# SPECIALISE openBlobFile :: HasCallStack => HasFS IO h -> FS.FsPath -> FS.OpenMode -> IO (Ref (BlobFile IO h)) #-}
+{-# SPECIALISE openBlobFile :: HasCallStack => HasFS IO h -> RefCtx -> FS.FsPath -> FS.OpenMode -> IO (Ref (BlobFile IO h)) #-}
 openBlobFile ::
      (PrimMonad m, MonadCatch m)
   => HasCallStack
   => HasFS m h
+  -> RefCtx
   -> FS.FsPath
   -> FS.OpenMode
   -> m (Ref (BlobFile m h))
-openBlobFile fs path mode =
+openBlobFile fs refCtx path mode =
     bracketOnError (FS.hOpen fs path mode) (FS.hClose fs) $ \blobFileHandle -> do
       let finaliser =
             FS.hClose fs blobFileHandle `finally`
@@ -76,7 +77,7 @@ openBlobFile fs path mode =
               -- surprise errors when the file is also deleted elsewhere. Maybe
               -- file paths should be guarded by 'Ref's as well?
               FS.removeFile fs (FS.handlePath blobFileHandle)
-      newRef finaliser $ \blobFileRefCounter ->
+      newRef refCtx finaliser $ \blobFileRefCounter ->
         BlobFile {
           blobFileHandle,
           blobFileRefCounter

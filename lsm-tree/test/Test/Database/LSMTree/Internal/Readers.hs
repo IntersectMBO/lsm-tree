@@ -53,9 +53,10 @@ tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.Readers"
     [ testProperty "prop_lockstep" $
         Lockstep.runActionsBracket (Proxy @ReadersState)
-          mempty mempty $ \act () -> do
+          mempty mempty $ \act () ->
+          withRefCtx $ \refCtx -> do
           (prop, mockFS) <- FsSim.runSimHasBlockIO MockFS.empty $ \hfs hbio -> do
-            (prop, RealState _ mCtx) <- runRealMonad hfs hbio
+            (prop, RealState _ mCtx) <- runRealMonad hfs hbio refCtx
                                                      (RealState 0 Nothing) act
             traverse_ closeReadersCtx mCtx  -- close current readers
             pure prop
@@ -371,15 +372,17 @@ trimap :: (a -> a') -> (b -> b') -> (c -> c') -> (a, b, c) -> (a', b', c')
 trimap f g h (a, b, c) = (f a, g b, h c)
 
 type RealMonad = ReaderT (FS.HasFS IO MockFS.HandleMock,
-                          FS.HasBlockIO IO MockFS.HandleMock)
+                          FS.HasBlockIO IO MockFS.HandleMock,
+                          RefCtx)
                          (StateT RealState IO)
 
 runRealMonad :: FS.HasFS IO MockFS.HandleMock
              -> FS.HasBlockIO IO MockFS.HandleMock
+             -> RefCtx
              -> RealState
              -> RealMonad a
              -> IO (a, RealState)
-runRealMonad hfs hbio st = (`runStateT` st) . (`runReaderT` (hfs, hbio))
+runRealMonad hfs hbio refCtx st = (`runStateT` st) . (`runReaderT` (hfs, hbio, refCtx))
 
 data RealState =
     RealState
@@ -416,12 +419,12 @@ instance RunLockstep ReadersState RealMonad where
 
 runIO :: LockstepAction ReadersState a -> LookUp -> RealMonad a
 runIO act lu = case act of
-    New offset srcDatas -> ReaderT $ \(hfs, hbio) -> do
+    New offset srcDatas -> ReaderT $ \(hfs, hbio, refCtx) -> do
       RealState numRuns mCtx <- get
       -- if runs are still being read, they need to be cleaned up
       traverse_ (liftIO . closeReadersCtx) mCtx
       counter <- liftIO $ newUniqCounter numRuns
-      sources <- liftIO $ forM srcDatas (fromSourceData hfs hbio counter)
+      sources <- liftIO $ forM srcDatas (fromSourceData hfs hbio refCtx counter)
       newReaders <- liftIO $ do
         let offsetKey = maybe Readers.NoOffsetKey (Readers.OffsetKey . coerce) offset
         mreaders <- Readers.new resolve offsetKey sources
@@ -447,18 +450,18 @@ runIO act lu = case act of
       (n, hasMore) <- Readers.dropWhileKey resolve r k
       pure (hasMore, (n, hasMore))
   where
-    fromSourceData hfs hbio counter = \case
+    fromSourceData hfs hbio refCtx counter = \case
         FromWriteBufferData rd -> do
           n <- incrUniqCounter counter
-          wbblobs <- WBB.new hfs (FS.mkFsPath [show (uniqueToInt n) <> ".wb.blobs"])
+          wbblobs <- WBB.new hfs refCtx (FS.mkFsPath [show (uniqueToInt n) <> ".wb.blobs"])
           let kops = unRunData (serialiseRunData rd)
           wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hfs wbblobs)) kops
           pure $ Readers.FromWriteBuffer wb wbblobs
         FromRunData rd -> do
-          r <- unsafeCreateRun hfs hbio testSalt runParams (FS.mkFsPath []) counter $ serialiseRunData rd
+          r <- unsafeCreateRun hfs hbio refCtx testSalt runParams (FS.mkFsPath []) counter $ serialiseRunData rd
           pure $ Readers.FromRun r
         FromReadersData ty rds -> do
-          Readers.FromReaders ty <$> traverse (fromSourceData hfs hbio counter) rds
+          Readers.FromReaders ty <$> traverse (fromSourceData hfs hbio refCtx counter) rds
 
     pop = expectReaders $ \hfs r -> do
       (key, e, hasMore) <- Readers.pop resolve r
@@ -469,7 +472,7 @@ runIO act lu = case act of
          (FS.HasFS IO MockFS.HandleMock -> Readers IO MockFS.HandleMock -> IO (HasMore, a))
       -> RealMonad (Either () a)
     expectReaders f =
-        ReaderT $ \(hfs, _hbio) -> do
+        ReaderT $ \(hfs, _hbio, _refCtx) -> do
           get >>= \case
             RealState _ Nothing -> pure (Left ())
             RealState n (Just (sources, readers)) -> do

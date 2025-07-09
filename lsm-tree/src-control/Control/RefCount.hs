@@ -32,6 +32,12 @@ module Control.RefCount (
   , ignoreForgottenRefs
   , enableForgottenRefChecks
   , disableForgottenRefChecks
+
+    -- * Reference context
+  , RefCtx
+  , withRefCtx
+  , newRefCtx
+  , closeRefCtx
   ) where
 
 import           Control.DeepSeq
@@ -39,6 +45,7 @@ import           Control.Exception (assert)
 import           Control.Monad (void, when)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
+import           Data.Kind (Type)
 import           Data.Primitive.PrimVar
 import           GHC.Show (appPrec)
 import           GHC.Stack (CallStack, prettyCallStack)
@@ -47,7 +54,7 @@ import           GHC.Stack (CallStack, prettyCallStack)
 import           Control.Concurrent (yield)
 import           Data.IORef
 import           GHC.Stack (HasCallStack, callStack)
-import           System.IO.Unsafe (unsafeDupablePerformIO, unsafePerformIO)
+import           System.IO.Unsafe (unsafeDupablePerformIO)
 import           System.Mem.Weak hiding (deRefWeak)
 #if MIN_VERSION_base(4,20,0)
 import           System.Mem (performBlockingMajorGC)
@@ -209,7 +216,8 @@ class RefCounted m obj | obj -> m where
   newRef ::
        RefCounted IO obj
     => HasCallStackIfDebug
-    => IO ()
+    => RefCtx
+    -> IO ()
     -> (RefCounter IO -> obj)
     -> IO (Ref obj)
   #-}
@@ -221,14 +229,15 @@ class RefCounted m obj | obj -> m where
 newRef ::
      (RefCounted m obj, PrimMonad m)
   => HasCallStackIfDebug
-  => m ()
+  => RefCtx
+  -> m ()
   -> (RefCounter m -> obj)
   -> m (Ref obj)
-newRef finaliser mkObject = do
+newRef refCtx finaliser mkObject = do
     rc <- newRefCounter finaliser
     let !obj = mkObject rc
     assert (countVar (getRefCounter obj) == countVar rc) $
-      newRefWithTracker obj
+      newRefWithTracker refCtx obj
 
 -- | Release a reference to an object that will no longer be used (via this
 -- reference).
@@ -247,7 +256,7 @@ releaseRef ::
   -> m ()
 releaseRef ref@Ref{refobj} = do
     assertNoDoubleRelease ref
-    assertNoForgottenRefs
+    assertNoForgottenRefs (getRefCtx ref)
     releaseRefTracker ref
     decrementRefCounter (getRefCounter refobj)
 
@@ -288,7 +297,7 @@ withRef ::
   -> m a
 withRef ref@Ref{refobj} f = do
     assertNoUseAfterRelease ref
-    assertNoForgottenRefs
+    assertNoForgottenRefs (getRefCtx ref)
     f refobj
 #ifndef NO_IGNORE_ASSERTS
   where
@@ -311,9 +320,9 @@ dupRef ::
   -> m (Ref obj)
 dupRef ref@Ref{refobj} = do
     assertNoUseAfterRelease ref
-    assertNoForgottenRefs
+    assertNoForgottenRefs (getRefCtx ref)
     incrementRefCounter (getRefCounter refobj)
-    newRefWithTracker refobj
+    newRefWithTracker (getRefCtx ref) refobj
 #ifndef NO_IGNORE_ASSERTS
   where
     _unused = throwIO @m @SomeException
@@ -343,7 +352,8 @@ mkWeakRefFromRaw obj = WeakRef obj
   deRefWeak ::
        RefCounted IO obj
     => HasCallStackIfDebug
-    => WeakRef obj
+    => RefCtx
+    -> WeakRef obj
     -> IO (Maybe (Ref obj))
   #-}
 -- | If the object is still alive, obtain a /new/ normal reference. The normal
@@ -352,22 +362,23 @@ mkWeakRefFromRaw obj = WeakRef obj
 deRefWeak ::
      (RefCounted m obj, PrimMonad m)
   => HasCallStackIfDebug
-  => WeakRef obj
+  => RefCtx
+  -> WeakRef obj
   -> m (Maybe (Ref obj))
-deRefWeak (WeakRef obj) = do
+deRefWeak refCtx (WeakRef obj) = do
     success <- tryIncrementRefCounter (getRefCounter obj)
-    if success then Just <$> newRefWithTracker obj
+    if success then Just <$> newRefWithTracker refCtx obj
                else pure Nothing
 
 {-# INLINE newRefWithTracker #-}
 #ifndef NO_IGNORE_ASSERTS
-newRefWithTracker :: PrimMonad m => obj -> m (Ref obj)
-newRefWithTracker obj =
+newRefWithTracker :: PrimMonad m => RefCtx -> obj -> m (Ref obj)
+newRefWithTracker _ obj =
     pure $! Ref obj
 #else
-newRefWithTracker :: (PrimMonad m, HasCallStack) => obj -> m (Ref obj)
-newRefWithTracker obj = do
-    reftracker' <- newRefTracker callStack
+newRefWithTracker :: (PrimMonad m, HasCallStack) => RefCtx -> obj -> m (Ref obj)
+newRefWithTracker refCtx obj = do
+    reftracker' <- newRefTracker refCtx callStack
     pure $! Ref obj reftracker'
 #endif
 
@@ -412,8 +423,8 @@ releaseRefTracker :: PrimMonad m => Ref a -> m ()
 releaseRefTracker _ = pure ()
 
 {-# INLINE assertNoForgottenRefs #-}
-assertNoForgottenRefs :: PrimMonad m => m ()
-assertNoForgottenRefs = pure ()
+assertNoForgottenRefs :: PrimMonad m => RefCtx -> m ()
+assertNoForgottenRefs _ = pure ()
 
 {-# INLINE assertNoUseAfterRelease #-}
 assertNoUseAfterRelease :: PrimMonad m => Ref a -> m ()
@@ -446,16 +457,7 @@ data RefTracker = RefTracker !RefId
                              !(Weak (IORef (IORef (Maybe CallStack))))
                              !(IORef (IORef (Maybe CallStack))) -- ^ Release site
                              !CallStack -- ^ Allocation site
-
-{-# NOINLINE globalRefIdSupply #-}
-globalRefIdSupply :: PrimVar RealWorld Int
-globalRefIdSupply = unsafePerformIO $ newPrimVar 0
-
-data Enabled a = Enabled !a | Disabled
-
-{-# NOINLINE globalForgottenRef #-}
-globalForgottenRef :: IORef (Enabled (Maybe (RefId, CallStack)))
-globalForgottenRef = unsafePerformIO $ newIORef (Enabled Nothing)
+                             !RefCtx
 
 -- | This version of 'unsafeIOToPrim' is strict in the result of the argument
 -- action.
@@ -468,24 +470,24 @@ unsafeIOToPrimStrict k = do
     !x <- unsafeIOToPrim k
     pure x
 
-newRefTracker :: PrimMonad m => CallStack -> m RefTracker
-newRefTracker allocSite = unsafeIOToPrimStrict $ do
+newRefTracker :: PrimMonad m => RefCtx -> CallStack -> m RefTracker
+newRefTracker refCtx@RefCtx{..} allocSite = unsafeIOToPrimStrict $ do
     inner <- newIORef Nothing
     outer <- newIORef inner
     refid <- fetchAddInt globalRefIdSupply 1
     weak  <- mkWeakIORef outer $
-               finaliserRefTracker inner (RefId refid) allocSite
-    pure (RefTracker (RefId refid) weak outer allocSite)
+               finaliserRefTracker refCtx inner (RefId refid) allocSite
+    pure (RefTracker (RefId refid) weak outer allocSite refCtx)
 
 releaseRefTracker :: (HasCallStack, PrimMonad m) => Ref a -> m ()
-releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer _ } =
+releaseRefTracker Ref { reftracker =  RefTracker _refid _weak outer _ _ } =
   unsafeIOToPrimStrict $ do
     inner <- readIORef outer
     let releaseSite = callStack
     writeIORef inner (Just releaseSite)
 
-finaliserRefTracker :: IORef (Maybe CallStack) -> RefId -> CallStack -> IO ()
-finaliserRefTracker inner refid allocSite = do
+finaliserRefTracker :: RefCtx -> IORef (Maybe CallStack) -> RefId -> CallStack -> IO ()
+finaliserRefTracker RefCtx{..} inner refid allocSite = do
     released <- readIORef inner
     case released of
       Just _releaseSite -> pure ()
@@ -504,8 +506,8 @@ finaliserRefTracker inner refid allocSite = do
           Enabled (Just (refid', _)) | refid < refid' -> pure ()
           Enabled _ -> writeIORef globalForgottenRef (Enabled (Just (refid, allocSite)))
 
-assertNoForgottenRefs :: (PrimMonad m, MonadThrow m) => m ()
-assertNoForgottenRefs = do
+assertNoForgottenRefs :: (PrimMonad m, MonadThrow m) => RefCtx -> m ()
+assertNoForgottenRefs RefCtx{..} = do
     mrefs <- unsafeIOToPrimStrict $ readIORef globalForgottenRef
     case mrefs of
       Disabled      -> pure ()
@@ -521,7 +523,7 @@ assertNoForgottenRefs = do
 
 
 assertNoUseAfterRelease :: (PrimMonad m, MonadThrow m, HasCallStack) => Ref a -> m ()
-assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSite } = do
+assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSite _ } = do
     released <- unsafeIOToPrimStrict (readIORef =<< readIORef outer)
     case released of
       Nothing -> pure ()
@@ -535,7 +537,7 @@ assertNoUseAfterRelease Ref { reftracker = RefTracker refid _weak outer allocSit
 #endif
 
 assertNoDoubleRelease :: (PrimMonad m, MonadThrow m, HasCallStack) => Ref a -> m ()
-assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite } = do
+assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite _ } = do
     released <- unsafeIOToPrimStrict (readIORef =<< readIORef outer)
     case released of
       Nothing -> pure ()
@@ -556,11 +558,12 @@ assertNoDoubleRelease Ref { reftracker = RefTracker refid _weak outer allocSite 
 -- Note however that this is not the only place where 'RefNeverReleased'
 -- exceptions can be thrown. All Ref operations poll for forgotten refs.
 --
-checkForgottenRefs :: forall m. (PrimMonad m, MonadThrow m) => m ()
-checkForgottenRefs = do
+checkForgottenRefs :: forall m. (PrimMonad m, MonadThrow m) => RefCtx -> m ()
+checkForgottenRefs =
 #ifndef NO_IGNORE_ASSERTS
-    pure ()
+    \_ -> pure ()
 #else
+    \refCtx -> do
     -- The hope is that by combining `performMajorGC` with `yield` that the
     -- former starts the finalizer threads for all dropped weak references and
     -- the latter suspends the current process and puts it at the end of the
@@ -574,7 +577,7 @@ checkForgottenRefs = do
       yield
       performMajorGCWithBlockingIfAvailable
       yield
-    assertNoForgottenRefs
+    assertNoForgottenRefs refCtx
 #endif
   where
     _unused = throwIO @m @SomeException
@@ -584,8 +587,8 @@ checkForgottenRefs = do
 --
 -- This is especillay important in QC tests with shrinking which otherwise
 -- leads to confusion.
-ignoreForgottenRefs :: (PrimMonad m, MonadCatch m) => m ()
-ignoreForgottenRefs = void $ try @_ @SomeException $ checkForgottenRefs
+ignoreForgottenRefs :: (PrimMonad m, MonadCatch m) => RefCtx -> m ()
+ignoreForgottenRefs refCtx = void $ try @_ @SomeException $ checkForgottenRefs refCtx
 
 #ifdef NO_IGNORE_ASSERTS
 performMajorGCWithBlockingIfAvailable :: IO ()
@@ -597,25 +600,92 @@ performMajorGCWithBlockingIfAvailable = do
 #endif
 #endif
 
--- | Enable forgotten reference checks.
-enableForgottenRefChecks :: IO ()
+{-------------------------------------------------------------------------------
+  Reference context
+-------------------------------------------------------------------------------}
 
--- | Disable forgotten reference checks. This will error if there are already
--- forgotten references while we are trying to disable the checks.
-disableForgottenRefChecks :: IO ()
+-- | A 'RefCtx' defines the scope within which 'Ref's should exist.
+--
+-- In debug mode (when using CPP define @NO_IGNORE_ASSERTS@), the 'RefCtx'
+-- records forgotten references.
+type RefCtx :: Type
+
+-- | Run an action with a local 'RefCtx'.
+withRefCtx :: (PrimMonad m, MonadThrow m) => (RefCtx -> m a) -> m a
+withRefCtx = bracket newRefCtx closeRefCtx
+
+-- | Create a new 'RefCtx'.
+--
+-- It is preferable to use 'withRefCtx'.
+newRefCtx :: PrimMonad m => m RefCtx
+
+-- | Close a 'RefCtx'.
+--
+-- It is preferable to use 'withRefCtx'.
+closeRefCtx :: forall m. (PrimMonad m, MonadThrow m) => RefCtx -> m ()
+
+-- | In debug mode, enable forgotten reference checks.
+enableForgottenRefChecks :: PrimMonad m => RefCtx -> m ()
+
+-- | In debug mode, disable forgotten reference checks.
+disableForgottenRefChecks :: PrimMonad m => RefCtx -> m ()
+
+-- | Return the 'RefCtx' that the given 'Ref' lives in.
+getRefCtx :: Ref a -> RefCtx
 
 #ifdef NO_IGNORE_ASSERTS
-enableForgottenRefChecks =
+
+data RefCtx = RefCtx {
+    globalForgottenRef :: !(IORef (Enabled (Maybe (RefId, CallStack))))
+  , globalRefIdSupply  :: !(PrimVar RealWorld Int)
+  }
+
+data Enabled a = Enabled !a | Disabled
+
+instance NFData RefCtx where
+  rnf (RefCtx a b) = rnf a `seq` rwhnf b
+
+newRefCtx = unsafeIOToPrimStrict $ do
+  globalForgottenRef <- newIORef $ Enabled Nothing
+  globalRefIdSupply <- newPrimVar 0
+  pure $! RefCtx globalForgottenRef globalRefIdSupply
+
+closeRefCtx = checkForgottenRefs
+
+enableForgottenRefChecks refCtx@RefCtx{..} =
+    unsafeIOToPrimStrict $ do
+    checkForgottenRefs refCtx
     modifyIORef globalForgottenRef $ \case
       Disabled -> Enabled Nothing
-      Enabled _  -> error "enableForgottenRefChecks: already enabled"
+      Enabled x  -> Enabled x
 
-disableForgottenRefChecks =
+disableForgottenRefChecks refCtx@RefCtx{..} =
+    unsafeIOToPrimStrict $ do
+    checkForgottenRefs refCtx
     modifyIORef globalForgottenRef $ \case
-      Disabled -> error "disableForgottenRefChecks: already disabled"
+      Disabled -> Disabled
       Enabled Nothing -> Disabled
       Enabled _  -> error "disableForgottenRefChecks: can not disable when there are forgotten references"
+
+getRefCtx (Ref _ (RefTracker _ _ _ _ refCtx)) = refCtx
+
 #else
-enableForgottenRefChecks = pure ()
-disableForgottenRefChecks = pure ()
+
+data RefCtx = RefCtx
+
+instance NFData RefCtx where
+  rnf RefCtx = ()
+
+newRefCtx = pure RefCtx
+
+closeRefCtx _ = pure ()
+  where
+    _unused = throwIO @m (userError "unused")
+
+enableForgottenRefChecks _ = pure ()
+
+disableForgottenRefChecks _ = pure ()
+
+getRefCtx _ = RefCtx
+
 #endif

@@ -93,7 +93,8 @@ prop_readAtOffset ::
   -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffset fs hbio rd offsetKey =
-    withRunAt fs hbio testSalt runParams (simplePath 42) rd' $ \run -> do
+    withRefCtx $ \refCtx ->
+    withRunAt fs hbio refCtx testSalt runParams (simplePath 42) rd' $ \run -> do
       rhs <- readKOps (coerce offsetKey) run
 
       pure . labelRunData rd' $
@@ -137,7 +138,8 @@ prop_readAtOffsetIdempotence ::
   -> Maybe BiasedKey
   -> IO Property
 prop_readAtOffsetIdempotence fs hbio rd offsetKey =
-    withRunAt fs hbio testSalt runParams (simplePath 42) rd' $ \run -> do
+    withRefCtx $ \refCtx ->
+    withRunAt fs hbio refCtx testSalt runParams (simplePath 42) rd' $ \run -> do
     lhs <- readKOps (coerce offsetKey) run
     rhs <- readKOps (coerce offsetKey) run
 
@@ -161,7 +163,8 @@ prop_readAtOffsetReadHead ::
   -> RunData BiasedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_readAtOffsetReadHead fs hbio rd =
-    withRunAt fs hbio testSalt runParams (simplePath 42) rd' $ \run -> do
+    withRefCtx $ \refCtx ->
+    withRunAt fs hbio refCtx testSalt runParams (simplePath 42) rd' $ \run -> do
       lhs <- readKOps Nothing run
       rhs <- case lhs of
         []        -> pure []

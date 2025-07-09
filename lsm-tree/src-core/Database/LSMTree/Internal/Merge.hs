@@ -215,7 +215,8 @@ abort Merge {..} = do
     writeMutVar mergeState $! Closed
 
 {-# SPECIALISE complete ::
-     Merge t IO h
+     RefCtx
+  -> Merge t IO h
   -> IO (Ref (Run IO h)) #-}
 -- | Complete a 'Merge', returning a new 'Run' as the result of merging the
 -- input runs.
@@ -235,21 +236,23 @@ abort Merge {..} = do
 --
 complete ::
      (MonadSTM m, MonadST m, MonadMask m)
-  => Merge t m h
+  => RefCtx
+  -> Merge t m h
   -> m (Ref (Run m h))
-complete Merge{..} = do
+complete refCtx Merge{..} = do
     readMutVar mergeState >>= \case
       Merging -> error "complete: Merge is not done"
       MergingDone -> do
         -- the readers are already drained, therefore closed
-        r <- Run.fromBuilder mergeBuilder
+        r <- Run.fromBuilder refCtx mergeBuilder
         writeMutVar mergeState $! Completed
         pure r
       Completed -> error "complete: Merge is already completed"
       Closed -> error "complete: Merge is closed"
 
 {-# SPECIALISE stepsToCompletion ::
-     Merge t IO h
+     RefCtx
+  -> Merge t IO h
   -> Int
   -> IO (Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
@@ -257,18 +260,20 @@ complete Merge{..} = do
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletion ::
       (MonadMask m, MonadSTM m, MonadST m)
-   => Merge t m h
+   => RefCtx
+   -> Merge t m h
    -> Int
    -> m (Ref (Run m h))
-stepsToCompletion m stepBatchSize = go
+stepsToCompletion refCtx m stepBatchSize = go
   where
     go = do
       steps m stepBatchSize >>= \case
         (_, MergeInProgress) -> go
-        (_, MergeDone)       -> complete m
+        (_, MergeDone)       -> complete refCtx m
 
 {-# SPECIALISE stepsToCompletionCounted ::
-     Merge t IO h
+     RefCtx
+  -> Merge t IO h
   -> Int
   -> IO (Int, Ref (Run IO h)) #-}
 -- | Like 'steps', but calling 'complete' once the merge is finished.
@@ -276,16 +281,17 @@ stepsToCompletion m stepBatchSize = go
 -- Note: run with async exceptions masked. See 'complete'.
 stepsToCompletionCounted ::
      (MonadMask m, MonadSTM m, MonadST m)
-  => Merge t m h
+  => RefCtx
+  -> Merge t m h
   -> Int
   -> m (Int, Ref (Run m h))
-stepsToCompletionCounted m stepBatchSize = go 0
+stepsToCompletionCounted refCtx m stepBatchSize = go 0
   where
     go !stepsSum = do
       steps m stepBatchSize >>= \case
         (n, MergeInProgress) -> go (stepsSum + n)
         (n, MergeDone)       -> let !stepsSum' = stepsSum + n
-                                in (stepsSum',) <$> complete m
+                                in (stepsSum',) <$> complete refCtx m
 
 data StepResult = MergeInProgress | MergeDone
   deriving stock Eq

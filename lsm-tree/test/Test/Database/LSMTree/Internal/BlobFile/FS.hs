@@ -29,11 +29,12 @@ prop_fault_openRelease doCreateFile om
   (NoCleanupErrors openErrors)
   (NoCleanupErrors releaseErrors) =
     ioProperty $
+    withRefCtx $ \refCtx ->
     withSimErrorHasFS propPost MockFS.empty emptyErrors $ \hfs fsVar errsVar -> do
       when doCreateFile $
         withFile hfs path (WriteMode MustBeNew) $ \_ -> pure ()
       eith <- try @_ @FsError $
-        bracket (acquire hfs errsVar) (release errsVar) $ \_blobFile -> do
+        bracket (acquire hfs refCtx errsVar) (release errsVar) $ \_blobFile -> do
           fs' <- atomically $ readTMVar fsVar
           pure $ propNumOpenHandles 1 fs' .&&. propNumDirEntries (mkFsPath []) 1 fs'
       pure $ case eith of
@@ -45,8 +46,8 @@ prop_fault_openRelease doCreateFile om
     root = mkFsPath []
     path = mkFsPath ["blobfile"]
 
-    acquire hfs errsVar =
-        withErrors errsVar openErrors $ openBlobFile hfs path om
+    acquire hfs refCtx errsVar =
+        withErrors errsVar openErrors $ openBlobFile hfs refCtx path om
 
     release errsVar blobFile =
         withErrors errsVar releaseErrors $ releaseRef blobFile

@@ -685,6 +685,9 @@ instance Typeable (PrimState m) => NoThunks (RefCounter m) where
         , noThunks ctx $ (OnlyCheckWhnfNamed b :: OnlyCheckWhnfNamed "finaliser" (m ()))
         ]
 
+-- RefCtx constructor not exported
+deriving via OnlyCheckWhnf RefCtx instance NoThunks RefCtx
+
 -- Ref constructor not exported, cannot derive Generic, use DeRef instead.
 instance (NoThunks obj, Typeable obj) => NoThunks (Ref obj) where
   showTypeOf p@(_ :: Proxy (Ref obj)) = show $ typeRep p

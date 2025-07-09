@@ -2,6 +2,7 @@ module Test.Database.LSMTree.Generators (
     tests
   ) where
 
+import           Control.RefCount (withRefCtx)
 import           Data.Bifoldable (bifoldMap)
 import           Data.Coerce (Coercible, coerce)
 import qualified Data.Map.Strict as Map
@@ -158,12 +159,12 @@ prop_withRunDoesntLeak ::
   -> FS.HasBlockIO IO h
   -> SerialisedRunData
   -> IO Property
-prop_withRunDoesntLeak hfs hbio rd = do
+prop_withRunDoesntLeak hfs hbio rd = withRefCtx $ \refCtx ->do
     let indexType = Index.Ordinary
     let path = FS.mkFsPath ["something-1"]
     let fsPaths = RunFsPaths path (RunNumber 0)
     FS.createDirectory hfs path
-    withRunAt hfs hbio testSalt (runParams indexType) fsPaths rd $ \_run -> do
+    withRunAt hfs hbio refCtx testSalt (runParams indexType) fsPaths rd $ \_run -> do
       pure (QC.property True)
 
 prop_withMergingRunDoesntLeak ::
@@ -171,12 +172,12 @@ prop_withMergingRunDoesntLeak ::
   -> FS.HasBlockIO IO h
   -> SerialisedMergingRunData MR.LevelMergeType
   -> IO Property
-prop_withMergingRunDoesntLeak hfs hbio mrd = do
+prop_withMergingRunDoesntLeak hfs hbio mrd = withRefCtx $ \refCtx -> do
     let indexType = Index.Ordinary
     let path = FS.mkFsPath ["something-2"]
     FS.createDirectory hfs path
     counter <- newUniqCounter 0
-    withMergingRun hfs hbio resolveVal testSalt (runParams indexType) path counter mrd $
+    withMergingRun hfs hbio refCtx resolveVal testSalt (runParams indexType) path counter mrd $
       \_mr -> do
         pure (QC.property True)
 
@@ -187,12 +188,12 @@ prop_withMergingTreeDoesntLeak ::
   -> FS.HasBlockIO IO h
   -> SerialisedMergingTreeData
   -> IO Property
-prop_withMergingTreeDoesntLeak hfs hbio mrd = do
+prop_withMergingTreeDoesntLeak hfs hbio mrd = withRefCtx $ \refCtx -> do
     let indexType = Index.Ordinary
     let path = FS.mkFsPath ["something-3"]
     FS.createDirectory hfs path
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal testSalt (runParams indexType) path counter mrd $
+    withMergingTree hfs hbio refCtx resolveVal testSalt (runParams indexType) path counter mrd $
       \_tree -> do
         pure (QC.property True)
 

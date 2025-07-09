@@ -61,8 +61,8 @@ import           Control.Monad.Class.MonadThrow (Exception (..), Handler (..),
 import           Control.Monad.IOSim
 import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.RefCount (RefException, checkForgottenRefs,
-                     ignoreForgottenRefs)
+import           Control.RefCount (disableForgottenRefChecks,
+                     enableForgottenRefChecks)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Constraint (Dict (..))
@@ -174,7 +174,6 @@ propLockstep_ModelIOImpl =
     runActionsBracket
       (Proxy @(ModelState IO ModelIO.Table))
       CheckCleanup
-      NoCheckRefs -- there are no references to check for in the ModelIO implementation
       acquire
       release
       (\r (session, errsVar, logVar) -> do
@@ -293,7 +292,6 @@ propLockstep_RealImpl_RealFS_IO tr (QC.Fixed salt) =
     runActionsBracket
       (Proxy @(ModelState IO R.Table))
       CheckCleanup
-      CheckRefs
       acquire
       release
       (\r (_, session, _, errsVar, logVar) -> do
@@ -317,6 +315,7 @@ propLockstep_RealImpl_RealFS_IO tr (QC.Fixed salt) =
     acquire = do
         (tmpDir, hasFS, hasBlockIO) <- createSystemTempDirectory "prop_lockstepIO_RealImpl_RealFS"
         session <- R.openSession tr hasFS hasBlockIO salt (mkFsPath [])
+        toggleForgottenRefChecksSession CheckRefs session
         errsVar <- newTVarIO FSSim.emptyErrors
         logVar <- newTVarIO emptyLog
         pure (tmpDir, session, hasBlockIO, errsVar, logVar)
@@ -341,8 +340,7 @@ propLockstep_RealImpl_MockFS_IO tr cleanupFlag fsFlag refsFlag (QC.Fixed salt) =
     runActionsBracket
       (Proxy @(ModelState IO R.Table))
       cleanupFlag
-      refsFlag
-      (acquire_RealImpl_MockFS tr salt)
+      (acquire_RealImpl_MockFS tr refsFlag salt)
       (release_RealImpl_MockFS fsFlag)
       (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
@@ -373,8 +371,7 @@ propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag (QC.Fixed salt
     runActionsBracket
       (Proxy @(ModelState (IOSim RealWorld) R.Table))
       cleanupFlag
-      refsFlag
-      (acquire_RealImpl_MockFS tr salt)
+      (acquire_RealImpl_MockFS tr refsFlag salt)
       (release_RealImpl_MockFS fsFlag)
       (\r (_, session, errsVar, logVar) -> do
             faultsVar <- newMutVar []
@@ -396,14 +393,16 @@ propLockstep_RealImpl_MockFS_IOSim tr cleanupFlag fsFlag refsFlag (QC.Fixed salt
 acquire_RealImpl_MockFS ::
      R.IOLike m
   => Tracer m R.LSMTreeTrace
+  -> CheckRefs
   -> R.Salt
   -> m (StrictTMVar m MockFS, Class.Session R.Table m, StrictTVar m Errors, StrictTVar m ErrorsLog)
-acquire_RealImpl_MockFS tr salt = do
+acquire_RealImpl_MockFS tr refsFlag salt = do
     fsVar <- newTMVarIO MockFS.empty
     errsVar <- newTVarIO FSSim.emptyErrors
     logVar <- newTVarIO emptyLog
     (hfs, hbio) <- simErrorHasBlockIOLogged fsVar errsVar logVar
     session <- R.openSession tr hfs hbio salt (mkFsPath [])
+    toggleForgottenRefChecksSession refsFlag session
     pure (fsVar, session, errsVar, logVar)
 
 -- | Flag that turns on\/off file system checks.
@@ -2852,29 +2851,16 @@ runActionsBracket ::
      )
   => Proxy state
   -> CheckCleanup
-  -> CheckRefs
   -> n st
   -> (st -> n prop)
   -> (m QC.Property -> st -> n QC.Property)
   -> (Lockstep state -> [(String, [FinalTag])])
   -> Actions (Lockstep state) -> QC.Property
-runActionsBracket p cleanupFlag refsFlag init cleanup runner tagger actions =
+runActionsBracket p cleanupFlag init cleanup runner tagger actions =
     tagFinalState actions tagger
   $ QLS.runActionsBracket p init cleanup' runner actions
   where
-    cleanup' st = do
-      -- We want to run forgotten reference checks after cleanup, since cleanup
-      -- itself may lead to forgotten refs. The reference checks have the
-      -- crucial side effect of resetting the forgotten refs state. If we don't
-      -- do this then the next test run (e.g. during shrinking) will encounter a
-      -- false/stale forgotten refs exception. But we also have to make sure
-      -- that if cleanup itself fails, that we still run the reference checks.
-      -- 'propCleanup' will make sure to catch any exceptions that are thrown by
-      -- the 'cleanup' action. 'propRefs' will then definitely run afterwards so
-      -- that the forgotten reference checks are definitely performed.
-      x <- propCleanup cleanupFlag $ cleanup st
-      y <- propRefs refsFlag
-      pure (x QC..&&. y)
+    cleanup' st = propCleanup cleanupFlag $ cleanup st
 
 tagFinalState ::
      forall state. StateModel (Lockstep state)
@@ -2928,10 +2914,9 @@ checkCleanupM flag cleanupAction = do
 -- exceptions are ignored.
 data CheckRefs = CheckRefs | NoCheckRefs
 
-propRefs :: (PrimMonad m, MonadCatch m) => CheckRefs -> m Property
-propRefs flag = propException "Reference exception: " <$> checkRefsM flag
-
-checkRefsM :: (PrimMonad m, MonadCatch m) => CheckRefs -> m (Either RefException ())
-checkRefsM flag = case flag of
-    CheckRefs   -> try checkForgottenRefs
-    NoCheckRefs -> Right <$> ignoreForgottenRefs
+toggleForgottenRefChecksSession :: R.IOLike m => CheckRefs -> R.Session m -> m ()
+toggleForgottenRefChecksSession flag (R.Types.Session session) =
+    R.Unsafe.withKeepSessionOpen session $ \seshEnv ->
+    case flag of
+      CheckRefs   -> enableForgottenRefChecks (R.Unsafe.sessionRefCtx seshEnv)
+      NoCheckRefs -> disableForgottenRefChecks (R.Unsafe.sessionRefCtx seshEnv)

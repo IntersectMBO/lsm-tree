@@ -132,6 +132,7 @@ instance NFData MergeKnownCompleted where
      Merge.IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> RunParams
@@ -150,6 +151,7 @@ new ::
      (Merge.IsMergeType t, MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> RunParams
@@ -157,7 +159,7 @@ new ::
   -> RunFsPaths
   -> V.Vector (Ref (Run m h))
   -> m (Ref (MergingRun t m h))
-new hfs hbio resolve salt runParams ty runPaths inputRuns =
+new hfs hbio refCtx resolve salt runParams ty runPaths inputRuns =
     assert (V.length inputRuns > 0) $ do
     -- there can be empty runs, which we don't want to include in the merge
     -- TODO: making runs non-empty would involve introducing a constructor
@@ -175,8 +177,9 @@ new hfs hbio resolve salt runParams ty runPaths inputRuns =
           -- as we do in the prototype. but that would mean that the result
           -- doesn't follow the supplied @runParams@.
           -- TODO: decide whether that optimisation is okay
-          r <- Run.newEmpty hfs hbio salt runParams runPaths
+          r <- Run.newEmpty hfs hbio refCtx salt runParams runPaths
           unsafeNew
+            refCtx
             (MergeDebt 0)
             (SpentCredits 0)
             MergeKnownCompleted
@@ -186,13 +189,15 @@ new hfs hbio resolve salt runParams ty runPaths inputRuns =
           merge <- fromMaybe (error "newMerge: merges can not be empty")
             <$> Merge.new hfs hbio salt runParams ty resolve runPaths rs
           unsafeNew
+            refCtx
             (numEntriesToMergeDebt (V.foldMap' Run.size rs))
             (SpentCredits 0)
             MergeMaybeCompleted
             (OngoingMerge rs merge)
 
 {-# SPECIALISE newCompleted ::
-     MergeDebt
+     RefCtx
+  -> MergeDebt
   -> Ref (Run IO h)
   -> IO (Ref (MergingRun t IO h)) #-}
 -- | Create a merging run that is already in the completed state, returning a
@@ -204,13 +209,15 @@ new hfs hbio resolve salt runParams ty runPaths inputRuns =
 -- failing after internal resources have already been created.
 newCompleted ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => MergeDebt -- ^ Since there are no longer any input runs, we need to be
+  => RefCtx
+  -> MergeDebt -- ^ Since there are no longer any input runs, we need to be
                -- told what the merge debt was.
   -> Ref (Run m h)
   -> m (Ref (MergingRun t m h))
-newCompleted mergeDebt inputRun = do
+newCompleted refCtx mergeDebt inputRun = do
     bracketOnError (dupRef inputRun) releaseRef $ \run ->
       unsafeNew
+        refCtx
         mergeDebt
         (SpentCredits (mergeDebtAsCredits mergeDebt)) -- since it is completed
         MergeKnownCompleted
@@ -225,22 +232,23 @@ data TableTooLargeError
 {-# INLINE unsafeNew #-}
 unsafeNew ::
      (MonadMVar m, MonadMask m, MonadSTM m, MonadST m)
-  => MergeDebt
+  => RefCtx
+  -> MergeDebt
   -> SpentCredits
   -> MergeKnownCompleted
   -> MergingRunState t m h
   -> m (Ref (MergingRun t m h))
-unsafeNew (MergeDebt mergeDebt) _ _ _
+unsafeNew _ (MergeDebt mergeDebt) _ _ _
   | SpentCredits mergeDebt > maxBound
   = throwIO ErrTableTooLarge
 
-unsafeNew mergeDebt (SpentCredits spentCredits)
+unsafeNew refCtx mergeDebt (SpentCredits spentCredits)
           knownCompleted state = do
     let !credits = CreditsPair (SpentCredits spentCredits) (UnspentCredits 0)
     mergeCreditsVar <- CreditsVar <$> newPrimVar credits
     mergeKnownCompleted <- newMutVar knownCompleted
     mergeState <- newMVar $! state
-    newRef (finalise mergeState) $ \mergeRefCounter ->
+    newRef refCtx (finalise mergeState) $ \mergeRefCounter ->
       MergingRun {
         mergeDebt
       , mergeCreditsVar
@@ -826,14 +834,15 @@ supplyChecked _query supply x credits = do
 --
 supplyCreditsRelative ::
      forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => Ref (MergingRun t m h)
+  => RefCtx
+  -> Ref (MergingRun t m h)
   -> CreditThreshold
   -> MergeCredits
   -> m MergeCredits
-supplyCreditsRelative = flip $ \th ->
+supplyCreditsRelative refCtx = flip $ \th ->
     supplyChecked remainingMergeDebt $ \mr c -> do
       (_suppliedCredits, suppliedCredits', leftoverCredits)
-        <- supplyCredits mr th (SupplyMergeCredits SupplyRelative c)
+        <- supplyCredits refCtx mr th (SupplyMergeCredits SupplyRelative c)
 
       assert (suppliedCredits' == mergeDebtAsCredits (totalMergeDebt mr)
               || leftoverCredits == 0) $
@@ -862,20 +871,22 @@ supplyCreditsRelative = flip $ \th ->
 --
 supplyCreditsAbsolute ::
      forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => Ref (MergingRun t m h)
+  => RefCtx
+  -> Ref (MergingRun t m h)
   -> CreditThreshold
   -> MergeCredits
   -> m (MergeCredits, MergeCredits)
        -- ^ (suppliedCredits, suppliedCredits')
-supplyCreditsAbsolute mr th c =
+supplyCreditsAbsolute refCtx mr th c =
     assert (0 <= c && c <= mergeDebtAsCredits (totalMergeDebt mr)) $ do
     (suppliedCredits, suppliedCredits', _leftoverCredits)
-      <- supplyCredits mr th (SupplyMergeCredits SupplyAbsolute c)
+      <- supplyCredits refCtx mr th (SupplyMergeCredits SupplyAbsolute c)
     assert (suppliedCredits' == max c suppliedCredits) $
       pure (suppliedCredits, suppliedCredits')
 
 {-# SPECIALISE supplyCredits ::
-     Ref (MergingRun t IO h)
+     RefCtx
+  -> Ref (MergingRun t IO h)
   -> CreditThreshold
   -> SupplyMergeCredits
   -> IO (MergeCredits, MergeCredits, MergeCredits) #-}
@@ -883,12 +894,14 @@ supplyCreditsAbsolute mr th c =
 -- ongoing merge to progress.
 supplyCredits ::
      forall t m h. (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => Ref (MergingRun t m h)
+  => RefCtx
+  -> Ref (MergingRun t m h)
   -> CreditThreshold
   -> SupplyMergeCredits
   -> m (MergeCredits, MergeCredits, MergeCredits)
        -- ^ (suppliedCredits, suppliedCredits', leftoverCredits)
-supplyCredits (DeRef MergingRun {
+supplyCredits refCtx
+              (DeRef MergingRun {
                  mergeKnownCompleted,
                  mergeDebt,
                  mergeCreditsVar,
@@ -931,7 +944,7 @@ supplyCredits (DeRef MergingRun {
               -- completion, then that is fine. The next supplyCredits will
               -- complete the merge.
               when weFinishedMerge $
-                completeMerge mergeState mergeKnownCompleted
+                completeMerge refCtx mergeState mergeKnownCompleted
 
             assert   (               0 <= suppliedCredits) $
               assert (suppliedCredits  <= suppliedCredits') $
@@ -975,16 +988,18 @@ performMergeSteps mergeVar creditsVar credits =
         pure $ stepResult == MergeDone
 
 {-# SPECIALISE completeMerge ::
-     StrictMVar IO (MergingRunState t IO h)
+     RefCtx
+  -> StrictMVar IO (MergingRunState t IO h)
   -> MutVar RealWorld MergeKnownCompleted
   -> IO () #-}
 -- | Convert an 'OngoingMerge' to a 'CompletedMerge'.
 completeMerge ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => StrictMVar m (MergingRunState t m h)
+  => RefCtx
+  -> StrictMVar m (MergingRunState t m h)
   -> MutVar (PrimState m) MergeKnownCompleted
   -> m ()
-completeMerge mergeVar mergeKnownCompletedVar = do
+completeMerge refCtx mergeVar mergeKnownCompletedVar = do
     modifyMVarMasked_ mergeVar $ \case
       mrs@CompletedMerge{} -> pure $! mrs
       (OngoingMerge rs m) -> do
@@ -993,21 +1008,22 @@ completeMerge mergeVar mergeKnownCompletedVar = do
         --TODO: Run.fromBuilder (used in Merge.complete) claims not to be
         -- exception safe so we should probably be using the resource registry
         -- and test for exception safety.
-        r <- Merge.complete m
+        r <- Merge.complete refCtx m
         V.forM_ rs releaseRef
         -- Cache the knowledge that we completed the merge
         writeMutVar mergeKnownCompletedVar MergeKnownCompleted
         pure $! CompletedMerge r
 
 {-# SPECIALISE expectCompleted ::
-     Ref (MergingRun t IO h)
+     RefCtx
+  -> Ref (MergingRun t IO h)
   -> IO (Ref (Run IO h)) #-}
 -- | This does /not/ release the reference, but allocates a new reference for
 -- the returned run, which must be released at some point.
 expectCompleted ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => Ref (MergingRun t m h) -> m (Ref (Run m h))
-expectCompleted (DeRef MergingRun {..}) = do
+  => RefCtx -> Ref (MergingRun t m h) -> m (Ref (Run m h))
+expectCompleted refCtx (DeRef MergingRun {..}) = do
     knownCompleted <- readMutVar mergeKnownCompleted
     -- The merge is not guaranteed to be complete, so we do the remaining steps
     when (knownCompleted == MergeMaybeCompleted) $ do
@@ -1022,7 +1038,7 @@ expectCompleted (DeRef MergingRun {..}) = do
       -- If an async exception happens before we get to perform the
       -- completion, then that is fine. The next 'expectCompleted' will
       -- complete the merge.
-      when weFinishedMerge $ completeMerge mergeState mergeKnownCompleted
+      when weFinishedMerge $ completeMerge refCtx mergeState mergeKnownCompleted
     withMVar mergeState $ \case
       CompletedMerge r -> dupRef r  -- return a fresh reference to the run
       OngoingMerge{} -> do

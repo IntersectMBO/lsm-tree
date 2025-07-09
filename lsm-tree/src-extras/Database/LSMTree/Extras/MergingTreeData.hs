@@ -44,6 +44,7 @@ import           Test.QuickCheck as QC
 withMergingTree ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> RunParams
@@ -52,9 +53,9 @@ withMergingTree ::
   -> SerialisedMergingTreeData
   -> (Ref (MergingTree IO h) -> IO a)
   -> IO a
-withMergingTree hfs hbio resolve salt runParams path counter mrd = do
+withMergingTree hfs hbio refCtx resolve salt runParams path counter mrd = do
     bracket
-      (unsafeCreateMergingTree hfs hbio resolve salt runParams path counter mrd)
+      (unsafeCreateMergingTree hfs hbio refCtx resolve salt runParams path counter mrd)
       releaseRef
 
 -- | Flush serialised merging tree data to disk.
@@ -66,6 +67,7 @@ withMergingTree hfs hbio resolve salt runParams path counter mrd = do
 unsafeCreateMergingTree ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> RunParams
@@ -73,22 +75,22 @@ unsafeCreateMergingTree ::
   -> UniqCounter IO
   -> SerialisedMergingTreeData
   -> IO (Ref (MergingTree IO h))
-unsafeCreateMergingTree hfs hbio resolve salt runParams path counter = go
+unsafeCreateMergingTree hfs hbio refCtx resolve salt runParams path counter = go
   where
     go = \case
       CompletedTreeMergeData rd ->
-        withRun hfs hbio salt runParams path counter rd $ \run ->
-          MT.newCompletedMerge run
+        withRun hfs hbio refCtx salt runParams path counter rd $ \run ->
+          MT.newCompletedMerge refCtx run
       OngoingTreeMergeData mrd ->
-        withMergingRun hfs hbio resolve salt runParams path counter mrd $ \mr ->
-          MT.newOngoingMerge mr
+        withMergingRun hfs hbio refCtx resolve salt runParams path counter mrd $ \mr ->
+          MT.newOngoingMerge refCtx mr
       PendingLevelMergeData prds mtd ->
         withPreExistingRuns prds $ \prs ->
           withMaybeTree mtd $ \mt ->
-            MT.newPendingLevelMerge prs mt
+            MT.newPendingLevelMerge refCtx prs mt
       PendingUnionMergeData mtds ->
         withTrees mtds $ \mts ->
-          MT.newPendingUnionMerge mts
+          MT.newPendingUnionMerge refCtx mts
 
     withTrees []         act = act []
     withTrees (mtd:rest) act =
@@ -103,11 +105,11 @@ unsafeCreateMergingTree hfs hbio resolve salt runParams path counter = go
 
     withPreExistingRuns [] act = act []
     withPreExistingRuns (PreExistingRunData rd : rest) act =
-        withRun hfs hbio salt runParams path counter rd $ \r ->
+        withRun hfs hbio refCtx salt runParams path counter rd $ \r ->
           withPreExistingRuns rest $ \prs ->
             act (MT.PreExistingRun r : prs)
     withPreExistingRuns (PreExistingMergingRunData mrd : rest) act =
-        withMergingRun hfs hbio resolve salt runParams path counter mrd $ \mr ->
+        withMergingRun hfs hbio refCtx resolve salt runParams path counter mrd $ \mr ->
           withPreExistingRuns rest $ \prs ->
             act (MT.PreExistingMergingRun mr : prs)
 
