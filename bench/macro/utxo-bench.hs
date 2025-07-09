@@ -196,6 +196,7 @@ mkTableConfigRun GlobalOpts{diskCachePolicy} RunOpts {mode} conf =
           Sequential -> LSM.confMergeBatchSize conf
           Pipelined  -> LSM.MergeBatchSize 1
           LookupOnly -> LSM.confMergeBatchSize conf
+          UpdateOnly -> LSM.confMergeBatchSize conf
     }
 
 mkTableConfigOverride :: GlobalOpts -> RunOpts -> LSM.TableConfigOverride
@@ -207,6 +208,7 @@ mkTableConfigOverride GlobalOpts{diskCachePolicy} RunOpts {mode} =
           Sequential -> Nothing
           Pipelined  -> Just $ LSM.MergeBatchSize 1
           LookupOnly -> Nothing
+          UpdateOnly -> Nothing
     }
 
 mkTracer :: GlobalOpts -> Tracer IO LSM.LSMTreeTrace
@@ -273,7 +275,7 @@ runOptsP = pure RunOpts
     <*> O.switch (O.long "check" <> O.help "Check generated key distribution")
     <*> O.option O.auto (O.long "seed" <> O.value 1337 <> O.showDefault <> O.help "Random seed")
     <*> O.option O.auto (O.long "mode" <> O.value Sequential <> O.showDefault
-          <> O.help "Mode [Sequential | Pipelined | LookupOnly]")
+          <> O.help "Mode [Sequential | Pipelined | LookupOnly | UpdateOnly]")
 
 -- | The run mode affects the method of performing
 data RunMode =
@@ -285,6 +287,9 @@ data RunMode =
     -- | Use lookup-only sequential mode: like sequential mode, but only perform
     -- the lookups and not the updates.
   | LookupOnly
+    -- | Use update-only sequential mode: like sequential mode, but only perform
+    -- the updates and not the lookups.
+  | UpdateOnly
   deriving stock (Show, Eq, Read)
 
 deriving stock instance Read LSM.DiskCachePolicy
@@ -628,7 +633,7 @@ doRun gopts opts =
         checkvar <- newIORef $ pureReference
                                 (initialSize gopts) (batchSize opts)
                                 (batchCount opts) (seed opts)
-        let fcheck | not (check opts) = \_ _ -> pure ()
+        let fcheck | not (check opts) || mode opts == UpdateOnly = \_ _ -> pure ()
                    | otherwise = \b y -> do
               (x:xs) <- readIORef checkvar
               unless (x == y) $
@@ -639,6 +644,7 @@ doRun gopts opts =
               Sequential -> sequentialIterations h
               Pipelined  -> pipelinedIterations h
               LookupOnly -> sequentialIterationsLO
+              UpdateOnly -> sequentialIterationsUO
             !progressInterval  = max 1 ((batchCount opts) `div` 100)
             madeProgress b     = b `mod` progressInterval == 0
         (time, _, _) <- timed_ $ do
@@ -688,7 +694,6 @@ sequentialIteration h output !initialSize !batchSize !tbl !b !g =
     -- continue to the next batch
     pure g'
 
-
 sequentialIterations :: LatencyHandle
                      -> (Int -> LookupResults -> IO ())
                      -> Int -> Int -> Int -> Word64
@@ -727,6 +732,38 @@ sequentialIterationsLO :: (Int -> LookupResults -> IO ())
 sequentialIterationsLO output !initialSize !batchSize !batchCount !seed !tbl =
     void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
       sequentialIterationLO output initialSize batchSize tbl b g
+  where
+    g0 = initGen initialSize batchSize batchCount seed
+
+{-# INLINE sequentialIterationUO #-}
+sequentialIterationUO ::
+     (Int -> LookupResults -> IO ())
+  -> Int
+  -> Int
+  -> LSM.Table IO K V B
+  -> Int
+  -> MCG.MCG
+  -> IO MCG.MCG
+sequentialIterationUO output !initialSize !batchSize !tbl !b !g = do
+    let (!g', _ls, is) = generateBatch initialSize batchSize g b
+
+    -- lookups
+    output b V.empty
+
+    -- deletes and inserts
+    _ <- LSM.updates tbl is
+
+    -- continue to the next batch
+    pure g'
+
+sequentialIterationsUO ::
+     (Int -> LookupResults -> IO ())
+  -> Int -> Int -> Int -> Word64
+  -> LSM.Table IO K V B
+  -> IO ()
+sequentialIterationsUO output !initialSize !batchSize !batchCount !seed !tbl = do
+    void $ forFoldM_ g0 [ 0 .. batchCount - 1 ] $ \b g ->
+      sequentialIterationUO output initialSize batchSize tbl b g
   where
     g0 = initGen initialSize batchSize batchCount seed
 
