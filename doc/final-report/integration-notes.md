@@ -152,7 +152,7 @@ those provided by `Data.Map`.
 
 The Bloom filters in an LSM-Tree are hash-based data structures. For the sake of
 performance, they do not use cryptographic hashes. Thus, without additional
-measures, an attacker can in principle choose keys whose hashs identify mostly
+measures, an attacker can in principle choose keys whose hashes identify mostly
 the same bits. This is a potential problem for the UTxO and other stake-related
 tables in Cardano, since it is the users who get to pick their UTxO keys (TxIn)
 and stake keys (verification key hashes) and these keys will hash the same way
@@ -166,13 +166,17 @@ as part of the Bloom filter hashing for all runs in all tables of the session.
 
 The consequence is that, while it is in principle still possible to produce hash
 collisions in the Bloom filter, this now depends on knowing the salt. However,
-every node has a different salt. Thus a system-wide attack becomes impossible.
-It is only plausible to target individual nodes, but discovering a node’s salt
-is extremely difficult. In principle there is a timing side channel, in that
-collisions will cause more I/O and thus cause longer running times. To exploit
-this, an attacker would need to get upstream of a victim node, supply a valid
-block and measure the timing of receiving the block downstream. There would,
-however, be a large amount of noise spoiling such an attack.
+every node should have a different salt, in which case no single block can be
+used to attack every node in the system. It is only plausible to target
+individual nodes, but discovering a node’s salt is extremely difficult. In
+principle there is a timing side channel, in that collisions will cause more
+I/O and thus cause longer running times. To exploit this, an attacker would
+need to get upstream of a victim node, supply a valid block on top of the
+current chain and measure the timing of receiving the block downstream. There
+would, however, be a large amount of noise spoiling such measurements,
+necessitating many samples. Creating many samples requires creating many
+blocks that the victim node will adopt, which requires substantial stake (or
+successfully executing an eclispse attack).
 
 Overall, our judgement is that our mitigation is sufficient, but it merits a
 security review from others who may make a different judgement. It is also worth
@@ -187,8 +191,8 @@ lookup is a performance-sensitive part of the overall database implementation,
 such an approach to salting does not seem feasible. Therefore, we chose to
 generate hash salts per session.
 
-In the Cardano context, a downside of picking Bloom filter salts per session and
-thus per node is that this interacts poorly with sharing of pre-created
+In the Cardano context, a downside of picking Bloom filter salts per session
+and thus per node is that this interacts poorly with sharing of pre-created
 databases. While it would still be possible to copy a whole database session,
 since this includes the salt, doing so would result in the salt being shared
 between nodes. If SPOs shared databases widely with each other, to avoid
@@ -201,7 +205,10 @@ after cloning a Mithril snapshot. Re-salting would involve re-creating the Bloom
 filters for all table runs, which would mean reading each run, inserting its
 keys into a new Bloom filter and finally writing out the new Bloom filter.
 Adding such a feature would, of course, incur additional development work, but
-the infrastructure needed is present already.
+the infrastructure needed is present already. Aliternatively, if Mithril uses
+a proper externally defined snapshot format, rather than just copying the
+node's on-disk formats, then restoring a snapshot would naturally involve
+creating a new session and thus a fresh local salt.
 
 # Possible incompatibility with the XFS file system
 
