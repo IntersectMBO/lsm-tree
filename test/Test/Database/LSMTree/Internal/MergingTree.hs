@@ -70,8 +70,8 @@ testSalt = 4
 --
 prop_isStructurallyEmpty :: EmptyMergingTree -> Property
 prop_isStructurallyEmpty emt =
-    ioProperty $
-      bracket (mkEmptyMergingTree emt)
+    ioProperty $ withRefCtx $ \refCtx ->
+      bracket (mkEmptyMergingTree refCtx emt)
               releaseRef
               isStructurallyEmpty
 
@@ -102,17 +102,17 @@ instance Arbitrary EmptyMergingTree where
                                             : [ NonObviouslyEmptyUnionMerge mt'
                                               | mt' <- shrink mt ]
 
-mkEmptyMergingTree :: EmptyMergingTree -> IO (Ref (MergingTree IO h))
-mkEmptyMergingTree ObviouslyEmptyLevelMerge = newPendingLevelMerge [] Nothing
-mkEmptyMergingTree ObviouslyEmptyUnionMerge = newPendingUnionMerge []
-mkEmptyMergingTree (NonObviouslyEmptyLevelMerge emt) = do
-    mt  <- mkEmptyMergingTree emt
-    mt' <- newPendingLevelMerge [] (Just mt)
+mkEmptyMergingTree :: RefCtx -> EmptyMergingTree -> IO (Ref (MergingTree IO h))
+mkEmptyMergingTree refCtx ObviouslyEmptyLevelMerge = newPendingLevelMerge refCtx [] Nothing
+mkEmptyMergingTree refCtx ObviouslyEmptyUnionMerge = newPendingUnionMerge refCtx []
+mkEmptyMergingTree refCtx (NonObviouslyEmptyLevelMerge emt) = do
+    mt  <- mkEmptyMergingTree refCtx emt
+    mt' <- newPendingLevelMerge refCtx [] (Just mt)
     releaseRef mt
     pure mt'
-mkEmptyMergingTree (NonObviouslyEmptyUnionMerge emts) = do
-    mts <- mapM mkEmptyMergingTree emts
-    mt' <- newPendingUnionMerge mts
+mkEmptyMergingTree refCtx (NonObviouslyEmptyUnionMerge emts) = do
+    mts <- mapM (mkEmptyMergingTree refCtx) emts
+    mt' <- newPendingUnionMerge refCtx mts
     mapM_ releaseRef mts
     pure mt'
 
@@ -127,21 +127,22 @@ prop_lookupTree ::
   -> V.Vector SerialisedKey
   -> MergingTreeData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
-prop_lookupTree hfs hbio keys mtd = do
+prop_lookupTree hfs hbio keys mtd = withRefCtx $ \refCtx -> do
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal testSalt runParams path counter mtd $ \tree -> do
+    withMergingTree hfs hbio refCtx resolveVal testSalt runParams path counter mtd $ \tree -> do
       arenaManager <- newArenaManager
       withActionRegistry $ \reg -> do
-        res <- fetchBlobs =<< lookupsIO reg arenaManager tree
+        res <- fetchBlobs refCtx =<< lookupsIO reg arenaManager tree
         pure $
           normalise res
             === normalise (modelLookup (modelFoldMergingTree mtd) keys)
   where
     fetchBlobs ::
-         V.Vector (Maybe (Entry v (WeakBlobRef IO h)))
+         RefCtx
+      -> V.Vector (Maybe (Entry v (WeakBlobRef IO h)))
       -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
-    fetchBlobs = traverse (traverse (traverse (readWeakBlobRef hfs)))
+    fetchBlobs refCtx = traverse (traverse (traverse (readWeakBlobRef hfs refCtx)))
 
     -- the lookup accs might be different between implementation and model
     -- (Nothing vs. Just Delete, Insert vs. Mupsert), but this doesn't matter
@@ -230,11 +231,11 @@ prop_supplyCredits ::
   -> NonEmpty MR.MergeCredits
   -> MergingTreeData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
-prop_supplyCredits hfs hbio threshold credits mtd = do
+prop_supplyCredits hfs hbio threshold credits mtd = withRefCtx $ \refCtx -> do
     FS.createDirectory hfs setupPath
     FS.createDirectory hfs (FS.mkFsPath ["active"])
     counter <- newUniqCounter 0
-    withMergingTree hfs hbio resolveVal testSalt runParams setupPath counter mtd $ \tree -> do
+    withMergingTree hfs hbio refCtx resolveVal testSalt runParams setupPath counter mtd $ \tree -> do
       (MR.MergeDebt initialDebt, _) <- remainingMergeDebt tree
       props <- for credits $ \c -> do
         (MR.MergeDebt debt, _) <- remainingMergeDebt tree
@@ -243,7 +244,7 @@ prop_supplyCredits hfs hbio threshold credits mtd = do
             pure $ property True
           else do
             leftovers <-
-              supplyCredits hfs hbio resolveVal testSalt runParams threshold root counter tree c
+              supplyCredits hfs hbio refCtx resolveVal testSalt runParams threshold root counter tree c
             (MR.MergeDebt debt', _) <- remainingMergeDebt tree
             pure $
               -- semi-useful, but mainly tells us in how many steps we supplied

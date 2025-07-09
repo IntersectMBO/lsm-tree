@@ -38,8 +38,9 @@ prop_fault_WriteBufferReader ::
   -> Property
 prop_fault_WriteBufferReader (NoCleanupErrors readErrors) rdata =
     ioProperty $
+    withRefCtx $ \refCtx ->
     withSimErrorHasBlockIO propPost MockFS.empty emptyErrors $ \hfs hbio fsVar errsVar ->
-    withRunDataAsWriteBuffer hfs resolve inPath rdata $ \wb wbb ->
+    withRunDataAsWriteBuffer hfs refCtx resolve inPath rdata $ \wb wbb ->
     withSerialisedWriteBuffer hfs hbio outPath wb wbb $ do
       fsBefore <- atomically $ readTMVar fsVar
       eith <-

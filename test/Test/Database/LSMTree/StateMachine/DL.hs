@@ -8,7 +8,6 @@ module Test.Database.LSMTree.StateMachine.DL (
   ) where
 
 import           Control.Monad (void)
-import           Control.RefCount
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
@@ -32,7 +31,7 @@ import qualified Test.QuickCheck.Random as QC
 import           Test.QuickCheck.StateModel.Lockstep
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as QLS
 import           Test.QuickCheck.StateModel.Variables
-import           Test.Tasty (TestTree, testGroup, withResource)
+import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Tasty.QuickCheck as QC
 import           Test.Util.FS
 import           Test.Util.PrettyProxy
@@ -40,7 +39,7 @@ import           Test.Util.PrettyProxy
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.StateMachine.DL" [
       QC.testProperty "prop_example" prop_example
-    , test_noSwallowedExceptions
+    , QC.testProperty "prop_noSwallowedExceptions" prop_noSwallowedExceptions
     ]
 
 instance DynLogicModel (Lockstep (ModelState IO R.Table))
@@ -101,18 +100,6 @@ dl_example = do
 {-------------------------------------------------------------------------------
   Swallowed exceptions
 -------------------------------------------------------------------------------}
-
--- | See 'prop_noSwallowedExceptions'.
---
--- Forgotten reference checks are disabled completely, because we allow bugs
--- (like forgotten references) in exception unsafe code where we inject disk
--- faults.
-test_noSwallowedExceptions :: TestTree
-test_noSwallowedExceptions =
-    withResource
-      (checkForgottenRefs >> disableForgottenRefChecks)
-      (\_ -> enableForgottenRefChecks) $ \ !_ ->
-      QC.testProperty "prop_noSwallowedExceptions" prop_noSwallowedExceptions
 
 -- | Test that the @lsm-tree@ library does not swallow exceptions.
 --

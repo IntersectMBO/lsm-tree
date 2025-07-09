@@ -124,7 +124,7 @@ instance NFData h => NFData (WriteBufferBlobs m h) where
 instance RefCounted m (WriteBufferBlobs m h) where
   getRefCounter = writeBufRefCounter
 
-{-# SPECIALISE new :: HasFS IO h -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
+{-# SPECIALISE new :: HasFS IO h -> RefCtx -> FS.FsPath -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Create a new 'WriteBufferBlobs' with a new file.
 --
 -- REF: the resulting reference must be released once it is no longer used.
@@ -134,11 +134,12 @@ instance RefCounted m (WriteBufferBlobs m h) where
 new ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
+  -> RefCtx
   -> FS.FsPath
   -> m (Ref (WriteBufferBlobs m h))
-new fs blobFileName = open fs blobFileName FS.MustBeNew
+new fs refCtx blobFileName = open fs refCtx blobFileName FS.MustBeNew
 
-{-# SPECIALISE open :: HasFS IO h -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
+{-# SPECIALISE open :: HasFS IO h -> RefCtx -> FS.FsPath -> FS.AllowExisting -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Open a `WriteBufferBlobs` file and sets the file pointer to the end of the file.
 --
 -- REF: the resulting reference must be released once it is no longer used.
@@ -148,18 +149,19 @@ new fs blobFileName = open fs blobFileName FS.MustBeNew
 open ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
+  -> RefCtx
   -> FS.FsPath
   -> FS.AllowExisting
   -> m (Ref (WriteBufferBlobs m h))
-open fs blobFileName blobFileAllowExisting = do
+open fs refCtx blobFileName blobFileAllowExisting = do
     -- Must use read/write mode because we write blobs when adding, but
     -- we can also be asked to retrieve blobs at any time.
     bracketOnError
-      (openBlobFile fs blobFileName (FS.ReadWriteMode blobFileAllowExisting))
+      (openBlobFile fs refCtx blobFileName (FS.ReadWriteMode blobFileAllowExisting))
       releaseRef
-      (fromBlobFile fs)
+      (fromBlobFile fs refCtx)
 
-{-# SPECIALISE fromBlobFile :: HasFS IO h -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
+{-# SPECIALISE fromBlobFile :: HasFS IO h -> RefCtx -> Ref (BlobFile IO h) -> IO (Ref (WriteBufferBlobs IO h)) #-}
 -- | Make a `WriteBufferBlobs` from a `BlobFile` and set the file pointer to the
 -- end of the file.
 --
@@ -170,14 +172,15 @@ open fs blobFileName blobFileAllowExisting = do
 fromBlobFile ::
      (PrimMonad m, MonadMask m)
   => HasFS m h
+  -> RefCtx
   -> Ref (BlobFile m h)
   -> m (Ref (WriteBufferBlobs m h))
-fromBlobFile fs blobFile = do
+fromBlobFile fs refCtx blobFile = do
     blobFilePointer <- newFilePointer
     -- Set the blob file pointer to the end of the file
     blobFileSize <- withRef blobFile $ FS.hGetSize fs . blobFileHandle
     void . updateFilePointer blobFilePointer . fromIntegral $ blobFileSize
-    newRef (releaseRef blobFile) $ \writeBufRefCounter ->
+    newRef refCtx (releaseRef blobFile) $ \writeBufRefCounter ->
       WriteBufferBlobs {
         blobFile,
         blobFilePointer,

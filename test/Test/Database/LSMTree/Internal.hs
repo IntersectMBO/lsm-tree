@@ -4,6 +4,7 @@
 
 module Test.Database.LSMTree.Internal (tests) where
 
+import           Control.RefCount
 import           Control.Tracer
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
@@ -59,13 +60,13 @@ prop_roundtripCursor ::
   -> Maybe SerialisedKey  -- ^ Inclusive upper bound
   -> V.Vector (SerialisedKey, Entry SerialisedValue SerialisedBlob)
   -> Property
-prop_roundtripCursor lb ub kops = ioProperty $
+prop_roundtripCursor lb ub kops = ioProperty $ withRefCtx $ \refCtx ->
     withTempIOHasBlockIO "prop_roundtripCursor" $ \hfs hbio -> do
       withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sesh -> do
         withTable sesh conf $ \t -> do
           updates resolve (coerce kops) t
           fromCursor <- withCursor resolve (toOffsetKey lb) t $ \c ->
-            fetchBlobs hfs =<< readCursorUntil ub c
+            fetchBlobs hfs refCtx =<< readCursorUntil ub c
           pure $
             tabulate "duplicates" (show <$> Map.elems duplicates) $
             tabulate "any blobs" [show (any (isJust . snd . snd) fromCursor)] $
@@ -73,10 +74,10 @@ prop_roundtripCursor lb ub kops = ioProperty $
   where
     conf = testTableConfig
 
-    fetchBlobs :: FS.HasFS IO h
+    fetchBlobs :: FS.HasFS IO h -> RefCtx
              ->     V.Vector (k, (v, Maybe (WeakBlobRef IO h)))
              -> IO (V.Vector (k, (v, Maybe SerialisedBlob)))
-    fetchBlobs hfs = traverse (traverse (traverse (traverse (readWeakBlobRef hfs))))
+    fetchBlobs hfs refCtx = traverse (traverse (traverse (traverse (readWeakBlobRef hfs refCtx))))
 
     toOffsetKey = maybe NoOffsetKey (OffsetKey . coerce)
 
