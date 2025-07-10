@@ -59,7 +59,7 @@ references:
   - id: lsm-tree
     type: software
     title: "`lsm-tree`"
-    URL: https://github.com/IntersectMBO/lsm-tree/tree/alpha
+    URL: https://github.com/IntersectMBO/lsm-tree/
   - id: lsm-tree-prototype
     type: webpage
     title: "`lsm-tree` prototype"
