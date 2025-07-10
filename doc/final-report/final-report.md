@@ -1035,6 +1035,10 @@ execute the batches sequentially and within each batch perform the lookups
 before the updates. In the pipelined mode, we do not impose such strict
 ordering, to overlap I/O with CPU work and to take advantage of multiple cores.
 
+Note that both modes use parallel I/O (on Linux). The serial or parallel modes
+of the benchmark refers to the sequencing of the API operations on the database,
+not to disk I/O operations.
+
 The importance of the pipelined mode in the benchmark -- and the reason it is
 included in the project requirements [@utxo-db-lsm, Section 16.2] -- is that
 the benchmark corresponds to a (slightly) simplified version of the UTxO
