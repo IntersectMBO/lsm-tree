@@ -1376,18 +1376,18 @@ In line with the above requirement, we have created the following benchmarks:
   pairs using the upsert operation
 
 * A benchmark of the time to repeatedly upsert values of certain keys and a
-  benchmark of the time to repeatedly update the values of these keys by looking
-  up their current values, modifying them and writing them back
+  benchmark of the time to repeatedly emulate an upsert the values of these
+  keys by looking up their current values, modifying them and writing them back
 
 The benchmarks use the following parameters:
 
 * 64 bit as the size of keys and values
 * 80,000 elements (generated using a PRNG)
-* Addition as the update operation
+* Addition as the upsert combining operation
 * 250 operations per batch
 * No disk caching
 * 1,000 elements as the write buffer capacity
-* 10 updates per key in case of the second two benchmarks
+* 10 upserts per key in case of the second two benchmarks
 
 The benchmarks are implemented using Criterion, which performs multiple
 benchmark runs and combines the results in a sound statistical manner. For our
