@@ -938,22 +938,33 @@ created as part of the project:
   `blockio-uring` library that `lsm-tree` employs. The results of this benchmark
   typically follow the `fio` numbers quite closely, demonstrating that there is
   little performance loss from using the high level Haskell I/O API provided by
-  `blockio-uring` versus using a low-level C API.
+  `blockio-uring` versus using a low-level C API. We report the 1 core results
+  below, but this benchmark also scales to multiple cores and gets results
+  close to those for `fio` for the same number of cores.
 
 [^3]: This is the `lsm-tree-bench-bloomfilter` benchmark.
       Use `cabal run lsm-tree-bench-bloomfilter` to run it yourself.
 
 The results of all these benchmarks are as follows:
 
-| Machine     | `sysbench` | Bloom filter | `fio`, 1 core | `fio`, 2 cores | `blockio-uring` |
-|:------------|-----------:|-------------:|--------------:|---------------:|----------------:|
-| RPi5        |      1,038 |        31.33 |       77,600  |         77,900 |          77,191 |
-| m6gd.medium |      1,075 |        25.77 |       14,900  |              – |          14,171 |
-| m5d.large   |        414 |        23.12 |       33,900  |              – |          33,919 |
-| i3.large    |        901 |        20.99 |      170,000  |              – |         170,945 |
-| i7i.xlarge  |      1,153 |        12.07 |      351,000  |        210,000 |         352,387 |
-| i8g.xlarge  |      1,249 |        18.78 |      351,000  |        210,000 |         351,574 |
-| dev laptop  |      2,134 |         7.79 |      261,970  |        487,000 |         275,008 |
+----------------------------------------------------------------------------------------
+Machine        `sysbench`  Bloom filter  `fio`, 1 core  `fio`, 2 cores  `blockio-uring`,
+name         (events/sec)    (seconds)          (IOPS)          (IOPS)    1 core (IOPS)
+----------- ------------- ------------- -------------- --------------- -----------------
+RPi5              1,038         31.33        77,600           77,900           77,191
+
+m6gd.medium       1,075         25.77        14,900                –           14,171
+
+m5d.large           414         23.12        33,900                –           33,919
+
+i3.large            901         20.99       170,000                –          170,945
+
+i7i.xlarge        1,153         12.07       351,000          210,000          352,387
+
+i8g.xlarge        1,249         18.78       351,000          210,000          351,574
+
+dev laptop        2,134          7.79       261,970          487,000          275,008
+----------------------------------------------------------------------------------------
 
 Note that the RPi5, i7i.xlarge and i8g.xlarge all produce I/O results that are
 above their rated IOPS. In the case of the RPi5, this is due to the rated IOPS
