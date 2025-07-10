@@ -1035,10 +1035,13 @@ execute the batches sequentially and within each batch perform the lookups
 before the updates. In the pipelined mode, we do not impose such strict
 ordering, to overlap I/O with CPU work and to take advantage of multiple cores.
 
-The pipelined mode is important because parallelisation is vital for handling
-the actual UTxO workload, which the benckmark resembles. The implementation of
-pipelined execution in this benchmark can in fact be considered a prototype of a
-pipelined version of the UTxO workload.
+The importance of the pipelined mode in the benchmark -- and the reason it is
+included in the project requirements [@utxo-db-lsm, Section 16.2] -- is that
+the benchmark corresponds to a (slightly) simplified version of the UTxO
+workload, and extracting parallelism in the real UTxO workload is important for
+the `cardano-node` to achieve higher peformance targets. The implementation of
+pipelined execution in this benchmark can in fact be considered a prototype of
+a pipelined version of the UTxO workload.
 
 While the performance requirements demand that the benchmark is capable of
 pipelined execution, they also specify an order for the operations within each
