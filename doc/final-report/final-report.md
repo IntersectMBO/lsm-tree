@@ -1183,6 +1183,14 @@ relatively weak CPU: it has the oldest CPU of all the benchmark machines
 a comparatively poor Bloom filter timing. All the other benchmark machines with
 the required I/O performance easily surpass the target of 50,000 ops/sec.
 
+The specification of the middle target calls for using the benchmark in
+parallel mode. While we do use parallel I/O, we do not need to use the parallel
+pipelined mode to meet the middle target. Nevertheless, the subset of machines
+that meet the 50k ops/sec target in serial mode, also meet the same target in
+parallel mode on one core. The results for this are presented in the section
+below on [meeting the stretch target](#meeting-the-stretch-target), where we
+discuss the parallel pipelined mode in more detail.
+
 ### Meeting the threshold target
 
 The specification does not make it entirely clear under what conditions the
