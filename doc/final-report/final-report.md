@@ -1255,11 +1255,11 @@ the serial version. This is expected and mainly due to the following reasons:
 
 * Running the benchmark in the pipelined mode involves thread synchronisation.
 
-* For the pipelined mode, we turn off merge batching. Merge batching makes some
-  update operations take much longer than others, but overall it improves
+* For the pipelined mode, we turn off merge batching. Merge batching improves
   performance in the serial mode. In the pipelining mode, however, it causes an
-  imbalance across the workloads of the different cores, which severely hampers
-  the speedup gained from parallelism.
+  imbalance across the workloads of the different cores and so we turn it off.
+  One can consider merge batching as a single-threaded optimisation. The
+  pipelined mode on one core doesn't get the benefit of that optimisation
 
 Running the pipelined version on two cores instead of one takes us over the
 stretch target of 100 k operations per second on several of the benchmark
