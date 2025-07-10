@@ -926,7 +926,7 @@ performance benchmarks:
 Furthermore, we have determined the results of a couple of micro-benchmarks
 created as part of the project:
 
-* We have a Bloom filter micro-benchmark that measures the time to perform a
+* We have a Bloom filter benchmark[^3] that measures the time to perform a
   fixed number of lookups in Bloom filters whose sizes resemble those that will
   occur with the UTxO workload. This is primarily a memory benchmark, being
   highly dependent on memory latency, throughput and the number of memory reads
@@ -939,6 +939,9 @@ created as part of the project:
   typically follow the `fio` numbers quite closely, demonstrating that there is
   little performance loss from using the high level Haskell I/O API provided by
   `blockio-uring` versus using a low-level C API.
+
+[^3]: This is the `lsm-tree-bench-bloomfilter` benchmark.
+      Use `cabal run lsm-tree-bench-bloomfilter` to run it yourself.
 
 The results of all these benchmarks are as follows:
 
