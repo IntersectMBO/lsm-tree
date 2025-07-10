@@ -1,17 +1,15 @@
 .POSIX:
 
-.SILENT:
-
 .SUFFIXES:
 
 .PHONY: all
 all: final-report.pdf integration-notes.pdf
 
-final-report.pdf: final-report.md pipelining.pdf
-	pandoc -C -o final-report.pdf final-report.md
+final-report.pdf: final-report.md ieee-software.csl pipelining.pdf
+	pandoc --citeproc $< -o $@
 
 integration-notes.pdf: integration-notes.md
-	pandoc -o integration-notes.pdf integration-notes.md
+	pandoc $< -o $@
 
 .PHONY: clean
 clean:
