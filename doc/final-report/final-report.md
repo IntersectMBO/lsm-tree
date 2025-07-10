@@ -433,15 +433,17 @@ during replay if we stored them as blobs. Note that the performance improvements
 from using blob storage are only with lookups; *updates* involving blobs are
 about as expensive as if the blobs’ contents were included in the values.
 
-A naive implementation of updates entails latency spikes due to table merging,
-but the `lsm-tree` library can avoid such spikes by spreading out I/O over time,
+The implementation of updates in an LSM tree involves merging files together. A
+naïve implementation of updates would merge files all in one go, which entails
+a high latency for the occasional update that triggers a full file merge. The
+`lsm-tree` library can avoid such spikes by spreading out I/O over time,
 using an incremental merge algorithm: the algorithm that we prototyped at the
 start of the `lsm-tree` project [@lsm-tree-prototype]. Avoiding latency spikes
 is essential for `cardano-node` because `cardano-node` is a real-time system,
 which has to respond to input promptly. The use of the incremental merge
-algorithm does not improve the time complexity of updates as such, but it turns
-the *amortised* time complexity of the naive solution into a *worst-case* time
-complexity.
+algorithm does not improve the time complexity of a sequence of updates as
+such, but it turns the *amortised* time complexity of the naive solution into
+a *worst-case* time complexity.
 
 ## Requirement 3
 
