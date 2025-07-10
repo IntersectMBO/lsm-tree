@@ -1021,9 +1021,11 @@ The primary benchmark handles the required UTxO-like workload. Its starting
 point is a table with 100 million key–value pairs, with keys and values having
 the required sizes and keys being uniformly distributed. The benchmark reads
 this table from a snapshot and executes a sequence of batches of operations on
-it. Each batch consists of 256 lookups, 256 inserts and 256 deletes. To achieve
-reasonable running times, we use 10 k batches of operations for the serial mode
-and 100 k batches for the pipelined mode.
+it. Each batch consists of 256 lookups, 256 inserts and 256 deletes. The
+benchmark measures the time to execute the sequence of batches of operations
+(but not the time for opening the snapshot). To achieve reasonable running
+times, we use 10 k batches of operations for the serial mode and 100 k batches
+for the pipelined mode.
 
 ### Serial and pipelined execution
 
