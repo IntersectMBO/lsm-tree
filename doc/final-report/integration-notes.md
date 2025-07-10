@@ -198,17 +198,14 @@ since this includes the salt, doing so would result in the salt being shared
 between nodes. If SPOs shared databases widely with each other, to avoid
 processing the entire chain, then the salt diversity would be lost.
 
-Picking Bloom filter salts per session is particularly problematic in Mithril,
-which shares a single copy of the database. It may be necessary for proper
-Mithril support to add a re-salting operation and to perform this operation
-after cloning a Mithril snapshot. Re-salting would involve re-creating the Bloom
-filters for all table runs, which would mean reading each run, inserting its
-keys into a new Bloom filter and finally writing out the new Bloom filter.
-Adding such a feature would, of course, incur additional development work, but
-the infrastructure needed is present already. Aliternatively, if Mithril uses
-a proper externally defined snapshot format, rather than just copying the
-node's on-disk formats, then restoring a snapshot would naturally involve
-creating a new session and thus a fresh local salt.
+Picking Bloom filter salts per session is particularly problematic for Mithril.
+The current Mithril PoC works by copying the node's on-disk file formats. This
+design has numerous drawbacks, but would be particularly bad in this context
+because it would share the same Bloom filter salt to all Mithril users. If
+Mithril were to use a proper externally defined snapshot format, rather than
+just copying the node's on-disk formats, then restoring a snapshot would
+naturally involve creating a new LSM tree session and thus a fresh local salt.
+This would solve the problem.
 
 # Possible incompatibility with the XFS file system
 
