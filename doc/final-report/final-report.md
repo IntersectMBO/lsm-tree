@@ -1075,15 +1075,28 @@ constraints:
 
 These constraints leave room for concurrent and parallel execution, because they
 allow overlapped execution of multiple batches in a pipelined way. The reason
-why such an execution is possible is somewhat subtle though. The updates have to
-be executed serially, but the lookups can be executed out of order, provided the
-results we ultimately report for the lookups are correct. The trick is to
-perform the lookups using an older value of the database and then adjust their
-results using the updates from the later batches. This allows starting the
-lookups earlier and thus having multiple lookups not only overlapping with each
-other but also with updates. As an illustration, the following figure depicts
-such pipelined execution and its dataflow for the case of four concurrent
-pipeline stages, achieved using two cores with two threads running on each.
+why such an execution is possible is somewhat subtle though. We provide a high
+level summary here. For a full formal treatment see our previous work
+[@utxo-db-api, Sections 7, 7.5].
+
+The updates have to be executed serially, but the lookups can be executed out
+of order, provided the results we ultimately report for the lookups are correct.
+The trick is to perform the lookups using an older value of the database and
+then adjust their results using the updates from the later batches. This allows
+starting the lookups earlier and thus having multiple lookups not only
+overlapping with each other but also with updates.
+
+As an illustration, the following figure depicts such pipelined execution and
+its dataflow for the case of four concurrent pipeline stages, achieved using
+two cores with two threads running on each. The bars represent threads doing
+work over time. The blue portions of the bars represents threads doing CPU
+work, while the green portions represents threads waiting on I/O to complete.
+The key observation from this diagram is that multiple cores can be submitting
+and waiting on I/O concurrently in a staggered way. One can also observe that
+there is the opportunity on a single core to overlap CPU work with waiting on
+I/O to complete. Note however that this diagram is theoretical: it shows the
+opportunity for concurrency given the data flows and plausible timings. It does
+not show actual relative timings.
 
 ![Concurrency in the pipelined benchmark mode](pipelining.pdf)
 
