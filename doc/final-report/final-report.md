@@ -1395,6 +1395,12 @@ The result are as follows:
 
 ## Reproducing the results
 
+We encourage interested readers to reproduce the benchmark results for
+themselves. To that end we have mostly used benchmark machines which are
+available to all. It is of course also informative to run these benchmarks (and
+the micro-benchmarks like `fio` and `sysbench`) on the hardware where the
+library is intended to be used.
+
 The version of the library that is used as the basis for this report is tagged
 `final-report` in the `lsm-tree` Git repository [@lsm-tree]. It can be checked
 out using the following commands:
