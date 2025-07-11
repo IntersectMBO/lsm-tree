@@ -1291,8 +1291,10 @@ the two-core case.
    a second core improves its CPU performance substantially but does not push
    the scores so high that it starts to be limited by SSD as i7i.xlarge is.
 
- * The dev laptop also exhibits good speedup. This machine’s IOPS value scales
-   nearly linearly when going from one to two cores.
+ * The dev laptop also exhibits good speedup. This machine’s `fio` IOPS value
+   scales by 1.85x when going from one to two cores, so the balance of CPU and
+   I/O resources remains roughly the same, and thus we expect no significant
+   change in the limiting resource.
 
 The pipelining approach can profit in principle from further increasing the
 number of cores, so that for some applications it may be worth using more cores
