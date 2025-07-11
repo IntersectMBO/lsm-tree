@@ -1361,7 +1361,8 @@ turn out to be the `cabal` process and not the benchmark process.
 
 By the way, we also get excellent speed with the 10 M entry table: 150 k
 ops/sec, much more than the circa 86 k ops/sec we get with the 100 M entry
-table. The reason is that for smaller tables there is less merging work to do.
+table. The reason is that for smaller tables there is less work to do generally:
+less merging work, fewer runs, fewer Bloom filters.
 
 ## The upsert benchmarks
 
