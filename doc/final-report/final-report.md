@@ -582,7 +582,7 @@ simplicity.
 
 Since the term ‘merge’ is already part of the LSM-tree terminology, we chose to
 call this operation a table *union* instead. Moreover, ‘union’ is a more fitting
-name, since the behavior of table union is similar to that of
+name, since the behaviour of table union is similar to that of
 `Data.Map.unionWith`: all logical key–value pairs with unique keys are
 preserved, but pairs that have the same key are combined using the resolve
 function that is also used for upserts (see [functional
@@ -902,6 +902,8 @@ stretch target.
 Finally, note that the first three of the machines listed in the table above
 have SSDs that are not capable of 100 k IOPS.
 
+### Micro-benchmarks of the benchmark machines
+
 To help evaluate the `lsm-tree` benchmark results across these different
 machines, it is useful to have a rough sense of their CPU and I/O performance.
 Therefore, we have determined the machines’ scores according to standard
@@ -944,6 +946,8 @@ created as part of the project:
 
 [^3]: This is the `lsm-tree-bench-bloomfilter` benchmark.
       Use `cabal run lsm-tree-bench-bloomfilter` to run it yourself.
+
+### Micro-benchmark results
 
 The results of all these benchmarks are as follows:
 
@@ -996,7 +1000,11 @@ The IOPS scores scale negatively when adding more cores.
   measurement artefact but shows a real effect, and it is *opposite* to what
   happens with physical hardware. Running `fio` on the i8g.xlarge machine with
   4 cores results in 175 k IOPS (which is near to the rated 150 k IOPS), showing
-  that the negative scaling continues beyond two cores.
+  that the negative scaling continues beyond two cores. One can but speculate
+  as to the reason for this behaviour. It is probably an artefact of the way
+  the Nitro hypervisor limits IOPS on the VMs, but it is unclear why it would
+  allow exceeding the minimum rated IOPS by a greater proportion when
+  submitting I/O from fewer cores.
 
 The IOPS scores of i7i.xlarge and i8g.xlarge are the same.
 
@@ -1284,10 +1292,11 @@ the two-core case.
    100 k target already in this setting. We know it has higher one-core
    performance than i8g.xlarge, with an advantage of approximately 40 % in the
    Bloom filter micro-benchmark. Nevertheless, it is probably limited by CPU,
-   not by SSD, since its one-core IOPS value is so high (350 k). We know its
-   IOPS value scales negatively when going to two cores, down to 210 k
-   aggregated across both cores. This is probably the cause of its poor speedup:
-   the machine goes from being limited by CPU to being limited by SSD.
+   not by SSD, since its one-core IOPS value is so high (350 k). We know
+   from the subsection *[micro-benchmark results]* that this machine's IOPS
+   value scales _negatively_ when going to two cores, from 350 k down to 210 k
+   aggregated across both cores. This is probably the cause of its poor
+   speedup: the machine goes from being limited by CPU to being limited by SSD.
 
  * The i8g.xlarge machine is clearly limited by CPU in the one-core case. Adding
    a second core improves its CPU performance substantially but does not push
@@ -1526,7 +1535,7 @@ the application directly or by employing non-standard server functionality, as
 present for example in recent versions of PostgreSQL.
 
 By contrast, with functional persistence using explicit database handles,
-implementing the desired behavior is straightforward. We generate two
+implementing the desired behaviour is straightforward. We generate two
 independent handles based on the same initial database state and then let one
 thread execute A using one of the handles and another thread execute B using the
 other handle. This is not only simpler but also involves less synchronisation,
