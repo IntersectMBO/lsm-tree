@@ -1341,6 +1341,58 @@ By the way, we also get excellent speed with the 10 M entry table: 150 k
 ops/sec, much more than the circa 86 k ops/sec we get with the 100 M entry
 table. The reason is that for smaller tables there is less merging work to do.
 
+## The upsert benchmarks
+
+Item 6 of the performance requirements states the following:
+
+> A benchmark should demonstrate that the performance characteristics of the
+> monoidial update operation should be similar to that of the insert or delete
+> operations, and substantially better than the combination of a lookup followed
+> by an insert.
+
+As already mentioned in [the discussion on functional
+requirement 4](#requirement-4), the `lsm-tree` library and its documentation now
+use the term ‘upsert’ for this monoidal update operation, to follow standard
+database terminology.
+
+In line with the above requirement, we have created the following benchmarks:
+
+* A benchmark of the time to insert a large number of key–value pairs using the
+  insert operation and a benchmark of the time to insert the same key–value
+  pairs using the upsert operation
+
+* A benchmark of the time to repeatedly upsert values of certain keys and a
+  benchmark of the time to repeatedly emulate an upsert the values of these
+  keys by looking up their current values, modifying them and writing them back
+
+The benchmarks use the following parameters:
+
+* 64 bit as the size of keys and values
+* 80,000 elements (generated using a PRNG)
+* Addition as the upsert combining operation
+* 250 operations per batch
+* No disk caching
+* 1,000 elements as the write buffer capacity
+* 10 upserts per key in case of the second two benchmarks
+
+The benchmarks are implemented using Criterion, which performs multiple
+benchmark runs and combines the results in a sound statistical manner. For our
+benchmarks, the variance of the results across the different runs, as reported
+by Criterion, is relatively low. We have executed the benchmarks on the dev
+laptop machine. However, the absolute running times of these benchmarks is of
+little interest; the interesting point is the relative timings.
+
+The result are as follows:
+
+* The difference in running time between the insert and the corresponding upsert
+  benchmark is less than 0.4 % (932.8 ms vs. 929.4 ms), so that insert and
+  upsert performance clearly qualify as ‘similar’.
+
+* Using the combination of lookup and insert takes 2.4 times as long as using
+  upsert (2.857 s vs. 1.188 s). We can thus reasonably conclude that the
+  performance of upsert is ‘substantially better’ than the performance of a
+  lookup followed by an insert.
+
 ## Reproducing the results
 
 The version of the library that is used as the basis for this report is tagged
@@ -1402,57 +1454,6 @@ assurance that the actual implementation is correct. This is important in
 general but especially so for the pipelined implementation, which is
 non-trivial.
 
-## The upsert benchmarks
-
-Item 6 of the performance requirements states the following:
-
-> A benchmark should demonstrate that the performance characteristics of the
-> monoidial update operation should be similar to that of the insert or delete
-> operations, and substantially better than the combination of a lookup followed
-> by an insert.
-
-As already mentioned in [the discussion on functional
-requirement 4](#requirement-4), the `lsm-tree` library and its documentation now
-use the term ‘upsert’ for this monoidal update operation, to follow standard
-database terminology.
-
-In line with the above requirement, we have created the following benchmarks:
-
-* A benchmark of the time to insert a large number of key–value pairs using the
-  insert operation and a benchmark of the time to insert the same key–value
-  pairs using the upsert operation
-
-* A benchmark of the time to repeatedly upsert values of certain keys and a
-  benchmark of the time to repeatedly emulate an upsert the values of these
-  keys by looking up their current values, modifying them and writing them back
-
-The benchmarks use the following parameters:
-
-* 64 bit as the size of keys and values
-* 80,000 elements (generated using a PRNG)
-* Addition as the upsert combining operation
-* 250 operations per batch
-* No disk caching
-* 1,000 elements as the write buffer capacity
-* 10 upserts per key in case of the second two benchmarks
-
-The benchmarks are implemented using Criterion, which performs multiple
-benchmark runs and combines the results in a sound statistical manner. For our
-benchmarks, the variance of the results across the different runs, as reported
-by Criterion, is relatively low. We have executed the benchmarks on the dev
-laptop machine. However, the absolute running times of these benchmarks is of
-little interest; the interesting point is the relative timings.
-
-The result are as follows:
-
-* The difference in running time between the insert and the corresponding upsert
-  benchmark is less than 0.4 % (932.8 ms vs. 929.4 ms), so that insert and
-  upsert performance clearly qualify as ‘similar’.
-
-* Using the combination of lookup and insert takes 2.4 times as long as using
-  upsert (2.857 s vs. 1.188 s). We can thus reasonably conclude that the
-  performance of upsert is ‘substantially better’ than the performance of a
-  lookup followed by an insert.
 
 # References {-}
 
