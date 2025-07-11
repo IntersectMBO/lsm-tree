@@ -1023,9 +1023,9 @@ the required sizes and keys being uniformly distributed. The benchmark reads
 this table from a snapshot and executes a sequence of batches of operations on
 it. Each batch consists of 256 lookups, 256 inserts and 256 deletes. The
 benchmark measures the time to execute the sequence of batches of operations
-(but not the time for opening the snapshot). To achieve reasonable running
-times, we use 10 k batches of operations for the serial mode and 100 k batches
-for the pipelined mode.
+(but not the time to initially create the table, nor the time for opening the
+snapshot). To achieve reasonable running times, we use 10 k batches of
+operations for the serial mode and 100 k batches for the pipelined mode.
 
 ### Serial and pipelined execution
 
@@ -1166,12 +1166,14 @@ Lookup only (ops/sec).
 
 Primary benchmark (MiB).
 
-: This is the amount of memory used by the primary benchmark. Concretely, it is
-  the maximum resident set size (RSS) queried from the Linux kernel using GNU
-  Time. This value does not cover page cache memory used by the operating system
-  on behalf of the application. However, the primary benchmark makes only little
-  use of the page cache: it employs it only for streaming reads and writes of
-  run files, not for actual caching.
+: This is the peak amount of memory used by the primary benchmark. Concretely,
+  it is the maximum resident set size (RSS) queried from the Linux kernel using
+  GNU Time. This value does not cover page cache memory used by the operating
+  system on behalf of the application. However, the primary benchmark makes
+  only little use of the page cache: it employs it only for streaming reads and
+  writes of run files, not for actual caching. Unlike the timing, the peak
+  memory measure does include the loading the snapshot, though in practice this
+  makes little difference.
 
 ### Meeting the middle target
 
