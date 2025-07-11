@@ -689,6 +689,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.BlobFile.FS
     Test.Database.LSMTree.Internal.BloomFilter
     Test.Database.LSMTree.Internal.Chunk
+    Test.Database.LSMTree.Internal.Config
     Test.Database.LSMTree.Internal.CRC32C
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.Index.Compact
@@ -734,6 +735,7 @@ test-suite lsm-tree-test
     Test.Util.QC
     Test.Util.QLS
     Test.Util.RawPage
+    Test.Util.TypeClassLaws
     Test.Util.TypeFamilyWrappers
 
   build-depends:
