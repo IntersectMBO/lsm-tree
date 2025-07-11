@@ -1341,7 +1341,17 @@ By the way, we also get excellent speed with the 10 M entry table: 150 k
 ops/sec, much more than the circa 86 k ops/sec we get with the 100 M entry
 table. The reason is that for smaller tables there is less merging work to do.
 
-### Reproducing the results
+## Reproducing the results
+
+The version of the library that is used as the basis for this report is tagged
+`final-report` in the `lsm-tree` Git repository [@lsm-tree]. It can be checked
+out using the following commands:
+
+```sh
+git clone git@github.com:IntersectMBO/lsm-tree.git
+cd lsm-tree
+git checkout final-report
+```
 
 The primary benchmark’s code is in the repository in
 `bench/macro/utxo-bench.hs`. It can be executed using commands of the following
