@@ -79,8 +79,9 @@ instance ResolveValue V3 where
 
 benchConfig :: TableConfig
 benchConfig = defaultTableConfig
-    { confWriteBufferAlloc  = AllocNumEntries 20000
+    { confWriteBufferAlloc  = AllocNumEntries 1000
     , confFencePointerIndex = CompactIndex
+    , confDiskCachePolicy   = DiskCacheNone
     }
 
 benchSalt :: Bloom.Salt
