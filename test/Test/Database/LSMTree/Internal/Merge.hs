@@ -78,16 +78,16 @@ prop_MergeDistributes ::
      StepSize ->
      SmallList (RunData SerialisedKey SerialisedValue SerialisedBlob) ->
      IO Property
-prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = do
+prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = withRefCtx $ \refCtx -> do
     let path = FS.mkFsPath []
     counter <- newUniqCounter 0
-    withRuns fs hbio testSalt runParams path counter rds' $ \runs -> do
+    withRuns fs hbio refCtx testSalt runParams path counter rds' $ \runs -> do
       let stepsNeeded = sum (map (Map.size . unRunData) rds)
 
       fsPathLhs <- RunFsPaths path . uniqueToRunNumber <$> incrUniqCounter counter
       (stepsDone, lhs) <- mergeRuns fs hbio mergeType stepSize fsPathLhs runs
       let runData = RunData $ mergeWriteBuffers mergeType $ fmap unRunData rds'
-      withRun fs hbio testSalt runParams path counter runData $ \rhs -> do
+      withRun fs hbio refCtx testSalt runParams path counter runData $ \rhs -> do
 
         (lhsSize, lhsFilter, lhsIndex, lhsKOps,
          lhsKOpsFileContent, lhsBlobFileContent) <- getRunContent lhs
@@ -155,11 +155,11 @@ prop_AbortMerge ::
      StepSize ->
      SmallList (RunData SerialisedKey SerialisedValue SerialisedBlob) ->
      IO Property
-prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = do
+prop_AbortMerge fs hbio mergeType (Positive stepSize) (SmallList wbs) = withRefCtx $ \refCtx ->do
     let path = FS.mkFsPath []
     let pathOut = RunFsPaths path (RunNumber 0)
     counter <- newUniqCounter 1
-    withRuns fs hbio testSalt runParams path counter wbs' $ \runs -> do
+    withRuns fs hbio refCtx testSalt runParams path counter wbs' $ \runs -> do
       mergeToClose <- makeInProgressMerge pathOut runs
       traverse_ Merge.abort mergeToClose
 
@@ -198,12 +198,12 @@ mergeRuns ::
      RunFsPaths ->
      [Ref (Run.Run IO h)] ->
      IO (Int, Ref (Run.Run IO h))
-mergeRuns fs hbio mergeType (Positive stepSize) fsPath runs = do
+mergeRuns fs hbio mergeType (Positive stepSize) fsPath runs = withRefCtx $ \refCtx -> do
     Merge.new fs hbio testSalt runParams mergeType resolveVal
               fsPath (V.fromList runs)
       >>= \case
-        Just m  -> Merge.stepsToCompletionCounted m stepSize
-        Nothing -> (,) 0 <$> unsafeCreateRunAt fs hbio testSalt runParams fsPath
+        Just m  -> Merge.stepsToCompletionCounted refCtx m stepSize
+        Nothing -> (,) 0 <$> unsafeCreateRunAt fs hbio refCtx testSalt runParams fsPath
                                (RunData Map.empty)
 
 type SerialisedEntry = Entry.Entry SerialisedValue SerialisedBlob

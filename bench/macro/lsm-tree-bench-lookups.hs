@@ -133,7 +133,7 @@ benchSalt :: Bloom.Salt
 benchSalt = 4
 
 benchmarks :: Run.RunDataCaching -> IO ()
-benchmarks !caching = withFS $ \hfs hbio -> do
+benchmarks !caching = withFS $ \hfs hbio refCtx -> do
 #ifdef NO_IGNORE_ASSERTS
     putStrLn "WARNING: Benchmarking in debug mode."
     putStrLn "         To benchmark in release mode, pass:"
@@ -163,7 +163,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
     -- instead of sequentially.
     let keyRng0 = mkStdGen 17
 
-    (!runs, !blooms, !indexes, !handles) <- lookupsEnv runSizes keyRng0 hfs hbio caching
+    (!runs, !blooms, !indexes, !handles) <- lookupsEnv runSizes keyRng0 hfs hbio refCtx caching
     putStrLn "<finished>"
 
     traceMarkerIO "Computing statistics for generated runs"
@@ -210,7 +210,7 @@ benchmarks !caching = withFS $ \hfs hbio -> do
                 "Calculate batches of keys, and perform disk lookups for each batch. This is roughly doing the same as benchPrepLookups, but also performing the disk I/O and resolving values. Net time/allocation is the result of subtracting the cost of benchGenKeyBatches."
                 (\n -> do
                     let wb_unused = WB.empty
-                    bracket (WBB.new hfs (FS.mkFsPath ["wbblobs_unused"])) releaseRef $ \wbblobs_unused ->
+                    bracket (WBB.new hfs refCtx (FS.mkFsPath ["wbblobs_unused"])) releaseRef $ \wbblobs_unused ->
                       benchLookupsIO hbio arenaManager benchmarkResolveSerialisedValue
                                      wb_unused wbblobs_unused runs blooms indexes handles
                                      keyRng0 n)
@@ -308,13 +308,14 @@ totalNumEntriesSanityCheck l1 runSizes =
     sum [ 2^l1 * sizeFactor | (_, sizeFactor) <- runSizes ]
 
 withFS ::
-     (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> IO a)
+     (FS.HasFS IO FS.HandleIO -> FS.HasBlockIO IO FS.HandleIO -> RefCtx -> IO a)
   -> IO a
 withFS action =
+    withRefCtx $ \refCtx ->
     FS.withIOHasBlockIO (FS.MountPoint "_bench_lookups") FS.defaultIOCtxParams $ \hfs hbio -> do
       exists <- FS.doesDirectoryExist hfs (FS.mkFsPath [""])
       unless exists $ error ("_bench_lookups directory does not exist")
-      action hfs hbio
+      action hfs hbio refCtx
 
 -- | Input environment for benchmarking lookup functions.
 --
@@ -336,13 +337,14 @@ lookupsEnv ::
   -> StdGen -- ^ Key RNG
   -> FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
+  -> RefCtx
   -> Run.RunDataCaching
   -> IO ( V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector (Bloom SerialisedKey)
         , V.Vector Index
         , V.Vector (FS.Handle FS.HandleIO)
         )
-lookupsEnv runSizes keyRng0 hfs hbio caching = do
+lookupsEnv runSizes keyRng0 hfs hbio refCtx caching = do
     -- create the vector of initial keys
     (mvec :: VUM.MVector RealWorld UTxOKey) <- VUM.unsafeNew (totalNumEntries runSizes)
     !keyRng1 <- vectorOfUniforms mvec keyRng0
@@ -381,7 +383,7 @@ lookupsEnv runSizes keyRng0 hfs hbio caching = do
     putStr "DONE"
 
     -- return runs
-    runs <- V.fromList <$> mapM Run.fromBuilder rbs
+    runs <- V.fromList <$> mapM (Run.fromBuilder refCtx) rbs
     let blooms  = V.map (\(DeRef r) -> Run.runFilter   r) runs
         indexes = V.map (\(DeRef r) -> Run.runIndex    r) runs
         handles = V.map (\(DeRef r) -> Run.runKOpsFile r) runs

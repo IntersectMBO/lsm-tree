@@ -46,6 +46,7 @@ withMergingRun ::
      MR.IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> RunBuilder.RunParams
@@ -54,9 +55,9 @@ withMergingRun ::
   -> SerialisedMergingRunData t
   -> (Ref (MergingRun t IO h) -> IO a)
   -> IO a
-withMergingRun hfs hbio resolve salt runParams path counter mrd = do
+withMergingRun hfs hbio refCtx resolve salt runParams path counter mrd = do
     bracket
-      (unsafeCreateMergingRun hfs hbio resolve salt runParams path counter mrd)
+      (unsafeCreateMergingRun hfs hbio refCtx resolve salt runParams path counter mrd)
       releaseRef
 
 -- | Flush serialised merging run data to disk.
@@ -69,6 +70,7 @@ unsafeCreateMergingRun ::
      MR.IsMergeType t
   => HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> RunBuilder.RunParams
@@ -76,19 +78,19 @@ unsafeCreateMergingRun ::
   -> UniqCounter IO
   -> SerialisedMergingRunData t
   -> IO (Ref (MergingRun t IO h))
-unsafeCreateMergingRun hfs hbio resolve salt runParams path counter = \case
+unsafeCreateMergingRun hfs hbio refCtx resolve salt runParams path counter = \case
     CompletedMergeData _ rd -> do
-      withRun hfs hbio salt runParams path counter rd $ \run -> do
+      withRun hfs hbio refCtx salt runParams path counter rd $ \run -> do
         -- slightly hacky, generally it's larger
         let totalDebt = MR.numEntriesToMergeDebt (Run.size run)
-        MR.newCompleted totalDebt run
+        MR.newCompleted refCtx totalDebt run
 
     OngoingMergeData mergeType rds -> do
-      withRuns hfs hbio salt runParams path counter (toRunData <$> rds)
+      withRuns hfs hbio refCtx salt runParams path counter (toRunData <$> rds)
         $ \runs -> do
           n <- incrUniqCounter counter
           let fsPaths = RunFsPaths path (RunNumber (uniqueToInt n))
-          MR.new hfs hbio resolve salt runParams mergeType
+          MR.new hfs hbio refCtx resolve salt runParams mergeType
                  fsPaths (V.fromList runs)
 
 {-------------------------------------------------------------------------------

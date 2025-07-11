@@ -90,7 +90,7 @@ benchSalt = 4
 
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
-    withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, wbblobs, rs, ks) ->
+    withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, _refCtx, wbblobs, rs, ks) ->
       env ( pure ( V.map (\(DeRef r) -> Run.runFilter   r) rs
                  , V.map (\(DeRef r) -> Run.runIndex    r) rs
                  , V.map (\(DeRef r) -> Run.runKOpsFile r) rs
@@ -182,6 +182,7 @@ lookupsInBatchesEnv ::
         , ArenaManager RealWorld
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
+        , RefCtx
         , Ref (WBB.WriteBufferBlobs IO FS.HandleIO)
         , V.Vector (Ref (Run IO FS.HandleIO))
         , V.Vector SerialisedKey
@@ -192,10 +193,11 @@ lookupsInBatchesEnv Config {..} = do
     benchTmpDir <- createTempDirectory sysTmpDir "lookupsInBatchesEnv"
     (storedKeys, lookupKeys) <- lookupsEnv (mkStdGen 17) nentries npos nneg
     (hasFS, hasBlockIO) <- FS.ioHasBlockIO (FS.MountPoint benchTmpDir) (fromMaybe FS.defaultIOCtxParams ioctxps)
-    wbblobs <- WBB.new hasFS (FS.mkFsPath ["0.wbblobs"])
+    refCtx <- newRefCtx
+    wbblobs <- WBB.new hasFS refCtx (FS.mkFsPath ["0.wbblobs"])
     wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob hasFS wbblobs)) storedKeys
     let fsps = RunFsPaths (FS.mkFsPath []) (RunNumber 0)
-    r <- Run.fromWriteBuffer hasFS hasBlockIO benchSalt runParams fsps wb wbblobs
+    r <- Run.fromWriteBuffer hasFS hasBlockIO refCtx benchSalt runParams fsps wb wbblobs
     let NumEntries nentriesReal = Run.size r
     assertEqual nentriesReal nentries $ pure ()
     -- 42 to 43 entries per page
@@ -204,6 +206,7 @@ lookupsInBatchesEnv Config {..} = do
          , arenaManager
          , hasFS
          , hasBlockIO
+         , refCtx
          , wbblobs
          , V.singleton r
          , lookupKeys
@@ -222,16 +225,18 @@ lookupsInBatchesCleanup ::
      , ArenaManager RealWorld
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
+     , RefCtx
      , Ref (WBB.WriteBufferBlobs IO FS.HandleIO)
      , V.Vector (Ref (Run IO FS.HandleIO))
      , V.Vector SerialisedKey
      )
   -> IO ()
-lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, wbblobs, rs, _) = do
+lookupsInBatchesCleanup (tmpDir, _arenaManager, _hasFS, hasBlockIO, refCtx, wbblobs, rs, _) = do
     FS.close hasBlockIO
     forM_ rs releaseRef
     releaseRef wbblobs
     removeDirectoryRecursive tmpDir
+    closeRefCtx refCtx
 
 -- | Generate keys to store and keys to lookup
 lookupsEnv ::

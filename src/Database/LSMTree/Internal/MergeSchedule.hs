@@ -445,6 +445,7 @@ releaseUnionCache reg (UnionCache mt) =
   -> ResolveSerialisedValue
   -> HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter IO
@@ -484,6 +485,7 @@ updatesWithInterleavedFlushes ::
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter m
@@ -491,7 +493,7 @@ updatesWithInterleavedFlushes ::
   -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-updatesWithInterleavedFlushes tr conf resolve hfs hbio root salt uc es reg tc = do
+updatesWithInterleavedFlushes tr conf resolve hfs hbio refCtx root salt uc es reg tc = do
     let wb = tableWriteBuffer tc
         wbblobs = tableWriteBufferBlobs tc
     (wb', es') <- addWriteBufferEntries hfs resolve wbblobs maxn wb es
@@ -499,20 +501,20 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio root salt uc es reg tc = 
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
-    supplyCredits conf (NominalCredits numAdded) (tableLevels tc)
+    supplyCredits refCtx conf (NominalCredits numAdded) (tableLevels tc)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
     -- If the write buffer did reach capacity, then we flush.
     else do
-      tc'' <- flushWriteBuffer tr conf resolve hfs hbio root salt uc reg tc'
+      tc'' <- flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc'
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
         pure $! tc''
       -- otherwise, keep going
       else
-        updatesWithInterleavedFlushes tr conf resolve hfs hbio root salt uc es' reg tc''
+        updatesWithInterleavedFlushes tr conf resolve hfs hbio refCtx root salt uc es' reg tc''
   where
     AllocNumEntries (NumEntries -> maxn) = confWriteBufferAlloc conf
 
@@ -565,6 +567,7 @@ addWriteBufferEntries hfs f wbblobs maxn =
   -> ResolveSerialisedValue
   -> HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter IO
@@ -582,13 +585,14 @@ flushWriteBuffer ::
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter m
   -> ActionRegistry m
   -> TableContent m h
   -> m (TableContent m h)
-flushWriteBuffer tr conf resolve hfs hbio root salt uc reg tc
+flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc
   | WB.null (tableWriteBuffer tc) = pure tc
   | otherwise = do
     !uniq <- incrUniqCounter uc
@@ -602,15 +606,15 @@ flushWriteBuffer tr conf resolve hfs hbio root salt uc reg tc
       TraceFlushWriteBuffer size (runNumber runPaths) runParams
     r <- withRollback reg
             (Run.fromWriteBuffer
-              hfs hbio salt
+              hfs hbio refCtx salt
               runParams runPaths
               (tableWriteBuffer tc)
               (tableWriteBufferBlobs tc))
             releaseRef
     delayedCommit reg (releaseRef (tableWriteBufferBlobs tc))
-    wbblobs' <- withRollback reg (WBB.new hfs (Paths.tableBlobPath root uniq))
+    wbblobs' <- withRollback reg (WBB.new hfs refCtx (Paths.tableBlobPath root uniq))
                                  releaseRef
-    levels' <- addRunToLevels tr conf resolve hfs hbio root salt uc r reg
+    levels' <- addRunToLevels tr conf resolve hfs hbio refCtx root salt uc r reg
                  (tableLevels tc)
                  (tableUnionLevel tc)
     tableCache' <- rebuildCache reg (tableCache tc) levels'
@@ -629,6 +633,7 @@ flushWriteBuffer tr conf resolve hfs hbio root salt uc reg tc
   -> ResolveSerialisedValue
   -> HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter IO
@@ -649,6 +654,7 @@ addRunToLevels ::
   -> ResolveSerialisedValue
   -> HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter m
@@ -657,7 +663,7 @@ addRunToLevels ::
   -> Levels m h
   -> UnionLevel m h
   -> m (Levels m h)
-addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root salt uc r0 reg levels ul = do
+addRunToLevels tr conf@TableConfig{..} resolve hfs hbio refCtx root salt uc r0 reg levels ul = do
     go (LevelNo 1) (V.singleton r0) levels
   where
     -- NOTE: @go@ is based on the @increment@ function from the
@@ -723,7 +729,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root salt uc r0 reg leve
       r <- case ir of
         Single         r -> pure r
         Merging _ _ _ mr -> do
-          r <- withRollback reg (MR.expectCompleted mr) releaseRef
+          r <- withRollback reg (MR.expectCompleted refCtx mr) releaseRef
           delayedCommit reg (releaseRef mr)
           pure r
       traceWith tr $ AtLevel ln $
@@ -738,7 +744,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root salt uc r0 reg leve
              -> m (IncomingRun m h)
     newMerge mergePolicy mergeType ln rs = do
       ir <- withRollback reg
-              (newIncomingRunAtLevel tr hfs hbio
+              (newIncomingRunAtLevel tr hfs hbio refCtx
                                      root salt uc conf resolve
                                      mergePolicy mergeType ln rs)
               releaseIncomingRun
@@ -750,7 +756,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root salt uc r0 reg leve
         Incremental -> pure ()
         OneShot     ->
           bracket
-            (immediatelyCompleteIncomingRun conf ln ir)
+            (immediatelyCompleteIncomingRun refCtx conf ln ir)
             releaseRef $ \r ->
 
             traceWith tr $ AtLevel ln $
@@ -762,6 +768,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio root salt uc r0 reg leve
      Tracer IO (AtLevel MergeTrace)
   -> HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter IO
@@ -777,6 +784,7 @@ newIncomingRunAtLevel ::
   => Tracer m (AtLevel MergeTrace)
   -> HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> SessionRoot
   -> Bloom.Salt
   -> UniqCounter m
@@ -787,7 +795,7 @@ newIncomingRunAtLevel ::
   -> LevelNo
   -> V.Vector (Ref (Run m h))
   -> m (IncomingRun m h)
-newIncomingRunAtLevel tr hfs hbio
+newIncomingRunAtLevel tr hfs hbio refCtx
                       root salt uc conf resolve
                       mergePolicy mergeType ln rs
   | Just (r, rest) <- V.uncons rs, V.null rest = do
@@ -808,7 +816,7 @@ newIncomingRunAtLevel tr hfs hbio
                     runParams mergePolicy mergeType
 
     bracket
-      (MR.new hfs hbio resolve salt runParams mergeType runPaths rs)
+      (MR.new hfs hbio refCtx resolve salt runParams mergeType runPaths rs)
       releaseRef $ \mr ->
         assert (MR.totalMergeDebt mr <= maxMergeDebt conf mergePolicy ln) $
         let nominalDebt = nominalDebtForLevel conf ln in
@@ -948,7 +956,8 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 -}
 
 {-# SPECIALISE supplyCredits ::
-     TableConfig
+     RefCtx
+  -> TableConfig
   -> NominalCredits
   -> Levels IO h
   -> IO ()
@@ -957,13 +966,14 @@ levelIsFull sr rs = V.length rs + 1 >= (sizeRatioInt sr)
 -- This /may/ cause some merges to progress.
 supplyCredits ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => TableConfig
+  => RefCtx
+  -> TableConfig
   -> NominalCredits
   -> Levels m h
   -> m ()
-supplyCredits conf deposit levels =
+supplyCredits refCtx conf deposit levels =
     iforLevelM_ levels $ \ln (Level ir _rs) ->
-      supplyCreditsIncomingRun conf ln ir deposit
+      supplyCreditsIncomingRun refCtx conf ln ir deposit
       --TODO: consider tracing supply of credits,
       -- supplyCreditsIncomingRun could easily return the supplied credits
       -- before & after, which may be useful for tracing.

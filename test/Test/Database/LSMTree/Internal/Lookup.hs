@@ -322,8 +322,9 @@ prop_roundtripFromWriteBufferLookupIO ::
   -> Property
 prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     ioProperty $
+    withRefCtx $ \refCtx ->
     withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hfs hbio ->
-    withWbAndRuns hfs hbio Index.Ordinary dats $ \wb wbblobs runs -> do
+    withWbAndRuns hfs hbio refCtx Index.Ordinary dats $ \wb wbblobs runs -> do
     let model :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
         model = Map.unionsWith (Entry.combine resolveV) (map runData dats)
         keys  = V.fromList [ k | InMemLookupData{lookups} <- dats
@@ -332,7 +333,7 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         modelres = V.map (\k -> Map.lookup k model) keys
     arenaManager <- newArenaManager
     realres <-
-      fetchBlobs hfs =<< -- retrieve blobs to match type of model result
+      fetchBlobs hfs refCtx =<< -- retrieve blobs to match type of model result
       lookupsIOWithWriteBuffer
         hbio
         arenaManager
@@ -348,10 +349,10 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
   where
     resolveV = \(SerialisedValue v1) (SerialisedValue v2) -> SerialisedValue (v1 <> v2)
 
-    fetchBlobs :: FS.HasFS IO h
+    fetchBlobs :: FS.HasFS IO h -> RefCtx
                ->    (V.Vector (Maybe (Entry v (WeakBlobRef IO h))))
                -> IO (V.Vector (Maybe (Entry v SerialisedBlob)))
-    fetchBlobs hfs = traverse (traverse (traverse (readWeakBlobRef hfs)))
+    fetchBlobs hfs refCtx = traverse (traverse (traverse (readWeakBlobRef hfs refCtx)))
 
 -- | Given a bunch of 'InMemLookupData', prepare the data into the form needed
 -- for 'lookupsIOWithWriteBuffer': a write buffer (and blobs) and a vector of
@@ -360,6 +361,7 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
 --
 withWbAndRuns :: FS.HasFS IO h
          -> FS.HasBlockIO IO h
+         -> RefCtx
          -> IndexType
          -> [InMemLookupData SerialisedKey SerialisedValue SerialisedBlob]
          -> (   WB.WriteBuffer
@@ -367,20 +369,20 @@ withWbAndRuns :: FS.HasFS IO h
              -> V.Vector (Ref (Run.Run IO h))
              -> IO a)
          -> IO a
-withWbAndRuns hfs _ _ [] action =
+withWbAndRuns hfs _ refCtx _ [] action =
     bracket
-      (WBB.new hfs (FS.mkFsPath ["wbblobs"]))
+      (WBB.new hfs refCtx (FS.mkFsPath ["wbblobs"]))
       releaseRef
       (\wbblobs -> action WB.empty wbblobs V.empty)
 
-withWbAndRuns hfs hbio indexType (wbdat:rundats) action =
-    bracket (WBB.new hfs (FS.mkFsPath ["wbblobs"])) releaseRef $ \wbblobs -> do
+withWbAndRuns hfs hbio refCtx indexType (wbdat:rundats) action =
+    bracket (WBB.new hfs refCtx (FS.mkFsPath ["wbblobs"])) releaseRef $ \wbblobs -> do
       wbkops <- traverse (traverse (WBB.addBlob hfs wbblobs))
                          (runData wbdat)
       let wb = WB.fromMap wbkops
       let rds = map (RunData . runData) rundats
       counter <- newUniqCounter 1
-      withRuns hfs hbio testSalt (runParams indexType) (FS.mkFsPath []) counter rds $
+      withRuns hfs hbio refCtx testSalt (runParams indexType) (FS.mkFsPath []) counter rds $
         \runs ->
           action wb wbblobs (V.fromList runs)
 
