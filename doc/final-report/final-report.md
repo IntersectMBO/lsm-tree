@@ -1128,10 +1128,10 @@ Write buffer size of 20,000 elements.
 The following table shows the results of the primary benchmark run in serial
 mode with 10 k batches of operations, along with related data:
 
-----------------------------------------------------------------------
-Machine       `fio`  Primary benchmark  Lookup only  Primary benchmark
-             (IOPS)          (ops/sec)    (ops/sec)              (MiB)
------------ ------- ------------------ ------------ ------------------
+-----------------------------------------------------------------------------
+Machine      `fio`, 1-core  Primary benchmark  Lookup only  Primary benchmark
+             (IOPS)                 (ops/sec)    (ops/sec)              (MiB)
+----------- -------------- ------------------ ------------ ------------------
 RPi5         77,600             25,458       62,357                865
 
 m6gd.medium  14,900             10,628       13,320                634
@@ -1145,7 +1145,7 @@ i7i.xlarge  351,000             95,907      157,560                944
 i8g.xlarge  351,000             58,838      159,103                949
 
 dev laptop  261,970             86,527      156,452                940
-----------------------------------------------------------------------
+-----------------------------------------------------------------------------
 
 The data in this table is to be interpreted as follows:
 
