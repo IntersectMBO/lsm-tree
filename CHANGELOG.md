@@ -1,5 +1,5 @@
-# Revision history for lsm-tree
+# Revision history for `lsm-tree`
 
 ## 1.0.0.0 -- 2025-07
 
-* First release version.
+* First released version.
