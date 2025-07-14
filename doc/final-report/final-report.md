@@ -1,7 +1,7 @@
 ---
 title: "Storing the Cardano ledger state on disk:
         final report for a high-performance backend"
-subtitle: "[A technical report by Well-Typed LLP on behalf of Intersect MBO]{.smallcaps}"
+subtitle: "[A technical report by Well-Typed on behalf of Intersect]{.smallcaps}"
 author:
   - Duncan Coutts
   - Joris Dral
@@ -115,9 +115,10 @@ references:
 As part of the project to reduce `cardano-node`’s memory use [@utxo-db] by
 storing the bulk of the ledger state on disk, colloquially known as UTxO-HD[^1],
 a high-performance disk backend was developed as an arm’s-length project by
-Well-Typed LLP on behalf of Intersect MBO[^2]. The intent is for the backend to
-be integrated into the consensus layer of `cardano-node`, specifically to be
-used for storing the larger parts of the Cardano ledger state.
+Well-Typed LLP on behalf of the Cardano Development Foundation and
+Intersect[^2]. The intent is for the backend to be integrated into the
+consensus layer of `cardano-node`, specifically to be used for storing the
+larger parts of the Cardano ledger state.
 
 [^1]: ‘UTxO-HD’ is a classic project-manager’s misnomer. The project is not just
       about the UTxO but also other parts of the ledger state, and it is not
@@ -128,7 +129,7 @@ used for storing the larger parts of the Cardano ledger state.
       engrained.
 
 [^2]: In its early stages, it was developed on behalf of Input Output Global,
-      Inc. (IOG).
+      Inc. (IOG). It was novated in early 2024.
 
 This backend is now complete. It satisfies all its functional requirements and
 meets all its performance requirements, including stretch targets.

@@ -485,11 +485,8 @@ license-files:
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:      TODO: MAINTAINER EMAIL
-copyright:
-  (c) 2023 Input Output Global, Inc. (IOG)
-  (c) 2023-2025 INTERSECT
-
+maintainer:      oso@intersectmbo.org
+copyright:       (c) 2023-2025 Cardano Development Foundation
 category:        Database
 build-type:      Simple
 tested-with:     GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12

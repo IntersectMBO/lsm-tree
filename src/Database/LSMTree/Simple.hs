@@ -1,7 +1,6 @@
 {- |
 Module      : Database.LSMTree.Simple
-Copyright   : (c) 2023, Input Output Global, Inc. (IOG)
-              (c) 2023-2025, INTERSECT
+Copyright   : (c) 2023-2025, Cardano Development Foundation
 License     : Apache-2.0
 Stability   : experimental
 Portability : portable
