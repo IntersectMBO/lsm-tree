@@ -7,7 +7,11 @@
 [![Haddocks](https://img.shields.io/badge/documentation-Haddocks-purple)](https://IntersectMBO.github.io/lsm-tree/)
 
 This package has been developed by Well-Typed LLP on behalf of the Cardano
-Development Foundation and Intersect.
+Development Foundation and Intersect. A [project report] and [integration notes]
+are available.
+
+[project report]: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/final-report.pdf
+[integration notes]: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/integration-notes.pdf
 
 The primary authors are Duncan Coutts, Joris Dral, Matthias Heinzel,
 Wolfgang Jeltsch, Wen Kokke, and Alex Washburn.
