@@ -107,7 +107,7 @@ references:
 ---
 
 \begin{changelog}[simple, sectioncmd=\section*]
-  \shortversion{author={Duncan Coutts, Joris Dral, Wolfgang Jeltsch}, v=0.1, date=July 2025, changes=Final draft}
+  \shortversion{author={Duncan Coutts, Joris Dral, Wolfgang Jeltsch}, v=1.0, date=July 2025, changes=Final draft}
 \end{changelog}
 
 # Introduction
