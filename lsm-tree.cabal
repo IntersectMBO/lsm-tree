@@ -1,9 +1,9 @@
 cabal-version:   3.4
 name:            lsm-tree
-version:         0.1.0.0
+version:         1.0.0.0
 synopsis:        Log-structured merge-trees
 description:
-  This package contains an efficient implementation of on-disk key–value storage, implemented as a log-structured merge-tree or LSM-tree.
+  This package contains an efficient implementation of on-disk key–value storage, implemented as a log-structured merge-tree, LSM-tree or LSMT.
   An LSM-tree is a data structure for key–value mappings, similar to "Data.Map", but optimized for large tables with a high insertion volume.
   It has support for:
 
@@ -485,11 +485,8 @@ license-files:
 author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
-maintainer:      TODO: MAINTAINER EMAIL
-copyright:
-  (c) 2023 Input Output Global, Inc. (IOG)
-  (c) 2023-2025 INTERSECT
-
+maintainer:      oso@intersectmbo.org
+copyright:       (c) 2023-2025 Cardano Development Foundation
 category:        Database
 build-type:      Simple
 tested-with:     GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
@@ -499,12 +496,10 @@ source-repository head
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
 
--- TODO: this tag obviously does not exist yet because the package has not
--- been published
 source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
-  tag:      lsm-tree-0.1.0.0
+  tag:      lsm-tree-1.0.0.0
 
 common warnings
   ghc-options:

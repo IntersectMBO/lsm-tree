@@ -6,10 +6,10 @@
 all: final-report.pdf integration-notes.pdf
 
 final-report.pdf: final-report.md ieee-software.csl pipelining.pdf
-	pandoc --citeproc $< -o $@
+	pandoc --citeproc $(@:.pdf=.md) -o $@
 
 integration-notes.pdf: integration-notes.md
-	pandoc $< -o $@
+	pandoc $(@:.pdf=.md) -o $@
 
 .PHONY: clean
 clean:

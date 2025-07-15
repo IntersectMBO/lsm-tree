@@ -12,10 +12,7 @@ author:
   Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn
 
 maintainer:         duncan@well-typed.com, joris@well-typed.com
-copyright:
-  (c) 2023 Input Output Global, Inc. (IOG)
-  (c) 2023-2025 INTERSECT
-
+copyright:          (c) 2023-2025 Cardano Development Foundation
 category:           Data
 build-type:         Simple
 tested-with:

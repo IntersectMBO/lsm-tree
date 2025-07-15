@@ -6,9 +6,14 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/IntersectMBO/lsm-tree/ci.yml?label=Build)](https://github.com/IntersectMBO/lsm-tree/actions/workflows/ci.yml)
 [![Haddocks](https://img.shields.io/badge/documentation-Haddocks-purple)](https://IntersectMBO.github.io/lsm-tree/)
 
-> :warning: **This library is in active development**: there is currently no release schedule!
+This package has been developed by Well-Typed LLP on behalf of the Cardano
+Development Foundation and Intersect. A [project report] and [integration notes]
+are available.
 
-This package is developed by Well-Typed LLP on behalf of Input Output Global, Inc. (IOG) and INTERSECT.
-The main contributors are Duncan Coutts, Joris Dral, Matthias Heinzel, Wolfgang Jeltsch, Wen Kokke, and Alex Washburn.
+[project report]: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/final-report.pdf
+[integration notes]: https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/integration-notes.pdf
+
+The primary authors are Duncan Coutts, Joris Dral, Matthias Heinzel,
+Wolfgang Jeltsch, Wen Kokke, and Alex Washburn.
 
 ## Description
