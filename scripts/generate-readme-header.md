@@ -2,7 +2,9 @@
 
 # lsm-tree
 
-[![Cardano Handbook](https://img.shields.io/badge/policy-Cardano%20Engineering%20Handbook-informational)](https://input-output-hk.github.io/cardano-engineering-handbook)
+[![Hackage: lsm-tree](https://img.shields.io/hackage/v/lsm-tree?label=Hackage:%20lsm-tree)](https://hackage.haskell.org/package/lsm-tree)
+[![Hackage: bloomfilter-blocked](https://img.shields.io/hackage/v/bloomfilter-blocked?label=Hackage:%20bloomfilter-blocked)](https://hackage.haskell.org/package/bloomfilter-blocked)
+[![Hackage: blockio](https://img.shields.io/hackage/v/blockio?label=Hackage:%20blockio)](https://hackage.haskell.org/package/blockio)
 [![Build](https://img.shields.io/github/actions/workflow/status/IntersectMBO/lsm-tree/ci.yml?label=Build)](https://github.com/IntersectMBO/lsm-tree/actions/workflows/ci.yml)
 [![Haddocks](https://img.shields.io/badge/documentation-Haddocks-purple)](https://IntersectMBO.github.io/lsm-tree/)
 
