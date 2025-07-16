@@ -46,7 +46,7 @@ source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
   subdir:   blockio
-  tag:      blockio-0.1.0.0
+  tag:      blockio-0.1.0.1
 
 common warnings
   ghc-options:
