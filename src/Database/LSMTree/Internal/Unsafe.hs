@@ -317,11 +317,18 @@ data TableTrace =
 #endif
   deriving stock (Show, Eq)
 
-contramapTraceMerge :: Monad m => Tracer m TableTrace -> Tracer m (AtLevel MergeTrace)
+contramapTraceMerge :: forall m. Monad m => Tracer m TableTrace -> Tracer m (AtLevel MergeTrace)
+#if MIN_VERSION_contra_tracer(0,2,0)
 #ifdef DEBUG_TRACES
 contramapTraceMerge t = TraceMerge `contramap` t
 #else
 contramapTraceMerge t = traceMaybe (const Nothing) t
+#endif
+#else
+contramapTraceMerge _t = nullTracer
+  where
+    -- See #766
+    _unused = pure @m ()
 #endif
 
 -- | Trace messages related to cursors.
