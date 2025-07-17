@@ -1,14 +1,23 @@
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# OPTIONS_GHC -Wno-orphans  #-}
+
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE ExplicitForAll      #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 
 module Test.Database.LSMTree (tests) where
 
 import           Control.Exception
 import           Control.Tracer
+import           Data.Foldable
 import           Data.Function (on)
 import           Data.IORef
-import           Data.Monoid
+import           Data.Monoid (Sum (..))
+import           Data.String (fromString)
 import           Data.Typeable (Typeable)
 import qualified Data.Vector as V
 import qualified Data.Vector.Algorithms as VA
@@ -19,15 +28,17 @@ import           Database.LSMTree.Extras (showRangesOf)
 import           Database.LSMTree.Extras.Generators ()
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
-import           Test.QuickCheck
-import           Test.Tasty
+import           Test.Database.LSMTree.Internal.Config ()
+import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS
+import           Test.Util.TypeClassLaws
+
 
 tests :: TestTree
-tests = testGroup "Test.Database.LSMTree" [
-      testGroup "Session" [
-          -- openSession
+tests = testGroup "Test.Database.LSMTree"
+    [  testGroup "Session"
+        [  -- openSession
           testProperty "prop_openSession_newSession" prop_openSession_newSession
         , testProperty "prop_openSession_restoreSession" prop_openSession_restoreSession
           -- happy path
@@ -41,6 +52,16 @@ tests = testGroup "Test.Database.LSMTree" [
           -- salt
         , testProperty "prop_goodAndBadSessionSalt" prop_goodAndBadSessionSalt
         ]
+    , laws_Entry
+    , laws_LookupResult
+    , laws_Range
+    , laws_RawBytes
+    , laws_SnapshotName
+    , laws_SnapshotLabel
+    , laws_TableConfigOverride
+    , laws_UnionCredits
+    , laws_UnionDebt
+    , laws_Update
     ]
 
 {-------------------------------------------------------------------------------
@@ -312,3 +333,180 @@ prop_goodAndBadSessionSalt (Positive (Small bufferSize)) ins =
     conf = defaultTableConfig {
         confWriteBufferAlloc = AllocNumEntries bufferSize
       }
+
+{-------------------------------------------------------------------------------
+  Type-class Laws
+-------------------------------------------------------------------------------}
+
+-- |
+-- This alias exists for brevity in type signatures
+type W = Word
+
+-- Entry
+
+instance (Arbitrary k, Arbitrary v, Arbitrary b) => Arbitrary (Entry k v b) where
+
+  arbitrary = oneof
+      [ Entry <$> arbitrary <*> arbitrary
+      , EntryWithBlob <$> arbitrary <*> arbitrary <*> arbitrary
+      ]
+
+  shrink (Entry k v) = [ Entry k' v' | k' <- shrink k, v' <- shrink v ]
+  shrink (EntryWithBlob k v b) =
+      [ EntryWithBlob k' v' b' | k' <- shrink k, v' <- shrink v,  b' <- shrink b ]
+
+laws_Entry :: TestTree
+laws_Entry = testGroup "Entry"
+    -- Basic control structures
+    [ functorLaws        @(Entry W W)
+    , bifunctorLaws      @(Entry W)
+    , foldableLaws       @(Entry W W)
+    , traversableLaws    @(Entry W W)
+    -- Data structures
+    , equalityLaws       @(Entry W W W)
+    , normalFormDataLaws @(Entry W W W)
+    , showProperties     @(Entry W W W)
+    ]
+
+-- LookupResult
+
+instance (Arbitrary v, Arbitrary b) => Arbitrary (LookupResult v b) where
+
+  arbitrary = oneof
+      [ pure NotFound
+      , Found <$> arbitrary
+      , FoundWithBlob <$> arbitrary <*> arbitrary
+      ]
+
+  shrink NotFound = []
+  shrink (Found v) = NotFound : [Found v' | v' <- shrink v]
+  shrink (FoundWithBlob v b) = fold
+      [ [NotFound, Found v]
+      , [FoundWithBlob v' b | v' <- shrink v]
+      , [FoundWithBlob v b' | b' <- shrink b]
+      ]
+
+laws_LookupResult :: TestTree
+laws_LookupResult = testGroup "LookupResult"
+    -- Basic control structures
+    [ functorLaws        @(LookupResult W)
+    , bifunctorLaws      @(LookupResult)
+    , foldableLaws       @(LookupResult W)
+    , traversableLaws    @(LookupResult W)
+    -- Data structures
+    , equalityLaws       @(LookupResult W W)
+    , normalFormDataLaws @(LookupResult W W)
+    , showProperties     @(LookupResult W W)
+    ]
+
+-- Range
+
+laws_Range :: TestTree
+laws_Range = testGroup "Range"
+    [ functorLaws        @(Range)
+    , equalityLaws       @(Range W)
+    , normalFormDataLaws @(Range W)
+    , showProperties     @(Range W)
+    ]
+
+-- RawBytes
+
+laws_RawBytes :: TestTree
+laws_RawBytes = testGroup "RawBytes"
+    [ equalityLaws       @(RawBytes)
+    , orderingLaws       @(RawBytes)
+    , semigroupLaws      @(RawBytes)
+    , monoidLaws         @(RawBytes)
+    , normalFormDataLaws @(RawBytes)
+    , showProperties     @(RawBytes)
+    ]
+
+-- SnapshotName
+
+instance Arbitrary SnapshotName where
+
+  arbitrary = toSnapshotName . getPrintableString <$>
+      (arbitrary `suchThat` (isValidSnapshotName . getPrintableString))
+
+  shrink = fmap toSnapshotName . filter isValidSnapshotName .
+      fmap getPrintableString . shrink . PrintableString . show
+
+laws_SnapshotName :: TestTree
+laws_SnapshotName = testGroup "SnapshotName"
+    [ equalityLaws       @(SnapshotName)
+    , orderingLaws       @(SnapshotName)
+    , showProperties     @(SnapshotName)
+    ]
+
+-- SnapshotLabel
+
+instance Arbitrary SnapshotLabel where
+
+  arbitrary = fromString . getPrintableString <$>
+      (arbitrary `suchThat` (isValidSnapshotName . getPrintableString))
+
+  shrink = fmap fromString. filter isValidSnapshotName .
+      fmap getPrintableString . shrink . PrintableString . show
+
+laws_SnapshotLabel :: TestTree
+laws_SnapshotLabel = testGroup "SnapshotLabel"
+    [ equalityLaws       @(SnapshotLabel)
+    , normalFormDataLaws @(SnapshotLabel)
+    , showProperties     @(SnapshotLabel)
+    ]
+
+-- TableConfigOverride
+
+instance Arbitrary TableConfigOverride where
+
+  arbitrary = TableConfigOverride <$> arbitrary <*> arbitrary
+
+  shrink (TableConfigOverride x y) =
+      [ TableConfigOverride x' y' | x' <- shrink x, y' <- shrink y ]
+
+laws_TableConfigOverride :: TestTree
+laws_TableConfigOverride = testGroup "TableConfigOverride"
+    [ equalityLaws       @(SnapshotLabel)
+    , showProperties     @(SnapshotLabel)
+    ]
+
+-- UnionCredits
+
+instance Arbitrary UnionCredits where
+
+  arbitrary = UnionCredits . getNonNegative <$> arbitrary
+
+  shrink (UnionCredits x) = UnionCredits . getNonNegative <$> shrink (NonNegative x)
+
+laws_UnionCredits :: TestTree
+laws_UnionCredits = testGroup "UnionCredits"
+    [ equalityLaws       @(UnionCredits)
+    , orderingLaws       @(UnionCredits)
+    , numLaws            @(UnionCredits)
+    , showProperties     @(UnionCredits)
+    ]
+
+-- UnionDebt
+
+instance Arbitrary UnionDebt where
+
+  arbitrary = UnionDebt . getNonNegative <$> arbitrary
+
+  shrink (UnionDebt x) = UnionDebt . getNonNegative <$> shrink (NonNegative x)
+
+laws_UnionDebt :: TestTree
+laws_UnionDebt = testGroup "UnionDebt"
+    [ equalityLaws       @(UnionDebt)
+    , orderingLaws       @(UnionDebt)
+    , numLaws            @(UnionDebt)
+    , showProperties     @(UnionDebt)
+    ]
+
+-- Update
+
+laws_Update :: TestTree
+laws_Update = testGroup "Update"
+    [ equalityLaws       @(Update W W)
+    , normalFormDataLaws @(Update W W)
+    , showProperties     @(Update W W)
+    ]
