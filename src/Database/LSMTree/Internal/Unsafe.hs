@@ -435,6 +435,10 @@ data SessionEnv m h = SessionEnv {
     -- | Similarly to tables, open cursors are tracked so they can be closed
     -- once the session is closed. See 'sessionOpenTables'.
   , sessionOpenCursors :: !(StrictMVar m (Map CursorId (Cursor m h)))
+
+    -- | The scope within which references exist. This context is created once a
+    -- new session is created, and closed once the session is closed.
+  , sessionRefCtx      :: !RefCtx
   }
 
 {-# INLINE sessionId #-}
@@ -749,11 +753,11 @@ closeSession ::
   -> m ()
 closeSession Session{sessionState, sessionTracer} = do
     traceWith sessionTracer TraceCloseSession
-    modifyWithActionRegistry_
+    mayRefCtx <- modifyWithActionRegistry
       (RW.unsafeAcquireWriteAccess sessionState)
       (atomically . RW.unsafeReleaseWriteAccess sessionState)
       $ \reg -> \case
-        SessionClosed -> pure SessionClosed
+        SessionClosed -> pure (SessionClosed, Nothing)
         SessionOpen seshEnv -> do
           -- Close tables and cursors first, so that we know none are open when we
           -- release session-wide resources.
@@ -790,7 +794,11 @@ closeSession Session{sessionState, sessionTracer} = do
         -- message as late as possible.
           delayedCommit reg $ traceWith sessionTracer TraceClosedSession
 
-          pure SessionClosed
+          pure (SessionClosed, Just (sessionRefCtx seshEnv))
+
+    -- Check for forgotten references as the very last thing before returning
+    -- from 'closeSession'.
+    forM_ mayRefCtx closeRefCtx
 
 {-# SPECIALISE acquireSessionLock ::
      HasFS IO h
@@ -847,6 +855,7 @@ mkSession ::
   -> m (Session m h)
 mkSession tr hfs hbio reg root@(SessionRoot dir) lockFile salt = do
     counterVar <- newUniqCounter 0
+    refCtx <- newRefCtx
     openTablesVar <- newMVar Map.empty
     openCursorsVar <- newMVar Map.empty
     sessionVar <- RW.new $ SessionOpen $ SessionEnv {
@@ -857,6 +866,7 @@ mkSession tr hfs hbio reg root@(SessionRoot dir) lockFile salt = do
       , sessionLockFile = lockFile
       , sessionOpenTables = openTablesVar
       , sessionOpenCursors = openCursorsVar
+      , sessionRefCtx = refCtx
       }
 
     -- Note: we're "abusing" the action registry to trace the success
@@ -1058,7 +1068,7 @@ newEmptyTableContent uc seshEnv reg = do
     let tableWriteBuffer = WB.empty
     tableWriteBufferBlobs
       <- withRollback reg
-           (WBB.new (sessionHasFS seshEnv) blobpath)
+           (WBB.new (sessionHasFS seshEnv) (sessionRefCtx seshEnv) blobpath)
            releaseRef
     let tableLevels = V.empty
     tableCache <- mkLevelsCache reg tableLevels
@@ -1281,6 +1291,7 @@ updates resolve es t = do
               resolve
               hfs
               (tableHasBlockIO tEnv)
+              (sessionRefCtx (tableSessionEnv tEnv))
               (tableSessionRoot tEnv)
               (tableSessionSalt tEnv)
               (tableSessionUniqCounter t)
@@ -1329,7 +1340,7 @@ retrieveBlobs sesh wrefs = do
       let hbio = sessionHasBlockIO seshEnv in
       handle (\(BlobRef.WeakBlobRefInvalid i) ->
                 throwIO (ErrBlobRefInvalid i)) $
-      BlobRef.readWeakBlobRefs hbio wrefs
+      BlobRef.readWeakBlobRefs hbio (sessionRefCtx seshEnv) wrefs
 
 {-------------------------------------------------------------------------------
   Cursors
@@ -1779,15 +1790,15 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
         -- Read write buffer
         let snapWriteBufferPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
         (tableWriteBuffer, tableWriteBufferBlobs) <-
-          openWriteBuffer reg resolve hfs hbio uc activeDir snapWriteBufferPaths
+          openWriteBuffer reg resolve hfs hbio (sessionRefCtx seshEnv) uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
-        snapLevels' <- traverse (openRun hfs hbio uc reg snapDir activeDir salt) snapLevels
+        snapLevels' <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) snapLevels
         unionLevel <- case mTreeOpt of
               Nothing -> pure NoUnion
               Just mTree -> do
-                snapTree <- traverse (openRun hfs hbio uc reg snapDir activeDir salt) mTree
-                mt <- fromSnapMergingTree hfs hbio salt uc resolve activeDir reg snapTree
+                snapTree <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) mTree
+                mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
                 isStructurallyEmpty mt >>= \case
                   True ->
                     pure NoUnion
@@ -1797,7 +1808,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
                     pure (Union mt cache)
 
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels hfs hbio salt uc conf resolve reg activeDir snapLevels'
+        tableLevels <- fromSnapLevels hfs hbio (sessionRefCtx seshEnv) salt uc conf resolve reg activeDir snapLevels'
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
@@ -2009,7 +2020,7 @@ unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
           withRollback reg
             (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
             releaseRef
-    mt <- withRollback reg (newPendingUnionMerge mts) releaseRef
+    mt <- withRollback reg (newPendingUnionMerge (sessionRefCtx seshEnv) mts) releaseRef
 
     -- The mts here is a temporary value, since newPendingUnionMerge
     -- will make its own references, so release mts at the end of
@@ -2062,7 +2073,7 @@ tableContentToMergingTree uc seshEnv conf
                     NoUnion    -> Nothing
                     Union mt _ -> Just mt  -- we could reuse the cache, but it
                                            -- would complicate things
-       in newPendingLevelMerge runs unionmt
+       in newPendingLevelMerge (sessionRefCtx seshEnv) runs unionmt
   where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
     levelToPreExistingRuns Level{incomingRun, residentRuns} =
@@ -2090,7 +2101,8 @@ writeBufferToNewRun uc
                       sessionRoot        = root,
                       sessionSalt        = salt,
                       sessionHasFS       = hfs,
-                      sessionHasBlockIO  = hbio
+                      sessionHasBlockIO  = hbio,
+                      sessionRefCtx      = refCtx
                     }
                     conf
                     TableContent{
@@ -2103,7 +2115,7 @@ writeBufferToNewRun uc
     let (!runParams, !runPaths) = mergingRunParamsForLevel
                                    (Paths.activeDir root) conf uniq (LevelNo 1)
     Run.fromWriteBuffer
-      hfs hbio salt
+      hfs hbio refCtx salt
       runParams runPaths
       tableWriteBuffer
       tableWriteBufferBlobs
@@ -2200,6 +2212,7 @@ supplyUnionCredits resolve t credits = do
               MT.supplyCredits
                 (tableHasFS tEnv)
                 (tableHasBlockIO tEnv)
+                (sessionRefCtx (tableSessionEnv tEnv))
                 resolve
                 (tableSessionSalt tEnv)
                 (runParamsForLevel conf UnionLevel)

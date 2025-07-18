@@ -186,6 +186,7 @@ setRunDataCaching hbio runKOpsFile NoCacheRunData = do
 {-# SPECIALISE newEmpty ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
@@ -196,37 +197,42 @@ newEmpty ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> m (Ref (Run m h))
-newEmpty hfs hbio salt runParams runPaths = do
+newEmpty hfs hbio refCtx salt runParams runPaths = do
     builder <- Builder.new hfs hbio salt runParams runPaths (NumEntries 0)
-    fromBuilder builder
+    fromBuilder refCtx builder
 
 {-# SPECIALISE fromBuilder ::
-     RunBuilder IO h
+     RefCtx
+  -> RunBuilder IO h
   -> IO (Ref (Run IO h)) #-}
 -- TODO: make exception safe
 fromBuilder ::
      (MonadST m, MonadSTM m, MonadMask m)
-  => RunBuilder m h
+  => RefCtx
+  -> RunBuilder m h
   -> m (Ref (Run m h))
-fromBuilder builder = do
+fromBuilder refCtx builder = do
     (runHasFS, runHasBlockIO,
      runRunFsPaths, runFilter, runIndex,
      RunParams {runParamCaching = runRunDataCaching}, runNumEntries) <-
       Builder.unsafeFinalise builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
     -- TODO: openBlobFile should be called with exceptions masked
-    runBlobFile <- openBlobFile runHasFS (runBlobPath runRunFsPaths) FS.ReadMode
+    runBlobFile <- openBlobFile runHasFS refCtx (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
-    newRef (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
+    newRef refCtx
+           (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
            (\runRefCounter -> Run { .. })
 
 {-# SPECIALISE fromWriteBuffer ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
@@ -247,18 +253,19 @@ fromWriteBuffer ::
      (MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> WriteBuffer
   -> Ref (WriteBufferBlobs m h)
   -> m (Ref (Run m h))
-fromWriteBuffer fs hbio salt params fsPaths buffer blobs = do
+fromWriteBuffer fs hbio refCtx salt params fsPaths buffer blobs = do
     builder <- Builder.new fs hbio salt params fsPaths (WB.numEntries buffer)
     for_ (WB.toList buffer) $ \(k, e) ->
       Builder.addKeyOp builder k (fmap (WBB.mkRawBlobRef blobs) e)
       --TODO: the fmap entry here reallocates even when there are no blobs
-    fromBuilder builder
+    fromBuilder refCtx builder
 
 {-------------------------------------------------------------------------------
   Snapshot
@@ -267,6 +274,7 @@ fromWriteBuffer fs hbio salt params fsPaths buffer blobs = do
 {-# SPECIALISE openFromDisk ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> RunDataCaching
   -> IndexType
   -> Bloom.Salt
@@ -293,13 +301,14 @@ openFromDisk ::
      (MonadSTM m, MonadMask m, PrimMonad m)
   => HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> RunDataCaching
   -> IndexType
   -> Bloom.Salt -- ^ Expected salt
   -> RunFsPaths
   -> m (Ref (Run m h))
 -- TODO: make exception safe
-openFromDisk fs hbio runRunDataCaching indexType expectedSalt runRunFsPaths = do
+openFromDisk fs hbio refCtx runRunDataCaching indexType expectedSalt runRunFsPaths = do
     expectedChecksums <-
        CRC.expectValidFile fs (runChecksumsPath runRunFsPaths) CRC.FormatChecksumsFile
            . fromChecksumsFile
@@ -323,9 +332,9 @@ openFromDisk fs hbio runRunDataCaching indexType expectedSalt runRunFsPaths = do
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     -- TODO: openBlobFile should be called with exceptions masked
-    runBlobFile <- openBlobFile fs (runBlobPath runRunFsPaths) FS.ReadMode
+    runBlobFile <- openBlobFile fs refCtx (runBlobPath runRunFsPaths) FS.ReadMode
     setRunDataCaching hbio runKOpsFile runRunDataCaching
-    newRef (finaliser fs runKOpsFile runBlobFile runRunFsPaths) $ \runRefCounter ->
+    newRef refCtx (finaliser fs runKOpsFile runBlobFile runRunFsPaths) $ \runRefCounter ->
       Run {
         runHasFS = fs
       , runHasBlockIO = hbio
