@@ -1153,21 +1153,21 @@ mode with 10 k batches of operations, along with related data:
 
 -----------------------------------------------------------------------------
 Machine      `fio`, 1-core  Primary benchmark  Lookup only  Primary benchmark
-             (IOPS)                 (ops/sec)    (ops/sec)              (MiB)
+                    (IOPS)          (ops/sec)    (ops/sec)              (MiB)
 ----------- -------------- ------------------ ------------ ------------------
-RPi5         77,600                    25,458       62,357                865
+RPi5                77,600             25,458       62,357                865
 
-m6gd.medium  14,900                    10,628       13,320                634
+m6gd.medium         14,900             10,628       13,320                634
 
-m5d.large    33,900                    22,553       30,039                860
+m5d.large           33,900             22,553       30,039                860
 
-i3.large    170,000                    42,158      101,861                865
+i3.large           170,000             42,158      101,861                865
 
-i7i.xlarge  351,000                    95,907      157,560                944
+i7i.xlarge         351,000             95,907      157,560                944
 
-i8g.xlarge  351,000                    58,838      159,103                949
+i8g.xlarge         351,000             58,838      159,103                949
 
-dev laptop  261,970                    86,527      156,452                940
+dev laptop         261,970             86,527      156,452                940
 -----------------------------------------------------------------------------
 
 The data in this table is to be interpreted as follows:
