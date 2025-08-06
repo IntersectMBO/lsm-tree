@@ -1129,9 +1129,13 @@ test-suite control-test
     , tasty
     , tasty-quickcheck
 
-executable demo
+-- It's not really a test suite, but if we make it an executable then its
+-- dependencies will be included for dependency resolution when building the
+-- main library. As a test-suite, it's more accurately represented as an
+-- internal component.
+test-suite demo
   import:         language, warnings
-  scope:          private
+  type:           exitcode-stdio-1.0
   hs-source-dirs: app
   main-is:        Main.hs
   other-modules:  Database.LSMTree.Demo
