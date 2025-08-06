@@ -41,11 +41,16 @@ jobs:
         os: ["ubuntu-latest", "macOS-latest", "windows-latest"]
         ghc-version: ["9.2", "9.4", "9.6", "9.8", "9.10", "9.12"]
         cabal-version: ["3.12"]
+        exclude:
+        # this configuration leads to a linker error when building/running the
+        # cabal-list-public-library-targets script.
+        - os: "windows-latest"
+          ghc-version: "9.2"
+          cabal-version: "3.12"
 
     env:
       tag-name: ${{ github.ref_name }}
-      release-build-target: |
-        ${{ startsWith(github.ref_name, 'blockio') && './blockio/blockio.cabal' || startsWith(github.ref_name, 'bloomfilter-blocked') && './bloomfilter-blocked/bloomfilter-blocked.cabal' || startsWith(github.ref_name, 'lsm-tree') && './lsm-tree/lsm-tree.cabal' }}
+      release-build-target: ${{ startsWith(github.ref_name, 'blockio') && './blockio/blockio.cabal' || startsWith(github.ref_name, 'bloomfilter-blocked') && './bloomfilter-blocked/bloomfilter-blocked.cabal' || startsWith(github.ref_name, 'lsm-tree') && './lsm-tree/lsm-tree.cabal' }}
 
     steps:
     - name: 🗄️ Print release build target
@@ -101,8 +106,10 @@ jobs:
         key: check-release-build-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: ${{ env.key }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
-        restore-keys: ${{ env.key }}-
+        key: ${{ env.key }}-tag-${{ env.tag-name }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
+        restore-keys: |
+          ${{ env.key }}-tag-${{ env.tag-name }}-
+          ${{ env.key }}-
 
     - name: 🛠️ Build Cabal dependencies
       run: |
@@ -118,6 +125,9 @@ jobs:
         key: ${{ steps.cache-cabal.outputs.cache-primary-key }}
 
     - name: 🏗️ Build
+      shell: sh
       run: |
-        cabal build all \
-          --project-file="cabal.project.temp"
+        ./scripts/cabal-list-public-library-targets.hs '${{ env.release-build-target }}' | \
+          tail -n +2 | \
+          tr -d '\r' | \
+          xargs -L 1 sh -c 'echo "$0" && cabal build --project-file=cabal.project.temp "$0"'
