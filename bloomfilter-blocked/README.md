@@ -1,9 +1,10 @@
 # bloomfilter-blocked
 
 `bloomfilter-blocked` is a Haskell library providing multiple fast and efficient
-implementations of [bloom filters][bloom-filter:wiki]. It is a full rewrite of
-the [`bloomfilter`][bloomfilter:hackage] package, originally authored by Bryan
-O'Sullivan <bos@serpentine.com>.
+implementations of [bloom filters](https://en.wikipedia.org/wiki/Bloom_filter).
+It is a full rewrite of the
+[`bloomfilter`](https://hackage.haskell.org/package/bloomfilter) package,
+originally authored by Bryan O'Sullivan <bos@serpentine.com>.
 
 A bloom filter is a space-efficient data structure representing a set that can
 be probablistically queried for set membership. The set membership query returns
@@ -11,8 +12,7 @@ no false negatives, but it might return false positives. That is, if an element
 was added to a bloom filter, then a subsequent query definitely returns `True`.
 If an element was *not* added to a filter, then a subsequent query may still
 return `True` if `False` would be the correct answer. The probabiliy of false
-positives -- the false positive rate (FPR) -- is configurable, as we will
-describe later.
+positives -- the false positive rate (FPR) -- is configurable.
 
 The library includes two implementations of bloom filters: classic, and blocked.
 
@@ -48,8 +48,9 @@ User should take into account the following:
 
 # Differences from the `bloomfilter` package
 
-The library is a full rewrite of the [`bloomfilter`][bloomfilter:hackage]
-package, originally authored by Bryan O'Sullivan <bos@serpentine.com>. The main
+The library is a full rewrite of the
+[`bloomfilter`](https://hackage.haskell.org/package/bloomfilter) package,
+originally authored by Bryan O'Sullivan <bos@serpentine.com>. The main
 differences are:
 
 * `bloomfilter-blocked` supports both classic and blocked bloom filters, whereas
@@ -62,14 +63,9 @@ differences are:
   over a `Hashable` type class, instead of having a `a -> [Hash]` typed field.
   This separation in `bloomfilter-blocked` allows clean (de-)serialisation of
   filters as the hashing scheme is static.
-* `bloomfilter-blocked` uses [`XXH3`][xxh3] for hashing instead of [Jenkins'
-  `lookup3`][lookup3:wiki], which `bloomfilter` uses.
+* `bloomfilter-blocked` uses [`XXH3`](https://xxhash.com/) for hashing instead
+  of [Jenkins'
+  `lookup3`](https://en.wikipedia.org/wiki/Jenkins_hash_function#lookup3), which
+  `bloomfilter` uses.
 * The user can configure hash salts for improved security in
   `bloomfilter-blocked`, whereas this is not supported in `bloomfilter`.
-
-<!-- Sources -->
-
-[bloom-filter:wiki]: https://en.wikipedia.org/wiki/Bloom_filter
-[bloomfilter:hackage]: https://hackage.haskell.org/package/bloomfilter
-[xxh3]: https://xxhash.com/
-[lookup3:wiki]: https://en.wikipedia.org/wiki/Jenkins_hash_function#lookup3

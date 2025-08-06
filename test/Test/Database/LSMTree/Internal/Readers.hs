@@ -41,7 +41,7 @@ import qualified System.FS.BlockIO.Sim as FsSim
 import qualified System.FS.Sim.MockFS as MockFS
 import qualified Test.QuickCheck as QC
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck
+import           Test.Tasty.QuickCheck hiding (Some)
 import           Test.Util.Orphans ()
 
 import           Test.QuickCheck.StateModel

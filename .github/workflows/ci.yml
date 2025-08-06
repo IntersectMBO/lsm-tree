@@ -53,9 +53,6 @@ jobs:
         echo 'matrix.cabal-version: ${{ matrix.os || env.DEFAULT_CABAL_VERSION }}'
         echo 'matrix.cabal-flags: ${{ matrix.cabal-flags }}'
         echo 'matrix.cabal-project-file: ${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}'
-        echo 'matrix.cabal-skip-tests: ${{ matrix.cabal-skip-tests || false }}'
-        echo 'matrix.cabal-skip-benchmarks: ${{ matrix.cabal-skip-benchmarks || false}}'
-        echo 'matrix.cabal-documentation: ${{ matrix.cabal-documentation || false }}'
         echo 'toJSON(matrix): ${{ toJSON(matrix) }}'
 
     - name: 🗄️ Print CPU info
@@ -78,9 +75,9 @@ jobs:
       run: |
         cabal configure \
           --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}" \
-          ${{ matrix.cabal-skip-tests && '--disable-tests' || '--enable-tests' }} \
-          ${{ matrix.cabal-skip-benchmarks && '--disable-benchmarks' || '--enable-benchmarks' }} \
-          ${{ matrix.cabal-documentation && '--enable-documentation' || '--disable-documentation' }} \
+          --enable-tests \
+          --enable-benchmarks \
+          --disable-documentation \
           --ghc-options="-Werror" \
           --flag="${{ matrix.cabal-flags }}"
         cat "${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}.local"
@@ -116,14 +113,12 @@ jobs:
         key: ${{ steps.cache-cabal.outputs.cache-primary-key }}
 
     - name: 🏗️ Build
-      if: ${{ !matrix.cabal-skip-tests }}
       run: |
         cabal build all \
           --project-file="${{ matrix.cabal-project-file || env.DEFAULT_CABAL_PROJECT_FILE }}"
 
     - name: 🧪 Test
       id: test
-      if: ${{ !matrix.cabal-skip-tests }}
       run: |
         cabal test all \
           -j1 \
@@ -137,7 +132,7 @@ jobs:
     # directory containing the golden files after running the goldens tests
     # allows us to diff the expected and actual golden file contents.
     - name: 📦 Upload golden files
-      if: ${{ !matrix.cabal-skip-tests && steps.test.outcome != 'success' && always() }}
+      if: ${{ steps.test.outcome != 'success' && always() }}
       uses: actions/upload-artifact@v4
       with:
         name: golden-files-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
@@ -146,27 +141,14 @@ jobs:
         retention-days: 1
 
     - name: 🛠️ Setup cabal-docspec (Linux)
-      if: ${{ !matrix.cabal-skip-tests && runner.os == 'Linux' }}
+      if: ${{ runner.os == 'Linux' }}
       uses: ./.github/actions/setup-cabal-docspec
 
     - name: 🧪 Test with cabal-docspec (Linux)
-      if: ${{ !matrix.cabal-skip-tests && runner.os == 'Linux' }}
+      if: ${{ runner.os == 'Linux' }}
       run: ./scripts/test-cabal-docspec.sh
       env:
         SKIP_CABAL_BUILD: true
-
-    - name: 🏗️ Build documentation
-      if: ${{ matrix.cabal-documentation }}
-      run: ./scripts/generate-haddock.sh
-
-    - name: 📦 Upload documentation
-      if: ${{ matrix.cabal-documentation }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: haddocks-${{ runner.os }}-ghc-${{ matrix.ghc-version || env.DEFAULT_GHC_VERSION }}-cabal-${{ matrix.cabal-version || env.DEFAULT_CABAL_VERSION }}
-        path: haddocks
-        if-no-files-found: error
-        retention-days: 1
 
     strategy:
       fail-fast: false
@@ -178,7 +160,6 @@ jobs:
         # entry under include that assigns these keys creates a new matrix entry
         cabal-flags: [""]
         cabal-project-file: [""]
-        cabal-documentation: [false]
 
         include:
           # Include builds for various special cases
@@ -188,12 +169,6 @@ jobs:
           - name: "Build with cabal.project.release"
             os: "ubuntu-latest"
             cabal-project-file: "cabal.project.release"
-          # Include build for documentation
-          - name: "Build documentation"
-            os: "ubuntu-latest"
-            cabal-skip-tests: true
-            cabal-skip-benchmarks: true
-            cabal-documentation: true
 
   ################################################################################
   # Lint with actionlint
@@ -352,40 +327,3 @@ jobs:
 
       - name: 🎗️ Lint with ShellCheck
         run: ./scripts/lint-shellcheck.sh
-
-  ################################################################################
-  # Publish documentation
-  ################################################################################
-  publish-documentation:
-    name: Publish documentation
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' }}
-    needs: [build]
-
-    permissions:
-      pages: write
-      id-token: write
-
-    environment:
-      name: github-pages
-      url: ${{ steps.publish-pages.outputs.page_url }}
-
-    steps:
-      - name: 🛠️ Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: 📦 Download documentation
-        uses: actions/download-artifact@v4
-        with:
-          # Ensure that the job that builds the documentation uses the default GHC and Cabal versions.
-          name: haddocks-Linux-ghc-${{ env.DEFAULT_GHC_VERSION }}-cabal-${{ env.DEFAULT_CABAL_VERSION }}
-          path: haddocks
-
-      - name: 📦 Upload documentation to Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: haddocks
-
-      - name: 🚀 Publish documentation to Pages
-        id: publish-pages
-        uses: actions/deploy-pages@v4

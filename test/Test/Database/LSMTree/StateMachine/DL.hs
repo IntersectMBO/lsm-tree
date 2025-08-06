@@ -25,7 +25,7 @@ import qualified System.FS.Sim.Stream as Stream
 import           System.FS.Sim.Stream (Stream)
 import           Test.Database.LSMTree.StateMachine hiding (tests)
 import           Test.Database.LSMTree.StateMachine.Op
-import           Test.QuickCheck as QC hiding (label)
+import           Test.QuickCheck as QC hiding (Some, label)
 import           Test.QuickCheck.DynamicLogic
 import qualified Test.QuickCheck.Gen as QC
 import qualified Test.QuickCheck.Random as QC
