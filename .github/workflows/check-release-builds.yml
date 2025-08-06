@@ -1,4 +1,4 @@
-name: Check release builds
+name: CI - Check release builds
 
 on:
   push:

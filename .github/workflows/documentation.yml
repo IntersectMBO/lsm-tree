@@ -1,0 +1,128 @@
+name: CI - Documentation
+
+on:
+  push:
+    branches:
+    - "main"
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Set the default shell on all platforms.
+defaults:
+  run:
+    shell: sh
+
+env:
+  ghc-version: "9.6"
+  cabal-version: "3.12"
+  cabal-project-file: "cabal.project.debug"
+
+jobs:
+  ################################################################################
+  # Build documentation
+  ################################################################################
+  build:
+    name: Build documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v4
+
+    - name: 🛠️ Setup Haskell
+      id: setup-haskell
+      uses:  haskell-actions/setup@v2
+      with:
+        ghc-version: ${{ env.ghc-version }}
+        cabal-version: ${{ env.cabal-version }}
+
+    - name: 🛠️ Setup system dependencies (Linux)
+      if: ${{ runner.os == 'Linux' }}
+      run: sudo apt-get update && sudo apt-get -y install liburing-dev librocksdb-dev
+      env:
+        DEBIAN_FRONTEND: "noninteractive"
+
+    - name: 🛠️ Configure
+      run: |
+        cabal configure \
+          --project-file="${{ env.cabal-project-file }}" \
+          --enable-tests \
+          --enable-benchmarks \
+          --enable-documentation \
+          --ghc-options="-Werror"
+        cat "${{ env.cabal-project-file }}.local"
+
+    - name: 💾 Generate Cabal plan
+      run: |
+        cabal build all \
+          --project-file="${{ env.cabal-project-file }}" \
+          --dry-run
+
+      # Use the cache action instead of the restore/save actions, because cabal
+      # haddock-project (used in the generate-haddock.sh script) tends to
+      # rebuild dependencies regardless of whether we build the dependencies
+      # manually beforehand.
+    - name: 💾 Cache Cabal dependencies
+      uses: actions/cache@v4
+      if: ${{ !env.ACT }}
+      env:
+        key: build-documentation-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: ${{ env.key }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
+        restore-keys: ${{ env.key }}-
+
+    - name: 🏗️ Build documentation
+      run: ./scripts/generate-haddock.sh
+
+    - name: 📦 Upload documentation
+      uses: actions/upload-artifact@v4
+      with:
+        name: haddocks-${{ runner.os }}-ghc-${{ env.ghc-version }}-cabal-${{ env.cabal-version }}
+        path: haddocks
+        if-no-files-found: error
+        retention-days: 1
+
+  ################################################################################
+  # Publish documentation
+  ################################################################################
+  publish-documentation:
+    name: Publish documentation
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }}
+    needs: [build]
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.publish-pages.outputs.page_url }}
+
+    steps:
+      - name: 🛠️ Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: 📦 Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: haddocks-${{ runner.os }}-ghc-${{ env.ghc-version }}-cabal-${{ env.cabal-version }}
+          path: haddocks
+
+      - name: 📦 Upload documentation to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: haddocks
+
+      - name: 🚀 Publish documentation to Pages
+        id: publish-pages
+        uses: actions/deploy-pages@v4
