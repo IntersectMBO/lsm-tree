@@ -6,7 +6,7 @@ description:
   @bloomfilter-blocked@ is a Haskell library providing multiple fast and efficient
   implementations of [bloom filters](https://en.wikipedia.org/wiki/Bloom_filter).
   It is a full rewrite of the
-  [@bloomfilter@](https://hackage.haskell.org/package/bloomfilter) package,
+  [bloomfilter](https://hackage.haskell.org/package/bloomfilter) package,
   originally authored by Bryan O'Sullivan <bos@serpentine.com>.
 
   The library includes two implementations of bloom filters: classic, and blocked.
