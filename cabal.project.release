@@ -4,7 +4,7 @@ index-state:
   , hackage.haskell.org 2025-08-06T00:00:00Z
 
 packages:
-  .
+  ./lsm-tree
   ./blockio
   ./bloomfilter-blocked
 

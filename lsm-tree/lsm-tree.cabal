@@ -491,14 +491,17 @@ category:        Database
 build-type:      Simple
 tested-with:     GHC ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10 || ==9.12
 extra-doc-files: CHANGELOG.md
+data-dir:        test/golden-file-data/
 
 source-repository head
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
+  subdir:   lsm-tree
 
 source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
+  subdir:   lsm-tree
   tag:      lsm-tree-1.0.0.0
 
 common warnings
@@ -676,6 +679,7 @@ test-suite lsm-tree-test
     Database.LSMTree.Model.IO
     Database.LSMTree.Model.Session
     Database.LSMTree.Model.Table
+    Paths_lsm_tree
     Test.Database.LSMTree
     Test.Database.LSMTree.Class
     Test.Database.LSMTree.Generators
