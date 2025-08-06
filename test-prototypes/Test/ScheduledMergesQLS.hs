@@ -19,7 +19,7 @@ import           Prelude hiding (lookup)
 
 import           ScheduledMerges as LSM
 
-import           Test.QuickCheck
+import           Test.QuickCheck hiding (Some)
 import           Test.QuickCheck.StateModel hiding (lookUpVar)
 import           Test.QuickCheck.StateModel.Lockstep hiding (ModelOp)
 import qualified Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
