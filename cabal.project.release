@@ -1,7 +1,7 @@
 index-state:
   -- Bump this if you need newer packages from Hackage
-  -- current date: release bloomfilter-blocked-0.1.0.0
-  , hackage.haskell.org 2025-08-06T00:00:00Z
+  -- current date: release lsm-tree-1.0.0.0
+  , hackage.haskell.org 2025-08-06T11:59:45Z
 
 packages:
   ./lsm-tree

@@ -43,7 +43,9 @@ ${cabal_docspec} \
     -XInstanceSigs \
     --extra-package blockio \
     --extra-package blockio:sim \
+    --extra-package bytestring \
     --extra-package directory \
+    --extra-package filepath \
     --extra-package lsm-tree:prototypes \
     --extra-package process \
     || exit 1
