@@ -164,13 +164,13 @@ instance RefCounted m (TestObject2 m) where
 prop_ref_double_free ::
      (PrimMonad m, MonadMask m, MonadFail m)
   => m Property
-prop_ref_double_free = do
+prop_ref_double_free = withRefCtx $ \refCtx -> do
     finalised <- newMutVar False
-    ref <- newRef (writeMutVar finalised True) TestObject
+    ref <- newRef refCtx (writeMutVar finalised True) TestObject
     releaseRef ref
     True <- readMutVar finalised
     Left e@RefDoubleRelease{} <- try $ releaseRef ref
-    checkForgottenRefs
+    checkForgottenRefs refCtx
     -- Print the displayed exception as an example
     pure $ tabulate "displayException" [displayException e] ()
 
@@ -178,9 +178,9 @@ prop_ref_use_after_free ::
      (PrimMonad m, MonadMask m, MonadFail m)
   => Bool -- ^ Test the DeRef pattern
   -> m Property
-prop_ref_use_after_free testDeRef = do
+prop_ref_use_after_free testDeRef = withRefCtx $ \refCtx -> do
     finalised <- newMutVar False
-    ref <- newRef (writeMutVar finalised True) TestObject
+    ref <- newRef refCtx (writeMutVar finalised True) TestObject
     releaseRef ref
     True <- readMutVar finalised
     Left e@RefUseAfterRelease{} <- try $ withRef ref return
@@ -188,18 +188,18 @@ prop_ref_use_after_free testDeRef = do
       Left RefUseAfterRelease{} <- try $ case ref of DeRef _ -> pure ()
       pure ()
     Left RefUseAfterRelease{} <- try $ dupRef ref
-    checkForgottenRefs
+    checkForgottenRefs refCtx
     -- Print the displayed exception as an example
     pure $ tabulate "displayException" [displayException e] ()
 
 prop_ref_never_released0 ::
      (PrimMonad m, MonadMask m)
   => m ()
-prop_ref_never_released0 = do
+prop_ref_never_released0 = withRefCtx $ \refCtx -> do
     finalised <- newMutVar False
-    ref <- newRef (writeMutVar finalised True) TestObject
+    ref <- newRef refCtx (writeMutVar finalised True) TestObject
     _ <- case ref of DeRef _ -> pure ()
-    checkForgottenRefs
+    checkForgottenRefs refCtx
     -- ref is still being used, so check should not fail
     _ <- case ref of DeRef _ -> pure ()
     releaseRef ref
@@ -207,29 +207,29 @@ prop_ref_never_released0 = do
 prop_ref_never_released1 ::
      (PrimMonad m, MonadMask m)
   => m Property
-prop_ref_never_released1 =
+prop_ref_never_released1 = withRefCtx $ \refCtx -> do
     handle expectRefNeverReleased $ do
       finalised <- newMutVar False
-      ref <- newRef (writeMutVar finalised True) TestObject
+      ref <- newRef refCtx (writeMutVar finalised True) TestObject
       _ <- withRef ref return
       _ <- case ref of DeRef _ -> pure ()
       -- ref is never released, so should fail
-      checkForgottenRefs
+      checkForgottenRefs refCtx
       pure (counterexample "no forgotten refs detected" $ property False)
 
 prop_ref_never_released2 ::
      (PrimMonad m, MonadMask m)
   => m Property
-prop_ref_never_released2 =
+prop_ref_never_released2 = withRefCtx $ \refCtx -> do
     handle expectRefNeverReleased $ do
       finalised <- newMutVar False
-      ref  <- newRef (writeMutVar finalised True) TestObject
+      ref  <- newRef refCtx (writeMutVar finalised True) TestObject
       ref2 <- dupRef ref
       releaseRef ref
       _ <- withRef ref2 return
       _ <- case ref2 of DeRef _ -> pure ()
       -- ref2 is never released, so should fail
-      checkForgottenRefs
+      checkForgottenRefs refCtx
       pure (counterexample "no forgotten refs detected" $ property False)
 
 expectRefNeverReleased :: Monad m => RefException -> m Property
@@ -243,10 +243,10 @@ expectRefNeverReleased e =
 prop_release_ref_exception ::
      (PrimMonad m, MonadMask m)
   => m ()
-prop_release_ref_exception = do
+prop_release_ref_exception = withRefCtx $ \refCtx -> do
     finalised <- newMutVar False
-    ref  <- newRef (writeMutVar finalised True >> throwIO (userError "oops")) TestObject
+    ref  <- newRef refCtx (writeMutVar finalised True >> throwIO (userError "oops")) TestObject
     _ <- try @_ @SomeException (releaseRef ref)
-    checkForgottenRefs
+    checkForgottenRefs refCtx
 #endif
 

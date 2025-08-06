@@ -234,7 +234,7 @@ runParams =
 
 benchMerge :: Config -> Benchmark
 benchMerge conf@Config{name} =
-    withEnv $ \ ~(_dir, hasFS, hasBlockIO, runs) ->
+    withEnv $ \ ~(_dir, hasFS, hasBlockIO, refCtx, runs) ->
       bgroup name [
           bench "merge" $
             -- We'd like to do: `whnfAppIO (runs' -> ...) runs`.
@@ -252,7 +252,7 @@ benchMerge conf@Config{name} =
             Cr.perRunEnvWithCleanup
               ((runs,) <$> newIORef Nothing)
               (releaseRun . snd) $ \(runs', ref) -> do
-                !run <- merge hasFS hasBlockIO conf outputRunPaths runs'
+                !run <- merge hasFS hasBlockIO refCtx conf outputRunPaths runs'
                 writeIORef ref $ Just $ releaseRef run
         ]
   where
@@ -270,15 +270,16 @@ benchMerge conf@Config{name} =
 merge ::
      FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
+  -> RefCtx
   -> Config
   -> Run.RunFsPaths
   -> InputRuns
   -> IO (Ref (Run IO FS.HandleIO))
-merge fs hbio Config {..} targetPaths runs = do
+merge fs hbio refCtx Config {..} targetPaths runs = do
     let f = fromMaybe const mergeResolve
     m <- fromMaybe (error "empty inputs, no merge created") <$>
       Merge.new fs hbio benchSalt runParams mergeType f targetPaths runs
-    Merge.stepsToCompletion m stepSize
+    Merge.stepsToCompletion refCtx m stepSize
 
 fsPath :: FS.FsPath
 fsPath = FS.mkFsPath []
@@ -368,39 +369,44 @@ mergeEnv ::
   -> IO ( FilePath -- ^ Temporary directory
         , FS.HasFS IO FS.HandleIO
         , FS.HasBlockIO IO FS.HandleIO
+        , RefCtx
         , InputRuns
         )
 mergeEnv config = do
     sysTmpDir <- getCanonicalTemporaryDirectory
     benchTmpDir <- createTempDirectory sysTmpDir "mergeEnv"
     (hasFS, hasBlockIO) <- FS.ioHasBlockIO (FS.MountPoint benchTmpDir) FS.defaultIOCtxParams
-    runs <- randomRuns hasFS hasBlockIO config (mkStdGen 17)
-    pure (benchTmpDir, hasFS, hasBlockIO, runs)
+    refCtx <- newRefCtx
+    runs <- randomRuns hasFS hasBlockIO refCtx config (mkStdGen 17)
+    pure (benchTmpDir, hasFS, hasBlockIO, refCtx, runs)
 
 mergeEnvCleanup ::
      ( FilePath -- ^ Temporary directory
      , FS.HasFS IO FS.HandleIO
      , FS.HasBlockIO IO FS.HandleIO
+     , RefCtx
      , InputRuns
      )
   -> IO ()
-mergeEnvCleanup (tmpDir, _hasFS, hasBlockIO, runs) = do
+mergeEnvCleanup (tmpDir, _hasFS, hasBlockIO, refCtx, runs) = do
     traverse_ releaseRef runs
     removeDirectoryRecursive tmpDir
     FS.close hasBlockIO
+    checkForgottenRefs refCtx
 
 -- | Generate keys and entries to insert into the write buffer.
 -- They are already serialised to exclude the cost from the benchmark.
 randomRuns ::
      FS.HasFS IO FS.HandleIO
   -> FS.HasBlockIO IO FS.HandleIO
+  -> RefCtx
   -> Config
   -> StdGen
   -> IO InputRuns
-randomRuns hasFS hasBlockIO config@Config {..} rng0 = do
+randomRuns hasFS hasBlockIO refCtx config@Config {..} rng0 = do
     counter <- inputRunPathsCounter
     fmap V.fromList $
-      mapM (unsafeCreateRun hasFS hasBlockIO benchSalt runParams fsPath counter) $
+      mapM (unsafeCreateRun hasFS hasBlockIO refCtx benchSalt runParams fsPath counter) $
         zipWith
           (randomRunData config)
           nentries
