@@ -136,7 +136,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: golden-files-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
-        path: test/golden-file-data
+        path: lsm-tree/test/golden-file-data
         if-no-files-found: error
         retention-days: 1
 

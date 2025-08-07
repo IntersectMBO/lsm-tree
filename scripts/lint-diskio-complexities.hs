@@ -46,12 +46,12 @@ main = do
   -- Get the disk I/O complexities from Database.LSMTree
   mapForFullApi <-
     buildDiskIOComplexityMap . decodeDiskIOComplexities
-      <$> readProcess "./scripts/lint-diskio-complexities/dump-from-source.sh" ["./src/Database/LSMTree.hs"] ""
+      <$> readProcess "./scripts/lint-diskio-complexities/dump-from-source.sh" ["./lsm-tree/src/Database/LSMTree.hs"] ""
 
   -- Get the disk I/O complexities from Database.LSMTree.Simple
   mapForSimpleApi <-
     buildDiskIOComplexityMap . decodeDiskIOComplexities
-      <$> readProcess "./scripts/lint-diskio-complexities/dump-from-source.sh" ["./src/Database/LSMTree/Simple.hs"] ""
+      <$> readProcess "./scripts/lint-diskio-complexities/dump-from-source.sh" ["./lsm-tree/src/Database/LSMTree/Simple.hs"] ""
 
   -- Comparing Database.LSMTree.Simple to Database.LSMTree
   putStrLn "Comparing Database.LSMTree.Simple to Database.LSMTree:"

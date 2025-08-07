@@ -26,11 +26,13 @@ import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import           Paths_lsm_tree
 import qualified System.Directory as Dir
 import           System.FilePath
 import qualified System.FS.API as FS
 import           System.FS.API.Types (MountPoint (..))
 import           System.FS.IO (ioHasFS)
+import           System.IO.Unsafe
 import           Test.QuickCheck (Property, counterexample, ioProperty, once,
                      (.&&.))
 import qualified Test.Tasty as Tasty
@@ -51,7 +53,7 @@ tests =
 
 -- | The location of the golden file data directory relative to the project root.
 goldenDataFilePath :: FilePath
-goldenDataFilePath = "test/golden-file-data/snapshot-codec"
+goldenDataFilePath = unsafePerformIO getDataDir </> "snapshot-codec"
 
 goldenDataMountPoint :: MountPoint
 goldenDataMountPoint = MountPoint goldenDataFilePath

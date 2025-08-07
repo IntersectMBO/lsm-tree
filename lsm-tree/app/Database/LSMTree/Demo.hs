@@ -39,45 +39,45 @@ import           System.IO.Unsafe (unsafePerformIO)
 --
 -- Sections of the demo code are headed by the number of the corresponding
 -- functional requirement.
-demo :: IO ()
-demo = do
+demo :: Bool -> IO ()
+demo interactive = do
   freshDirectory "_demo"
   withOpenSessionIO tracer "_demo" $ \session -> do
     withTableWith config session  $ \(table :: Table IO K V B) -> do
-      pause -- [0]
+      pause interactive -- [0]
 
       -- 2. basic key-value store operations
 
       inserts table $ V.fromList [ (K i, V i, Just (B i)) | i <- [1 .. 10_000] ]
       as <- lookups table $ V.fromList [ K 1, K 2, K 3, K 4 ]
       print (fmap getValue as)
-      pause -- [1]
+      pause interactive -- [1]
 
       deletes table $ V.fromList [ K i | i <- [1 .. 10_000], even i ]
       bs <- lookups table $ V.fromList [ K 1, K 2, K 3, K 4 ]
       print (fmap getValue bs)
-      pause -- [2]
+      pause interactive -- [2]
 
       -- 2. Intermezzo: blob retrieval
 
       cs <- try @SomeException $ retrieveBlobs session $ V.mapMaybe getBlob as
       print cs
-      pause -- [3]
+      pause interactive -- [3]
 
       ds <- try @SomeException $ retrieveBlobs session $ V.mapMaybe getBlob bs
       print ds
-      pause -- [4]
+      pause interactive -- [4]
 
       -- 3. range lookups and cursors
 
       es <- rangeLookup table $ FromToIncluding (K 1) (K 4)
       print (fmap getEntryValue es)
-      pause -- [5]
+      pause interactive -- [5]
 
       withCursorAtOffset table (K 1) $ \cursor -> do
         fs <- LSMT.take 2 cursor
         print (fmap getEntryValue fs)
-        pause -- [6]
+        pause interactive -- [6]
 
       -- 4. upserts (or monoidal updates)
 
@@ -85,7 +85,7 @@ demo = do
       upserts table $ V.fromList [ (K i, V 1) | i <- [1 .. 10_000] ]
       gs <- lookups table $ V.fromList [ K 1, K 2, K 3, K 4 ]
       print (fmap getValue gs)
-      pause -- [7]
+      pause interactive -- [7]
 
       -- 5. multiple independently writable references
 
@@ -93,11 +93,11 @@ demo = do
         inserts dupliTable $ V.fromList [ (K i, V 1, Nothing) | i <- [1 .. 10_000] ]
         hs <- lookups dupliTable $ V.fromList [ K 1, K 2, K 3, K 4 ]
         print (fmap getValue hs)
-        pause -- [8]
+        pause interactive -- [8]
 
         is <- lookups table $ V.fromList [ K 1, K 2, K 3, K 4]
         print (fmap getValue is)
-        pause -- [9]
+        pause interactive -- [9]
 
         -- 6. snapshots
 
@@ -105,34 +105,34 @@ demo = do
         saveSnapshot "all_ones" label dupliTable
         js <- listSnapshots session
         print js
-        pause -- [10]
+        pause interactive -- [10]
 
     -- 6. snapshots continued
 
     withTableFromSnapshot session "odds_evens" label $ \(table :: Table IO K V B) -> do
       withTableFromSnapshot session "all_ones" label $ \(dupliTable :: Table IO K V B) -> do
-        pause -- [11]
+        pause interactive -- [11]
 
         -- 7. table unions
 
         withUnion table dupliTable $ \uniTable -> do
           ks <- lookups uniTable $ V.fromList [ K 1, K 2, K 3, K 4]
           print (fmap getValue ks)
-          pause -- [12]
+          pause interactive -- [12]
 
         withIncrementalUnion table dupliTable $ \uniTable -> do
           ls <- lookups uniTable $ V.fromList [ K 1, K 2, K 3, K 4]
           print (fmap getValue ls)
-          pause -- [13]
+          pause interactive -- [13]
 
           m@(UnionDebt m') <- remainingUnionDebt uniTable
           supplyUnionCredits uniTable (UnionCredits (m' `div` 2))
           print m
-          pause -- [14]
+          pause interactive -- [14]
 
           ns <- lookups uniTable $ V.fromList [ K 1, K 2, K 3, K 4]
           print (fmap getValue ns)
-          pause -- [15]
+          pause interactive -- [15]
 
   -- 8. simulation
 
@@ -152,13 +152,13 @@ demo = do
   do
     FS.withIOHasBlockIO (FS.MountPoint "") FS.defaultIOCtxParams $ \hasFS hasBlockIO -> do
       simpleAction hasFS hasBlockIO
-      pause -- [16]
+      pause interactive -- [16]
 
   do
     pure $! IOSim.runSimOrThrow $ do
       (hasFS, hasBlockIO) <- FSSim.simHasBlockIO' FSSim.empty
       simpleAction hasFS hasBlockIO
-    pause -- [17]
+    pause interactive -- [17]
 
 {-------------------------------------------------------------------------------
   Types
@@ -203,11 +203,13 @@ incrPauseRef = do
     writePrimVar pauseRef $! x + 1
     pure x
 
-pause :: IO ()
-pause = do
+pause :: Bool -> IO ()
+pause interactive = do
   x <- incrPauseRef
   putStr ("[" <> show x <> "] " <> "press ENTER to continue...")
-  void $ getLine
+  if interactive
+    then void $ getLine
+    else putStrLn ""
 
 freshDirectory :: FilePath -> IO ()
 freshDirectory path = do

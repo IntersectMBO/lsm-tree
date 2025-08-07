@@ -35,7 +35,7 @@ main = do
     putStrLn "Generating README.md from package description..."
     let readmeHeaderFile = "scripts/generate-readme-header.md"
     readmeHeaderContent <- TIO.readFile readmeHeaderFile
-    let lsmTreeCabalFile = "lsm-tree.cabal"
+    let lsmTreeCabalFile = "./lsm-tree/lsm-tree.cabal"
     lsmTreeCabalContent <- BS.readFile lsmTreeCabalFile
     case parseGenericPackageDescriptionMaybe lsmTreeCabalContent of
         Nothing -> hPutStrLn stderr $ "error: Could not parse '" <> lsmTreeCabalFile <> "'"
@@ -48,4 +48,4 @@ main = do
                     let doc2 = headerShift 1 doc1
                     writeMarkdown def{writerExtensions = getDefaultExtensions "gfm"} doc2
             let readme = T.unlines [readmeHeaderContent, body]
-            TIO.writeFile "README.md" readme
+            TIO.writeFile "./lsm-tree/README.md" readme

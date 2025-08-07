@@ -51,7 +51,7 @@ tableEntryToFunction resource operation
 
 main :: IO ()
 main = do
-    let lsmTreeCabalFile = "lsm-tree.cabal"
+    let lsmTreeCabalFile = "./lsm-tree/lsm-tree.cabal"
     lsmTreeCabalContent <- BS.readFile lsmTreeCabalFile
     case parseGenericPackageDescriptionMaybe lsmTreeCabalContent of
         Nothing -> hPutStrLn stderr $ "error: Could not parse '" <> lsmTreeCabalFile <> "'"

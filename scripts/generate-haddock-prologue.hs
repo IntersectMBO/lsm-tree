@@ -34,7 +34,7 @@ main = do
     putStrLn "Generating prologue.haddock from package description..."
     let readmeHeaderFile = "scripts/generate-readme-header.md"
     readmeHeaderContent <- TIO.readFile readmeHeaderFile
-    let lsmTreeCabalFile = "lsm-tree.cabal"
+    let lsmTreeCabalFile = "./lsm-tree/lsm-tree.cabal"
     lsmTreeCabalContent <- BS.readFile lsmTreeCabalFile
     case parseGenericPackageDescriptionMaybe lsmTreeCabalContent of
         Nothing -> hPutStrLn stderr $ "error: Could not parse '" <> lsmTreeCabalFile <> "'"

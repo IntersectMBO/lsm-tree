@@ -10,10 +10,12 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Monoid (Sum (..))
 import           Data.Word
 import           Database.LSMTree as R
+import           Paths_lsm_tree
 import           Prelude hiding (lookup)
 import           System.FilePath
 import qualified System.FS.API as FS
 import qualified System.IO as IO
+import           System.IO.Unsafe
 import           Test.Tasty (TestTree, localOption, testGroup)
 import           Test.Tasty.Golden
 import           Test.Util.FS (withTempIOHasBlockIO)
@@ -31,7 +33,7 @@ tests =
       ]
 
 goldenDataDirectory :: FilePath
-goldenDataDirectory = "test/golden-file-data/tracer"
+goldenDataDirectory = unsafePerformIO getDataDir </> "tracer"
 
 -- | Path to the /golden/ file for 'golden_traceMessages'
 goldenDataFile :: FilePath

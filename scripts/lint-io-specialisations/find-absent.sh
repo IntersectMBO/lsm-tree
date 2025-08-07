@@ -9,7 +9,7 @@
 #     set. For example, the following command will check all Haskell
 #     source files of the main library:
 #
-#         scripts/io-specialisations/find-absent.sh src/**/*.hs
+#         scripts/io-specialisations/find-absent.sh lsm-tree/src/**/*.hs
 #
 #   * The results of this utility are not reliable, but should generally
 #     be correct for “reasonably styled” code. One important restriction

@@ -71,7 +71,6 @@ import           Text.Printf (printf)
 import           Text.Show.Pretty
 
 import           Database.LSMTree.Extras (groupsOfN)
-import           Database.LSMTree.Internal.ByteString (byteArrayToSBS)
 
 -- We should be able to write this benchmark
 -- using only use public lsm-tree interface
@@ -127,6 +126,14 @@ makeKey seed =
 
       of (P.PrimArray ba :: P.PrimArray Word64) ->
            byteArrayToSBS (P.ByteArray ba)
+
+-- | \( O(1) \) conversion.
+byteArrayToSBS :: P.ByteArray -> BS.ShortByteString
+#if MIN_VERSION_bytestring(0,12,0)
+byteArrayToSBS ba               = BS.ShortByteString ba
+#else
+byteArrayToSBS (P.ByteArray ba) = BS.SBS ba
+#endif
 
 -- We use constant value. This shouldn't affect anything.
 theValue :: V
