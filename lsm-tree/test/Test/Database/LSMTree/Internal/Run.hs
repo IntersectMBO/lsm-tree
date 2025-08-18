@@ -104,11 +104,12 @@ testSalt = 4
 -- | Runs in IO, with a real file system.
 testSingleInsert :: FilePath -> SerialisedKey -> SerialisedValue -> Maybe SerialisedBlob -> IO ()
 testSingleInsert sessionRoot key val mblob =
+    withRefCtx $ \refCtx ->
     FS.withIOHasBlockIO (FS.MountPoint sessionRoot) FS.defaultIOCtxParams $ \fs hbio -> do
     -- flush write buffer
     let e = case mblob of Nothing -> Insert val; Just blob -> InsertWithBlob val blob
         wb = Map.singleton key e
-    withRunAt fs hbio testSalt runParams (simplePath 42) (RunData wb) $ \_ -> do
+    withRunAt fs hbio refCtx testSalt runParams (simplePath 42) (RunData wb) $ \_ -> do
       -- check all files have been written
       let activeDir = sessionRoot
       bsKOps <- BS.readFile (activeDir </> "42.keyops")
@@ -190,7 +191,8 @@ prop_WriteNumEntries ::
   -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteNumEntries fs hbio wb@(RunData m) =
-    withRunAt fs hbio testSalt runParams (simplePath 42) wb' $ \run -> do
+    withRefCtx $ \refCtx ->
+    withRunAt fs hbio refCtx testSalt runParams (simplePath 42) wb' $ \run -> do
       let !runSize = Run.size run
 
       pure . labelRunData wb' $
@@ -208,12 +210,13 @@ prop_WriteAndOpen ::
   -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
 prop_WriteAndOpen fs hbio wb =
-    withRunAt fs hbio testSalt runParams (simplePath 1337) (serialiseRunData wb) $ \written ->
+    withRefCtx $ \refCtx ->
+    withRunAt fs hbio refCtx testSalt runParams (simplePath 1337) (serialiseRunData wb) $ \written ->
     withActionRegistry $ \reg -> do
       let paths = Run.runFsPaths written
           paths' = paths { runNumber = RunNumber 17}
       hardLinkRunFiles fs hbio reg paths paths'
-      loaded <- openFromDisk fs hbio (runParamCaching runParams)
+      loaded <- openFromDisk fs hbio refCtx (runParamCaching runParams)
                              (runParamIndex runParams) testSalt
                              (simplePath 17)
 
@@ -241,12 +244,12 @@ prop_WriteAndOpenWriteBuffer ::
   -> FS.HasBlockIO IO h
   -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
-prop_WriteAndOpenWriteBuffer hfs hbio rd = do
+prop_WriteAndOpenWriteBuffer hfs hbio rd = withRefCtx $ \refCtx -> do
   -- Serialise run data as write buffer:
   let srd = serialiseRunData rd
   let inPaths = WrapRunFsPaths $ simplePath 1111
   let resolve (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
-  withRunDataAsWriteBuffer hfs resolve inPaths srd $ \wb wbb -> do
+  withRunDataAsWriteBuffer hfs refCtx resolve inPaths srd $ \wb wbb -> do
     -- Write write buffer to disk:
     let wbPaths = WrapRunFsPaths $ simplePath 1312
     withSerialisedWriteBuffer hfs hbio wbPaths wb wbb $ do
@@ -265,17 +268,17 @@ prop_WriteRunEqWriteWriteBuffer ::
   -> FS.HasBlockIO IO h
   -> RunData SerialisedKey SerialisedValue SerialisedBlob
   -> IO Property
-prop_WriteRunEqWriteWriteBuffer hfs hbio rd = do
+prop_WriteRunEqWriteWriteBuffer hfs hbio rd = withRefCtx $ \refCtx -> do
   -- Serialise run data as run:
   let srd = serialiseRunData rd
   let rdPaths = simplePath 1337
   let rdKOpsFile = Paths.runKOpsPath rdPaths
   let rdBlobFile = Paths.runBlobPath rdPaths
-  withRunAt hfs hbio testSalt runParams rdPaths srd $ \_run -> do
+  withRunAt hfs hbio refCtx testSalt runParams rdPaths srd $ \_run -> do
     -- Serialise run data as write buffer:
     let f (SerialisedValue x) (SerialisedValue y) = SerialisedValue (x <> y)
     let inPaths = WrapRunFsPaths $ simplePath 1111
-    withRunDataAsWriteBuffer hfs f inPaths srd $ \wb wbb -> do
+    withRunDataAsWriteBuffer hfs refCtx f inPaths srd $ \wb wbb -> do
       let wbPaths = WrapRunFsPaths $ simplePath 1312
       let wbKOpsPath = Paths.writeBufferKOpsPath wbPaths
       let wbBlobPath = Paths.writeBufferBlobPath wbPaths

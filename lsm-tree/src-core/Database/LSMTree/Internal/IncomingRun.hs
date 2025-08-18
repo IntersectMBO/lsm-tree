@@ -182,7 +182,8 @@ nominalDebtAsCredits :: NominalDebt -> NominalCredits
 nominalDebtAsCredits (NominalDebt c) = NominalCredits c
 
 {-# SPECIALISE supplyCreditsIncomingRun ::
-     TableConfig
+     RefCtx
+  -> TableConfig
   -> LevelNo
   -> IncomingRun IO h
   -> NominalCredits
@@ -191,13 +192,14 @@ nominalDebtAsCredits (NominalDebt c) = NominalCredits c
 -- This is a relative addition of credits, not a new absolute total value.
 supplyCreditsIncomingRun ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => TableConfig
+  => RefCtx
+  -> TableConfig
   -> LevelNo
   -> IncomingRun m h
   -> NominalCredits
   -> m ()
-supplyCreditsIncomingRun _ _ (Single _r) _ = pure ()
-supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
+supplyCreditsIncomingRun _ _ _ (Single _r) _ = pure ()
+supplyCreditsIncomingRun refCtx conf ln (Merging _ nominalDebt nominalCreditsVar mr)
                          deposit = do
     (_nominalCredits,
      nominalCredits') <- depositNominalCredits nominalDebt nominalCreditsVar
@@ -207,7 +209,7 @@ supplyCreditsIncomingRun conf ln (Merging _ nominalDebt nominalCreditsVar mr)
                                                    nominalCredits'
         !thresh = creditThresholdForLevel conf ln
     (_suppliedCredits,
-     _suppliedCredits') <- MR.supplyCreditsAbsolute mr thresh mergeCredits'
+     _suppliedCredits') <- MR.supplyCreditsAbsolute refCtx mr thresh mergeCredits'
     pure ()
     --TODO: currently each supplying credits action results in contributing
     -- credits to the underlying merge, but this need not be the case. We
@@ -344,26 +346,28 @@ timesDivABC_fast (W# a) (W# b) (W# c) =
               (# q, _r #) -> W# q
 
 {-# SPECIALISE immediatelyCompleteIncomingRun ::
-     TableConfig
+     RefCtx
+  -> TableConfig
   -> LevelNo
   -> IncomingRun IO h
   -> IO (Ref (Run IO h)) #-}
 -- | Supply enough credits to complete the merge now.
 immediatelyCompleteIncomingRun ::
      (MonadSTM m, MonadST m, MonadMVar m, MonadMask m)
-  => TableConfig
+  => RefCtx
+  -> TableConfig
   -> LevelNo
   -> IncomingRun m h
   -> m (Ref (Run m h))
-immediatelyCompleteIncomingRun conf ln ir =
+immediatelyCompleteIncomingRun refCtx conf ln ir =
     case ir of
       Single r -> dupRef r
       Merging _ (NominalDebt nominalDebt) nominalCreditsVar mr -> do
 
         NominalCredits nominalCredits <- readPrimVar nominalCreditsVar
         let !deposit = NominalCredits (nominalDebt - nominalCredits)
-        supplyCreditsIncomingRun conf ln ir deposit
+        supplyCreditsIncomingRun refCtx conf ln ir deposit
 
         -- This ensures the merge is really completed. However, we don't
         -- release the merge yet, but we do return a new reference to the run.
-        MR.expectCompleted mr
+        MR.expectCompleted refCtx mr

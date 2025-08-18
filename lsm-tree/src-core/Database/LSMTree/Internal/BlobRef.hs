@@ -109,14 +109,16 @@ newtype WeakBlobRefInvalid = WeakBlobRefInvalid Int
   deriving anyclass (Exception)
 
 {-# SPECIALISE deRefWeakBlobRef ::
-     WeakBlobRef IO h
+     RefCtx
+  -> WeakBlobRef IO h
   -> IO (StrongBlobRef IO h) #-}
 deRefWeakBlobRef ::
      (MonadThrow m, PrimMonad m)
-  => WeakBlobRef m h
+  => RefCtx
+  -> WeakBlobRef m h
   -> m (StrongBlobRef m h)
-deRefWeakBlobRef WeakBlobRef{weakBlobRefFile, weakBlobRefSpan} = do
-    mstrongBlobRefFile <- deRefWeak weakBlobRefFile
+deRefWeakBlobRef refCtx WeakBlobRef{weakBlobRefFile, weakBlobRefSpan} = do
+    mstrongBlobRefFile <- deRefWeak refCtx weakBlobRefFile
     case mstrongBlobRefFile of
       Just strongBlobRefFile ->
         pure StrongBlobRef {
@@ -126,17 +128,19 @@ deRefWeakBlobRef WeakBlobRef{weakBlobRefFile, weakBlobRefSpan} = do
       Nothing -> throwIO (WeakBlobRefInvalid 0)
 
 {-# SPECIALISE deRefWeakBlobRefs ::
-     V.Vector (WeakBlobRef IO h)
+     RefCtx
+  -> V.Vector (WeakBlobRef IO h)
   -> IO (V.Vector (StrongBlobRef IO h)) #-}
 deRefWeakBlobRefs ::
     forall m h.
      (MonadMask m, PrimMonad m)
-  => V.Vector (WeakBlobRef m h)
+  => RefCtx
+  -> V.Vector (WeakBlobRef m h)
   -> m (V.Vector (StrongBlobRef m h))
-deRefWeakBlobRefs wrefs = do
+deRefWeakBlobRefs refCtx wrefs = do
     refs <- VM.new (V.length wrefs)
     V.iforM_ wrefs $ \i WeakBlobRef {weakBlobRefFile, weakBlobRefSpan} -> do
-      mstrongBlobRefFile <- deRefWeak weakBlobRefFile
+      mstrongBlobRefFile <- deRefWeak refCtx weakBlobRefFile
       case mstrongBlobRefFile of
         Just strongBlobRefFile ->
           VM.write refs i StrongBlobRef {
@@ -162,25 +166,27 @@ readRawBlobRef ::
 readRawBlobRef fs RawBlobRef {rawBlobRefFile, rawBlobRefSpan} =
     BlobFile.readBlobRaw fs rawBlobRefFile rawBlobRefSpan
 
-{-# SPECIALISE readWeakBlobRef :: HasFS IO h -> WeakBlobRef IO h -> IO SerialisedBlob #-}
+{-# SPECIALISE readWeakBlobRef :: HasFS IO h -> RefCtx -> WeakBlobRef IO h -> IO SerialisedBlob #-}
 readWeakBlobRef ::
      (MonadMask m, PrimMonad m)
   => HasFS m h
+  -> RefCtx
   -> WeakBlobRef m h
   -> m SerialisedBlob
-readWeakBlobRef fs wref =
-    bracket (deRefWeakBlobRef wref) releaseBlobRef $
+readWeakBlobRef fs refCtx wref =
+    bracket (deRefWeakBlobRef refCtx wref) releaseBlobRef $
       \StrongBlobRef {strongBlobRefFile, strongBlobRefSpan} ->
         BlobFile.readBlob fs strongBlobRefFile strongBlobRefSpan
 
-{-# SPECIALISE readWeakBlobRefs :: HasBlockIO IO h -> V.Vector (WeakBlobRef IO h) -> IO (V.Vector SerialisedBlob) #-}
+{-# SPECIALISE readWeakBlobRefs :: HasBlockIO IO h -> RefCtx -> V.Vector (WeakBlobRef IO h) -> IO (V.Vector SerialisedBlob) #-}
 readWeakBlobRefs ::
      (MonadMask m, PrimMonad m)
   => HasBlockIO m h
+  -> RefCtx
   -> V.Vector (WeakBlobRef m h)
   -> m (V.Vector SerialisedBlob)
-readWeakBlobRefs hbio wrefs =
-    bracket (deRefWeakBlobRefs wrefs) (V.mapM_ releaseBlobRef) $ \refs -> do
+readWeakBlobRefs hbio refCtx wrefs =
+    bracket (deRefWeakBlobRefs refCtx wrefs) (V.mapM_ releaseBlobRef) $ \refs -> do
       -- Prepare the IOOps:
       -- We use a single large memory buffer, with appropriate offsets within
       -- the buffer.

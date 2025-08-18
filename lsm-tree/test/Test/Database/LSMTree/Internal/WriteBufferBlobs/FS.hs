@@ -40,11 +40,12 @@ prop_fault_WriteBufferBlobs doCreateFile ae
   (NoCleanupErrors releaseErrors)
   b1 b2 =
     ioProperty $
+    withRefCtx $ \refCtx ->
     withSimErrorHasFS propPost MockFS.empty emptyErrors $ \hfs fsVar errsVar -> do
       when doCreateFile $
         withFile hfs path (WriteMode MustBeNew) $ \_ -> pure ()
       eith <- try @_ @FsError $
-        bracket (acquire hfs errsVar) (release errsVar) $ \wbb -> do
+        bracket (acquire hfs refCtx errsVar) (release errsVar) $ \wbb -> do
           fs' <- atomically $ readTMVar fsVar
           let prop = propNumOpenHandles 1 fs' .&&. propNumDirEntries root 1 fs'
           props <- blobRoundtrips hfs errsVar wbb
@@ -58,7 +59,7 @@ prop_fault_WriteBufferBlobs doCreateFile ae
     root = mkFsPath []
     path = mkFsPath ["wbb"]
 
-    acquire hfs errsVar = withErrors errsVar openErrors $ open hfs path ae
+    acquire hfs refCtx errsVar = withErrors errsVar openErrors $ open hfs refCtx path ae
 
     -- Test that we can roundtrip blobs
     blobRoundtrips hfs errsVar wbb = withErrors errsVar errs $ do

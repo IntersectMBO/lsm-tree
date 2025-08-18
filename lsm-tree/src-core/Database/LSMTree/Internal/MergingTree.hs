@@ -147,28 +147,33 @@ data PreExistingRun m h =
   | PreExistingMergingRun !(Ref (MergingRun MR.LevelMergeType m h))
 
 {-# SPECIALISE newCompletedMerge ::
-     Ref (Run IO h)
+     RefCtx
+  -> Ref (Run IO h)
   -> IO (Ref (MergingTree IO h)) #-}
 newCompletedMerge ::
      (MonadMVar m, PrimMonad m, MonadMask m)
-  => Ref (Run m h)
+  => RefCtx
+  -> Ref (Run m h)
   -> m (Ref (MergingTree m h))
-newCompletedMerge run = mkMergingTree . CompletedTreeMerge =<< dupRef run
+newCompletedMerge refCtx run = mkMergingTree refCtx . CompletedTreeMerge =<< dupRef run
 
 {-# SPECIALISE newOngoingMerge ::
-     Ref (MergingRun MR.TreeMergeType IO h)
+     RefCtx
+  -> Ref (MergingRun MR.TreeMergeType IO h)
   -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the merge of an ongoing run.
 -- The usage of this function is primarily to facilitate the reloading of an
 -- ongoing merge from a persistent snapshot.
 newOngoingMerge ::
      (MonadMVar m, PrimMonad m, MonadMask m)
-  => Ref (MergingRun MR.TreeMergeType m h)
+  => RefCtx
+  -> Ref (MergingRun MR.TreeMergeType m h)
   -> m (Ref (MergingTree m h))
-newOngoingMerge mr = mkMergingTree . OngoingTreeMerge =<< dupRef mr
+newOngoingMerge refCtx mr = mkMergingTree refCtx . OngoingTreeMerge =<< dupRef mr
 
 {-# SPECIALISE newPendingLevelMerge ::
-     [PreExistingRun IO h]
+     RefCtx
+  -> [PreExistingRun IO h]
   -> Maybe (Ref (MergingTree IO h))
   -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the merge of a sequence of
@@ -191,11 +196,12 @@ newOngoingMerge mr = mkMergingTree . OngoingTreeMerge =<< dupRef mr
 newPendingLevelMerge ::
      forall m h.
      (MonadMVar m, MonadMask m, PrimMonad m)
-  => [PreExistingRun m h]
+  => RefCtx
+  -> [PreExistingRun m h]
   -> Maybe (Ref (MergingTree m h))
   -> m (Ref (MergingTree m h))
-newPendingLevelMerge [] (Just t) = dupRef t
-newPendingLevelMerge [PreExistingRun r] Nothing = do
+newPendingLevelMerge _ [] (Just t) = dupRef t
+newPendingLevelMerge refCtx [PreExistingRun r] Nothing = do
     -- No need to create a pending merge here.
     --
     -- We could do something similar for PreExistingMergingRun, but it's:
@@ -207,15 +213,15 @@ newPendingLevelMerge [PreExistingRun r] Nothing = do
     r' <- dupRef r
     -- There are no interruption points here, and thus provided async
     -- exceptions are masked then there can be no async exceptions here at all.
-    mkMergingTree (CompletedTreeMerge r')
+    mkMergingTree refCtx (CompletedTreeMerge r')
 
-newPendingLevelMerge prs mmt = do
+newPendingLevelMerge refCtx prs mmt = do
     -- isStructurallyEmpty is an interruption point, and can receive async
     -- exceptions even when masked. So we use it first, *before* allocating
     -- new references.
     mmt' <- dupMaybeMergingTree mmt
     prs' <- traverse dupPreExistingRun (V.fromList prs)
-    mkMergingTree (PendingTreeMerge (PendingLevelMerge prs' mmt'))
+    mkMergingTree refCtx (PendingTreeMerge (PendingLevelMerge prs' mmt'))
   where
     dupPreExistingRun (PreExistingRun r) =
       PreExistingRun <$!> dupRef r
@@ -232,7 +238,8 @@ newPendingLevelMerge prs mmt = do
         else Just <$!> dupRef mt
 
 {-# SPECIALISE newPendingUnionMerge ::
-     [Ref (MergingTree IO h)]
+     RefCtx
+  -> [Ref (MergingTree IO h)]
   -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the union of one or more merging
 -- trees. This is for unioning the content of multiple tables (represented
@@ -251,9 +258,10 @@ newPendingLevelMerge prs mmt = do
 -- allocates\/creates resources.
 newPendingUnionMerge ::
      (MonadMVar m, MonadMask m, PrimMonad m)
-  => [Ref (MergingTree m h)]
+  => RefCtx
+  -> [Ref (MergingTree m h)]
   -> m (Ref (MergingTree m h))
-newPendingUnionMerge mts = do
+newPendingUnionMerge refCtx mts = do
     mts' <- V.filterM (fmap not . isStructurallyEmpty) (V.fromList mts)
     -- isStructurallyEmpty is interruptible even with async exceptions masked,
     -- but we use it before allocating new references.
@@ -261,7 +269,7 @@ newPendingUnionMerge mts = do
     case V.uncons mts'' of
       Just (mt, x) | V.null x
         -> pure mt
-      _ -> mkMergingTree (PendingTreeMerge (PendingUnionMerge mts''))
+      _ -> mkMergingTree refCtx (PendingTreeMerge (PendingUnionMerge mts''))
 
 {-# SPECIALISE isStructurallyEmpty :: Ref (MergingTree IO h) -> IO Bool #-}
 -- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
@@ -281,7 +289,8 @@ isStructurallyEmptyState = \case
     -- a zero length runs as empty.
 
 {-# SPECIALISE mkMergingTree ::
-     MergingTreeState IO h
+     RefCtx
+  -> MergingTreeState IO h
   -> IO (Ref (MergingTree IO h)) #-}
 -- | Constructor helper.
 --
@@ -291,11 +300,12 @@ isStructurallyEmptyState = \case
 --
 mkMergingTree ::
      (MonadMVar m, PrimMonad m, MonadMask m)
-  => MergingTreeState m h
+  => RefCtx
+  -> MergingTreeState m h
   -> m (Ref (MergingTree m h))
-mkMergingTree mergeTreeState = do
+mkMergingTree refCtx mergeTreeState = do
     mergeState <- newMVar mergeTreeState
-    newRef (finalise mergeState) $ \mergeRefCounter ->
+    newRef refCtx (finalise mergeState) $ \mergeRefCounter ->
       MergingTree {
         mergeState
       , mergeRefCounter
@@ -368,6 +378,7 @@ debtOfNestedMerge debts =
 {-# SPECIALISE supplyCredits ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> Run.RunParams
@@ -382,6 +393,7 @@ supplyCredits ::
      (MonadMVar m, MonadST m, MonadSTM m, MonadMask m)
   => HasFS m h
   -> HasBlockIO m h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> Bloom.Salt
   -> Run.RunParams
@@ -391,7 +403,7 @@ supplyCredits ::
   -> Ref (MergingTree m h)
   -> MR.MergeCredits
   -> m MR.MergeCredits
-supplyCredits hfs hbio resolve salt runParams threshold root uc = \mt0 c0 -> do
+supplyCredits hfs hbio refCtx resolve salt runParams threshold root uc = \mt0 c0 -> do
     if c0 <= 0
       then pure 0
       else supplyTree mt0 c0
@@ -417,13 +429,13 @@ supplyCredits hfs hbio resolve salt runParams threshold root uc = \mt0 c0 -> do
             pure (state, credits)
 
           OngoingTreeMerge mr -> do
-            leftovers <- MR.supplyCreditsRelative mr threshold credits
+            leftovers <- MR.supplyCreditsRelative refCtx mr threshold credits
             if leftovers <= 0
               then
                 pure (state, 0)
               else do
                 -- complete ongoing merge
-                r <- withRollback reg (MR.expectCompleted mr) releaseRef
+                r <- withRollback reg (MR.expectCompleted refCtx mr) releaseRef
                 delayedCommit reg (releaseRef mr)
                 -- all work is done, we can't spend any more credits
                 pure (CompletedTreeMerge r, leftovers)
@@ -440,7 +452,7 @@ supplyCredits hfs hbio resolve salt runParams threshold root uc = \mt0 c0 -> do
               withRollback reg
                 -- TODO: the builder's handles aren't cleaned up if we fail
                 -- before fromBuilder closes them
-                (Run.newEmpty hfs hbio salt runParams runPaths)
+                (Run.newEmpty hfs hbio refCtx salt runParams runPaths)
                 releaseRef
             pure (CompletedTreeMerge run, credits)
 
@@ -469,7 +481,7 @@ supplyCredits hfs hbio resolve salt runParams threshold root uc = \mt0 c0 -> do
 
     supplyPreExisting c = \case
         PreExistingRun _r        -> pure c  -- no work to do, all leftovers
-        PreExistingMergingRun mr -> MR.supplyCreditsRelative mr threshold c
+        PreExistingMergingRun mr -> MR.supplyCreditsRelative refCtx mr threshold c
 
     -- supply credits left to right until they are used up
     leftToRight ::
@@ -504,7 +516,7 @@ supplyCredits hfs hbio resolve salt runParams threshold root uc = \mt0 c0 -> do
         runPaths <- mkFreshRunPaths
         mr <-
           withRollback reg
-            (MR.new hfs hbio resolve salt runParams mergeType runPaths rs)
+            (MR.new hfs hbio refCtx resolve salt runParams mergeType runPaths rs)
             releaseRef
         -- no need for the runs anymore, 'MR.new' made duplicates
         traverse_ (\r -> delayedCommit reg (releaseRef r)) rs
@@ -527,23 +539,24 @@ supplyCredits hfs hbio resolve salt runParams threshold root uc = \mt0 c0 -> do
             withRollback reg (dupRef r) releaseRef
           PreExistingMergingRun mr -> do
             delayedCommit reg (releaseRef mr)  -- only released at the end
-            withRollback reg (MR.expectCompleted mr) releaseRef
+            withRollback reg (MR.expectCompleted refCtx mr) releaseRef
         rs2 <- V.forM mts $ \mt -> do
           delayedCommit reg (releaseRef mt)  -- only released at the end
-          withRollback reg (expectCompleted mt) releaseRef
+          withRollback reg (expectCompleted refCtx mt) releaseRef
         pure (ty, rs1 <> rs2)
 
 -- | This does /not/ release the reference, but allocates a new reference for
 -- the returned run, which must be released at some point.
 {-# SPECIALISE expectCompleted ::
-     Ref (MergingTree IO h)
+     RefCtx
+  -> Ref (MergingTree IO h)
   -> IO (Ref (Run IO h)) #-}
 expectCompleted ::
      (MonadMVar m, MonadSTM m, MonadST m, MonadMask m)
-  => Ref (MergingTree m h) -> m (Ref (Run m h))
-expectCompleted (DeRef MergingTree {..}) = do
+  => RefCtx -> Ref (MergingTree m h) -> m (Ref (Run m h))
+expectCompleted refCtx (DeRef MergingTree {..}) = do
     withMVar mergeState $ \case
       CompletedTreeMerge r -> dupRef r  -- return a fresh reference to the run
-      OngoingTreeMerge mr  -> MR.expectCompleted mr
+      OngoingTreeMerge mr  -> MR.expectCompleted refCtx mr
       PendingTreeMerge{}   ->
         error "expectCompleted: expected a completed merging tree, but found a pending one"

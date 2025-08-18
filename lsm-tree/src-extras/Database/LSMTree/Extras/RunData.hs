@@ -76,6 +76,7 @@ import           Test.QuickCheck
 withRun ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> FS.FsPath
@@ -83,24 +84,25 @@ withRun ::
   -> SerialisedRunData
   -> (Ref (Run IO h) -> IO a)
   -> IO a
-withRun hfs hbio salt runParams path counter rd = do
+withRun hfs hbio refCtx salt runParams path counter rd = do
     bracket
-      (unsafeCreateRun hfs hbio salt runParams path counter rd)
+      (unsafeCreateRun hfs hbio refCtx salt runParams path counter rd)
       releaseRef
 
 -- | Create a temporary 'Run' using 'unsafeCreateRunAt'.
 withRunAt ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> SerialisedRunData
   -> (Ref (Run IO h) -> IO a)
   -> IO a
-withRunAt hfs hbio salt runParams path rd = do
+withRunAt hfs hbio refCtx salt runParams path rd = do
     bracket
-      (unsafeCreateRunAt hfs hbio salt runParams path rd)
+      (unsafeCreateRunAt hfs hbio refCtx salt runParams path rd)
       releaseRef
 
 {-# INLINABLE withRuns #-}
@@ -108,6 +110,7 @@ withRunAt hfs hbio salt runParams path rd = do
 withRuns ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> FS.FsPath
@@ -115,11 +118,11 @@ withRuns ::
   -> [SerialisedRunData]
   -> ([Ref (Run IO h)] -> IO a)
   -> IO a
-withRuns hfs hbio salt runParams path counter = go
+withRuns hfs hbio refCtx salt runParams path counter = go
   where
     go []       act = act []
     go (rd:rds) act =
-      withRun hfs hbio salt runParams path counter rd $ \r ->
+      withRun hfs hbio refCtx salt runParams path counter rd $ \r ->
         go rds $ \rs ->
           act (r:rs)
 
@@ -128,16 +131,17 @@ withRuns hfs hbio salt runParams path counter = go
 unsafeCreateRun ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> FS.FsPath
   -> UniqCounter IO
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
-unsafeCreateRun fs hbio salt runParams path counter rd = do
+unsafeCreateRun fs hbio refCtx salt runParams path counter rd = do
     n <- incrUniqCounter counter
     let fsPaths = RunFsPaths path (uniqueToRunNumber n)
-    unsafeCreateRunAt fs hbio salt runParams fsPaths rd
+    unsafeCreateRunAt fs hbio refCtx salt runParams fsPaths rd
 
 -- | Flush serialised run data to disk as if it were a write buffer.
 --
@@ -148,19 +152,20 @@ unsafeCreateRun fs hbio salt runParams path counter rd = do
 unsafeCreateRunAt ::
      HasFS IO h
   -> HasBlockIO IO h
+  -> RefCtx
   -> Bloom.Salt
   -> RunParams
   -> RunFsPaths
   -> SerialisedRunData
   -> IO (Ref (Run IO h))
-unsafeCreateRunAt fs hbio salt runParams fsPaths (RunData m) = do
+unsafeCreateRunAt fs hbio refCtx salt runParams fsPaths (RunData m) = do
     -- the WBB file path doesn't have to be at a specific place relative to
     -- the run we want to create, but fsPaths should already point to a unique
     -- location, so we just append something to not conflict with that.
     let blobpath = FS.addExtension (runBlobPath fsPaths) ".wb"
-    bracket (WBB.new fs blobpath) releaseRef $ \wbblobs -> do
+    bracket (WBB.new fs refCtx blobpath) releaseRef $ \wbblobs -> do
       wb <- WB.fromMap <$> traverse (traverse (WBB.addBlob fs wbblobs)) m
-      Run.fromWriteBuffer fs hbio salt runParams fsPaths wb wbblobs
+      Run.fromWriteBuffer fs hbio refCtx salt runParams fsPaths wb wbblobs
 
 -- | Create a 'RunFsPaths' using an empty 'FsPath'. The empty path corresponds
 -- to the "root" or "mount point" of a 'HasFS' instance.
@@ -178,16 +183,17 @@ simplePaths ns = fmap simplePath ns
 -- | Use 'SerialisedRunData' to 'WriteBuffer' and 'WriteBufferBlobs'.
 withRunDataAsWriteBuffer ::
      FS.HasFS IO h
+  -> RefCtx
   -> ResolveSerialisedValue
   -> WriteBufferFsPaths
   -> SerialisedRunData
   -> (WB.WriteBuffer -> Ref (WBB.WriteBufferBlobs IO h) -> IO a)
   -> IO a
-withRunDataAsWriteBuffer hfs f fsPaths rd action = do
+withRunDataAsWriteBuffer hfs refCtx f fsPaths rd action = do
   let es = V.fromList . Map.toList $ unRunData rd
   let maxn = NumEntries $ V.length es
   let wbbPath = Paths.writeBufferBlobPath fsPaths
-  bracket (WBB.new hfs wbbPath) releaseRef $ \wbb -> do
+  bracket (WBB.new hfs refCtx wbbPath) releaseRef $ \wbb -> do
     (wb, _) <- addWriteBufferEntries hfs f wbb maxn WB.empty es
     action wb wbb
 
