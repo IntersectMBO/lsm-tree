@@ -59,7 +59,7 @@ jobs:
         echo ${{ env.release-build-target }}
 
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🗄️ Print Job info
       run: |

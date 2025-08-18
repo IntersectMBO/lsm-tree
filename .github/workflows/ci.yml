@@ -44,7 +44,7 @@ jobs:
 
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🗄️ Print Job info
       run: |
@@ -178,7 +178,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🛠️ Setup actionlint
       uses: ./.github/actions/setup-actionlint
@@ -196,7 +196,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🛠️ Setup cabal-fmt
       uses: ./.github/actions/setup-cabal-fmt
@@ -220,7 +220,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🛠️ Setup Haskell
       id: setup-haskell
@@ -241,7 +241,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🛠️ Setup stylish-haskell
       uses: ./.github/actions/setup-stylish-haskell
@@ -265,7 +265,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🎗️ Lint for missing IO specialisations
       run: ./scripts/lint-io-specialisations.sh
@@ -278,7 +278,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🛠️ Generate README.md
       uses: ./.github/actions/generate-readme
@@ -299,7 +299,7 @@ jobs:
 
     steps:
     - name: 📥 Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
     - name: 🛠️ Setup HLint
       uses: haskell-actions/hlint-setup@v2
@@ -318,7 +318,7 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - name: 📥 Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🛠️ Install ShellCheck
         uses: ./.github/actions/setup-shellcheck
