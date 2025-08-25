@@ -119,7 +119,7 @@ jobs:
           path: haddocks
 
       - name: 📦 Upload documentation to Pages
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: haddocks
 
