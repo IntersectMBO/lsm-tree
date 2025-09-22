@@ -6,7 +6,6 @@ index-state:
 packages:
   ./lsm-tree
   ./blockio
-  ./bloomfilter-blocked
 
 tests: True
 benchmarks: True
