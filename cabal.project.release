@@ -9,12 +9,3 @@ packages:
 
 tests: True
 benchmarks: True
-
--- this prevents occurrence of Hackage bloomfilter anywhere in the install plan
--- that is overconstraining, as we'd only need to make sure lsm-tree
--- doesn't depend on Hackage bloomfilter.
--- Luckily, bloomfilter is not commonly used package, so this is good enough.
-constraints: bloomfilter <0
-
--- regression-simple is used by the bloomfilter-fpr-calc test executable
-allow-newer: regression-simple:base
