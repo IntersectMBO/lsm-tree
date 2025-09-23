@@ -11,6 +11,7 @@ runs:
       run: cat /proc/cpuinfo
       shell: sh
 
-    - if: ${{ runner.os == 'Windows' }}
+    # TODO: wmic is no longer available by default on Windows, it seems. We should replace it.
+    - if: ${{ runner.os == 'Windows' && false }}
       run: wmic cpu get caption, deviceid, name, numberofcores, maxclockspeed, status
       shell: cmd
