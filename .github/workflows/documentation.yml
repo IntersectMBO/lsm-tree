@@ -113,7 +113,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: 📦 Download documentation
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           name: haddocks-${{ runner.os }}-ghc-${{ env.ghc-version }}-cabal-${{ env.cabal-version }}
           path: haddocks
