@@ -1,5 +1,4 @@
 {-# LANGUAGE CPP #-}
-
 module System.FS.BlockIO.Internal (
     ioHasBlockIO
   ) where
@@ -7,10 +6,12 @@ module System.FS.BlockIO.Internal (
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
 import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO)
+import qualified System.FS.BlockIO.Internal.Fcntl as Fcntl
 import qualified System.FS.BlockIO.IO.Internal as IOI
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
-import qualified System.Posix.Fcntl as Fcntl
+import qualified System.Posix.Fcntl as Fcntl (Advice (..), fileAdvise,
+                     fileAllocate)
 import qualified System.Posix.Files as Unix
 import qualified System.Posix.Unistd as Unix
 

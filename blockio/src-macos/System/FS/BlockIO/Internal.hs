@@ -5,11 +5,11 @@ module System.FS.BlockIO.Internal (
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, Handle (..), HasFS)
 import           System.FS.BlockIO.API (Advice (..), FileOffset, HasBlockIO)
+import qualified System.FS.BlockIO.Internal.Fcntl as Unix
 import qualified System.FS.BlockIO.IO.Internal as IOI
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
-import qualified System.Posix.Fcntl as Unix
 import qualified System.Posix.Files as Unix
 import qualified System.Posix.Unistd as Unix
 
