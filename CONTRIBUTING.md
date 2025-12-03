@@ -19,11 +19,6 @@ has to be enabled, either by setting the flag in
 `cabal.project`/`cabal.project.local`, or by passing the flag to the `cabal`
 executable using `--flag=+serialblockio`.
 
-> :warning: **When enabling `serialblockio`, disable the
-> `cabal.project.blockio-uring` import in `cabal.project`!** Unfortunately, this
-> line has to be removed/commented out manually (for now), or the project won't
-> build.
-
 Installing `rocksdb` is entirely optional, and only required if one wants to
 build or run the `utxo-rocksdb-bench` comparison macro-benchmark.
 
@@ -102,7 +97,8 @@ The following are requirements for merging a PR into `main`:
 * The PR should have a useful description, and it should link issues that it
   resolves (if any).
 * Changes introduced by the PR should be recorded in the relevant changelog
-  files.
+  files. Ideally, each changelog entry should link to the PR that introduced the
+  changes, and it should have a `BREAKING`, `NON-BREAKING`, or `PATCH` level.
 * PRs should not bundle many unrelated changes.
 * PRs should be approved by at least 1 code owner.
 * The PR should pass all CI checks.
@@ -116,3 +112,23 @@ like `A.B.C.D`.
 * `C` is the *minor* version number. A bump indicates a non-breaking change.
 * `D` is the *patch* version number. A bump indicates a small, non-breaking
   patch.
+
+To publish a release for a package, follow the steps below:
+
+* Changelog checks (`CHANGELOG.md`):
+  * Check that all user-facing changes have been recorded.
+  * Check that each changelog entry has a `BREAKING`, `NON-BREAKING`, or `PATCH`
+    level.
+  * Check that each changelog entry links to a PR, if applicable.
+  * Add or update the changelog's section header with the package version that
+    is going to be released, and the date of the release. The version should be
+    picked based on our package versioning policy.
+
+* Cabal file checks (`*.cabal`):
+  * Update the `version` field.
+  * Update the `tag` field of the `source-repository this` stanza.
+
+* Cabal project file checks (`cabal.project*`):
+  * Update the `index-state` in the `cabal.project.release` file to the current
+    date-time, or the closest valid date-time to the current date-time, so that
+    CI builds and tests the libraries with the newest versions of dependencies.

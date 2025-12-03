@@ -1,6 +1,6 @@
 cabal-version:   3.4
 name:            lsm-tree
-version:         1.0.0.0
+version:         1.0.0.1
 synopsis:        Log-structured merge-trees
 description:
   This package contains an efficient implementation of on-disk key–value storage, implemented as a log-structured merge-tree, LSM-tree or LSMT.
@@ -502,7 +502,7 @@ source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
   subdir:   lsm-tree
-  tag:      lsm-tree-1.0.0.0
+  tag:      lsm-tree-1.0.0.1
 
 common warnings
   ghc-options:
