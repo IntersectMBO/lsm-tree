@@ -93,8 +93,10 @@ library
 
   if os(linux)
     hs-source-dirs: src-linux
-    other-modules:  System.FS.BlockIO.Internal
-    build-depends:  unix ^>=2.8.7
+    build-depends:  unix ^>=2.8.6
+    other-modules:
+      System.FS.BlockIO.Internal
+      System.FS.BlockIO.Internal.Fcntl
 
     if !flag(serialblockio)
       other-modules: System.FS.BlockIO.Async
@@ -102,8 +104,10 @@ library
 
   elif os(osx)
     hs-source-dirs: src-macos
-    build-depends:  unix ^>=2.8.7
-    other-modules:  System.FS.BlockIO.Internal
+    build-depends:  unix ^>=2.8.6
+    other-modules:
+      System.FS.BlockIO.Internal
+      System.FS.BlockIO.Internal.Fcntl
 
   elif os(windows)
     hs-source-dirs: src-windows
