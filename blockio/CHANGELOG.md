@@ -1,6 +1,6 @@
 # Revision history for blockio
 
-## ?.?.?.? -- ????-??-??
+## 0.1.1.1 -- 2025-12-10
 
 * PATCH: Support `unix-2.8.4`. See PR
   [#807](https://github.com/IntersectMBO/lsm-tree/pull/807).

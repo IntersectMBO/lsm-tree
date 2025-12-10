@@ -1,6 +1,6 @@
 cabal-version:   3.4
 name:            blockio
-version:         0.1.1.0
+version:         0.1.1.1
 synopsis:        Perform batches of disk I/O operations.
 description:
   Perform batches of disk I\/O operations. Performing batches of disk I\/O can
@@ -46,7 +46,7 @@ source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
   subdir:   blockio
-  tag:      blockio-0.1.1.0
+  tag:      blockio-0.1.1.1
 
 common warnings
   ghc-options:
