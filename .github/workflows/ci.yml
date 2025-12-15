@@ -133,7 +133,7 @@ jobs:
     # allows us to diff the expected and actual golden file contents.
     - name: 📦 Upload golden files
       if: ${{ steps.test.outcome != 'success' && always() }}
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: golden-files-${{ runner.os }}-ghc-${{ steps.setup-haskell.outputs.ghc-version }}-cabal-${{ steps.setup-haskell.outputs.cabal-version }}-plan-${{ hashFiles('dist-newstyle/cache/plan.json') }}
         path: lsm-tree/test/golden-file-data
