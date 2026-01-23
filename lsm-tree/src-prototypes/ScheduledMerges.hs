@@ -1,4 +1,3 @@
-{-# LANGUAGE DataKinds       #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE UnboxedTuples   #-}
 
@@ -356,24 +355,36 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
 
       levelsInvariant (ln+1) ls
 
-    -- All runs within a level "proper" (as opposed to the incoming runs
+    -- All regular runs within a level "proper" (as opposed to the incoming runs
     -- being merged) should be of the correct size for the level.
     expectedRunLengths :: Int -> [Run] -> [Level s] -> ST s ()
     expectedRunLengths ln rs ls =
       case mergePolicyForLevel ln ls ul of
-        -- Levels using levelling have only one (incoming) run, which almost
-        -- always consists of an ongoing merge. The exception is when a
-        -- levelling run becomes too large and is promoted, in that case
-        -- initially there's no merge, but it is still represented as an
-        -- 'IncomingRun', using 'Single'. Thus there are no other resident runs.
-        LevelLevelling -> assertST $ null rs && null ls
-        -- Runs in tiering levels usually fit that size, but they can be one
-        -- larger, if a run has been held back (creating a (T+1)-way merge).
-        LevelTiering   -> assertST $ all (\r -> runToLevelNumber LevelTiering conf r `elem` [ln, ln+1]) rs
-        -- (This is actually still not really true, but will hold in practice.
-        -- In the pathological case, all runs passed to the next level can be
-        -- factor ((T+1)/T) too large, and there the same holding back can lead to
-        -- factor ((T+2)/T) etc., until at level 12 a run is two levels too large.
+        LevelLevelling -> do
+          -- Levelling can only occur on the last level.
+          assertST $ null ls
+          -- Levels using levelling have only one (incoming) run, which almost
+          -- always consists of an ongoing merge. The exception is when a
+          -- levelling run becomes too large and is promoted, in that case
+          -- initially there's no merge, but it is still represented as an
+          -- 'IncomingRun', using 'Single'. Thus there are no other resident
+          -- runs.
+          assertST $ null rs
+        LevelTiering -> do
+          -- There are no empty runs in tiering levels, as they are either:
+          -- 1. a mid-level, so deletes can't be dropped and merges can't result
+          --    in empty runs
+          -- 2. the first level, so their runs come directly from flushing the
+          --    write buffer.
+          assertST $ all (\r -> runSize r > 0) rs
+          -- Runs in tiering levels usually fit that size, but they can be one
+          -- larger, if a run has been held back (creating a (T+1)-way merge).
+          -- TODO: This is actually still not really true, but will hold in
+          -- practice. In the pathological case, all runs passed to the next
+          -- level can be factor ((T+1)/T) too large, so holding back there can
+          -- lead to factor ((T+2)/T) etc., until eventually at level 12 a run
+          -- is two levels too large.
+          assertST $ all (\r -> runToLevelNumber LevelTiering conf r `elem` [ln, ln+1]) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
