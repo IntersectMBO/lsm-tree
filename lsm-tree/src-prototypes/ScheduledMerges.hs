@@ -1037,19 +1037,19 @@ update :: Tracer (ST s) Event -> LSM s -> Key -> Entry -> ST s ()
 update tr (LSMHandle tid scr conf lsmr) k entry = do
     traceWith tr $ UpdateEvent tid k entry
     sc <- readSTRef scr
-    content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
+    content@(LSMContent wb ls ul) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels (NominalCredit 1) ls
     invariant conf content
     let wb' = Map.insertWith combine k entry wb
     if bufferSize wb' >= maxWriteBufferSize conf
       then do
-        ls' <- increment (LevelEvent tid >$< tr) sc conf (bufferToRun wb') ls unionLevel
-        let content' = LSMContent Map.empty ls' unionLevel
+        (ls', ul') <- increment (LevelEvent tid >$< tr) sc conf (bufferToRun wb') ls ul
+        let content' = LSMContent Map.empty ls' ul'
         invariant conf content'
         writeSTRef lsmr content'
       else
-        writeSTRef lsmr (LSMContent wb' ls unionLevel)
+        writeSTRef lsmr (LSMContent wb' ls ul)
 
 supplyMergeCredits :: LSM s -> NominalCredit -> ST s ()
 supplyMergeCredits (LSMHandle _ scr conf lsmr) credits = do
@@ -1433,23 +1433,20 @@ depositNominalCredit (NominalDebt nominalDebt)
 increment :: forall s. Tracer (ST s) (EventAt EventDetail)
           -> Counter
           -> LSMConfig
-          -> Run -> Levels s -> UnionLevel s -> ST s (Levels s)
-increment tr sc conf run0 ls0 ul = do
-    go 1 [run0] ls0
+          -> Run -> Levels s -> UnionLevel s -> ST s (Levels s, UnionLevel s)
+increment tr sc conf run0 = do
+    go 1 [run0]
   where
-    mergeTypeFor :: Levels s -> LevelMergeType
-    mergeTypeFor ls = mergeTypeForLevel ls ul
-
-    go :: Int -> [Run] -> Levels s -> ST s (Levels s)
-    go !ln incoming [] = do
+    go :: Int -> [Run] -> Levels s -> UnionLevel s -> ST s (Levels s, UnionLevel s)
+    go !ln incoming [] ul = do
         traceWith tr' AddLevelEvent
         let mergePolicy = mergePolicyForLevel ln [] ul
-        ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeFor []) incoming
-        pure (Level ir [] : [])
+        ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeForLevel [] ul) incoming
+        pure (Level ir [] : [], ul)
       where
         tr' = contramap (EventAt sc ln) tr
 
-    go !ln incoming (Level ir rs : ls) = do
+    go !ln incoming (Level ir rs : ls) ul = do
       r <- case ir of
         Single r -> do
           traceWith tr' $ SingleRunCompletedEvent r
@@ -1471,8 +1468,8 @@ increment tr sc conf run0 ls0 ul = do
         LevelTiering | runTooSmallForLevel LevelTiering conf ln r -> do
           traceWith tr' $ RunTooSmallForLevelEvent LevelTiering r
 
-          ir' <- newLevelMerge tr' conf ln LevelTiering (mergeTypeFor ls) (incoming ++ [r])
-          pure (Level ir' rs : ls)
+          ir' <- newLevelMerge tr' conf ln LevelTiering (mergeTypeForLevel ls ul) (incoming ++ [r])
+          pure (Level ir' rs : ls, ul)
 
         -- This tiering level is now full. We take the completed merged run
         -- (the previous incoming runs), plus all the other runs on this level
@@ -1482,17 +1479,17 @@ increment tr sc conf run0 ls0 ul = do
           traceWith tr' $ LevelIsFullEvent LevelTiering
 
           ir' <- newLevelMerge tr' conf ln LevelTiering MergeMidLevel incoming
-          ls' <- go (ln+1) resident ls
-          pure (Level ir' [] : ls')
+          (ls', ul') <- go (ln+1) resident ls ul
+          pure (Level ir' [] : ls', ul')
 
         -- This tiering level is not yet full. We move the completed merged run
         -- into the level proper, and start the new merge for the incoming runs.
         LevelTiering -> do
           traceWith tr' $ LevelIsNotFullEvent LevelTiering
 
-          ir' <- newLevelMerge tr' conf ln LevelTiering (mergeTypeFor ls) incoming
+          ir' <- newLevelMerge tr' conf ln LevelTiering (mergeTypeForLevel ls ul) incoming
           traceWith tr' (AddRunEvent resident)
-          pure (Level ir' resident : ls)
+          pure (Level ir' resident : ls, ul)
 
         -- The final level is using levelling. If the existing completed merge
         -- run is too large for this level, we promote the run to the next
@@ -1503,17 +1500,17 @@ increment tr sc conf run0 ls0 ul = do
 
           assert (null rs && null ls) $ pure ()
           ir' <- newLevelMerge tr' conf ln LevelTiering MergeMidLevel incoming
-          ls' <- go (ln+1) [r] []
-          pure (Level ir' [] : ls')
+          (ls', ul') <- go (ln+1) [r] [] ul
+          pure (Level ir' [] : ls', ul')
 
         -- Otherwise we start merging the incoming runs into the run.
         LevelLevelling -> do
           traceWith tr' $ LevelIsNotFullEvent LevelLevelling
 
           assert (null rs && null ls) $ pure ()
-          ir' <- newLevelMerge tr' conf ln LevelLevelling (mergeTypeFor ls)
+          ir' <- newLevelMerge tr' conf ln LevelLevelling (mergeTypeForLevel ls ul)
                           (incoming ++ [r])
-          pure (Level ir' [] : [])
+          pure (Level ir' [] : [], ul)
 
       where
         tr' = contramap (EventAt sc ln) tr
