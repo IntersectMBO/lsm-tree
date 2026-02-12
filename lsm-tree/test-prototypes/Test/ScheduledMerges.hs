@@ -13,7 +13,8 @@ import           Text.Printf (printf)
 import           ScheduledMerges as LSM
 
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Arbitrary (arbitrary, shrink), Property)
+import           Test.QuickCheck (Arbitrary (arbitrary, shrink), Property,
+                     (.&&.))
 import           Test.QuickCheck.Exception (isDiscard)
 import           Test.Tasty
 import           Test.Tasty.HUnit (HasCallStack, testCase)
@@ -24,7 +25,7 @@ tests :: TestTree
 tests = testGroup "Test.ScheduledMerges"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
-    , testProperty "prop_union" prop_union
+    , testProperty "prop_union_complete" prop_union_complete
     , testGroup "T"
         [ localOption (QuickCheckTests 1000) $  -- super quick, run more
             testProperty "Arbitrary satisfies invariant" prop_arbitrarySatisfiesInvariant
@@ -176,23 +177,33 @@ test_merge_again_with_incoming =
 -- properties
 --
 
--- | Supplying enough credits for the remaining debt completes the union merge.
-prop_union :: [[(LSM.Key, LSM.Entry)]] -> Property
-prop_union kess = length (filter (not . null) kess) > 1 QC.==>
+-- | Supplying enough credits for the remaining debt completes the union merge
+-- (as externally observable through 'LSM.remainingUnionDebt'). However, a
+-- special union level remains.
+prop_union_complete :: [[(LSM.Key, LSM.Entry)]] -> Property
+prop_union_complete kess = length (filter (not . null) kess) > 1 QC.==>
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
         ts <- traverse (uncurry $ mkTable tr) (zip [LSM.TableId 0..] kess)
         t <- LSM.unions tr (LSM.TableId (length kess)) ts
 
+        rep <- dumpRepresentation t
         debt@(UnionDebt x) <- LSM.remainingUnionDebt t
-        _ <- LSM.supplyUnionCredits t (UnionCredits x)
+
+        leftovers <- LSM.supplyUnionCredits t (UnionCredits x)
+
+        rep' <- dumpRepresentation t
         debt' <- LSM.remainingUnionDebt t
 
-        rep <- dumpRepresentation t
         pure $ QC.counterexample (show (debt, debt')) $ QC.conjoin
-          [ debt =/= UnionDebt 0
-          , debt' === UnionDebt 0
-          , hasUnionWith isCompleted rep
+          [ QC.counterexample "before" $
+              debt =/= UnionDebt 0
+              .&&. hasUnionWith (not . isCompleted) rep
+          , QC.counterexample "after" $
+              debt' === UnionDebt 0
+              .&&. hasUnionWith isCompleted rep'
+          , QC.counterexample "leftovers" $
+              leftovers >= 0
           ]
   where
     isCompleted = \case
