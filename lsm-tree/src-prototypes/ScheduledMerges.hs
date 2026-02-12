@@ -1171,26 +1171,6 @@ supplyUnionCredits (LSMHandle _ scr conf lsmr) (UnionCredits credits)
         invariant conf content
         pure c'
 
--- TODO: At some point the completed merging tree should to moved into the
--- regular levels, so it can be merged with other runs and last level merges can
--- happen again to drop deletes. Also, lookups then don't need to handle the
--- merging tree any more. There are two possible strategies:
---
--- 1. As soon as the merging tree completes, move the resulting run to the
---    regular levels. However, its size does generally not fit the last level,
---    which requires relaxing 'invariant' and adjusting 'increment'.
---
---    If the run is much larger than the resident and incoming runs of the last
---    level, it should also not be included into a merge yet, as that merge
---    would be expensive, but offer very little potential for compaction (the
---    run from the merging tree is already compacted after all). So it needs to
---    be bumped to the next level instead.
---
--- 2. Initially leave the completed run in the union level. Then every time a
---    new last level merge is created in 'increment', check if there is a
---    completed run in the union level with a size that fits the new merge. If
---    yes, move it over.
-
 -- | Like 'remainingDebtMergingTree', but additionally asserts that the debt
 -- never increases.
 checkedUnionDebt :: MergingTree s -> STRef s Debt -> ST s Debt
@@ -1439,11 +1419,45 @@ increment tr sc conf run0 = do
   where
     go :: Int -> [Run] -> Levels s -> UnionLevel s -> ST s (Levels s, UnionLevel s)
     go !ln incoming [] ul = do
-        traceWith tr' AddLevelEvent
-        let mergePolicy = mergePolicyForLevel ln [] ul
-        ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeForLevel [] ul) incoming
-        pure (Level ir [] : [], ul)
+        -- No existing level to add the incoming runs to, so we add a new one.
+        -- We first check if there is a completed union that would fit into it.
+        -- Note that migration wants to create a levelling level, so we don't
+        -- want to migrate into the first level (which always uses tiering).
+        case ul of
+          Union tree _ | ln > 1 -> do
+            getCompletedMergingTree tree >>= \case
+              Just run | runToLevelNumber LevelLevelling conf run <= ln ->
+                migrateUnionLevel run
+              _ ->
+                createNewLevel
+          _ ->
+            createNewLevel
       where
+        -- The common case, simply create a new level.
+        createNewLevel = do
+            traceWith tr' AddLevelEvent
+            let mergePolicy = mergePolicyForLevel ln [] ul
+            ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeForLevel [] ul) incoming
+            pure (Level ir [] : [], ul)
+
+        -- Create a new regular level, migrating the union by adding it to the
+        -- merge. If we left the union in place, the new level would use tiering
+        -- since it's not the last level. But now it becomes the last level, so
+        -- we use levelling.
+        --
+        -- This is the same behaviour we'd see if the union level had been a
+        -- regular level already, consisting only of the completed union run.
+        -- The cost of the new merge is the same either way, adhering to the
+        -- usual bounds on costs of a merge.
+        migrateUnionLevel run = do
+            traceWith tr' AddLevelEvent
+            traceWith tr' UnionMigratedEvent
+            let ul' = NoUnion  -- migrated
+            let mergePolicy = mergePolicyForLevel ln [] ul'
+            assertST $ mergePolicy == LevelLevelling
+            ir <- newLevelMerge tr' conf ln mergePolicy (mergeTypeForLevel [] ul') (incoming ++ [run])
+            pure (Level ir [] : [], ul')
+
         tr' = contramap (EventAt sc ln) tr
 
     go !ln incoming (Level ir rs : ls) ul = do
@@ -1530,6 +1544,7 @@ newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
                    mergeDebt = totalDebt physicalDebt,
                    mergeRuns = rs
                  }
+    -- Can be one more, either due to  holding back runs or migrating a union.
     assertST (length rs `elem` [configSizeRatio, configSizeRatio + 1])
     assertWithMsgM $ leq (totalDebt physicalDebt) maxPhysicalDebt
     nominalCreditVar <- newSTRef (NominalCredit 0)
@@ -1799,6 +1814,10 @@ expectCompletedChildren (PendingMerge mt prs trees) = do
 expectCompletedMergingTree :: HasCallStack => MergingTree s -> ST s Run
 expectCompletedMergingTree = expectInvariant . isCompletedMergingTree
 
+getCompletedMergingTree :: MergingTree s -> ST s (Maybe Run)
+getCompletedMergingTree =
+    fmap (either (const Nothing) Just) . evalInvariant . isCompletedMergingTree
+
 -------------------------------------------------------------------------------
 -- Measurements
 --
@@ -1953,6 +1972,7 @@ data EventDetail =
         mergeSize   :: Int
       }
   | SingleRunCompletedEvent Run
+  | UnionMigratedEvent
 
   | RunTooSmallForLevelEvent MergePolicyForLevel Run
   | LevelIsFullEvent MergePolicyForLevel
