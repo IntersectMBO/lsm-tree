@@ -180,11 +180,11 @@ test_merge_again_with_incoming =
 -- | Supplying enough credits for the remaining debt completes the union merge
 -- (as externally observable through 'LSM.remainingUnionDebt'). However, a
 -- special union level remains.
-prop_union_complete :: [[(LSM.Key, LSM.Entry)]] -> Property
-prop_union_complete kess = length (filter (not . null) kess) > 1 QC.==>
+prop_union_complete :: LSMConfig -> [[(LSM.Key, LSM.Entry)]] -> Property
+prop_union_complete conf kess = length (filter (not . null) kess) > 1 QC.==>
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
-        ts <- traverse (uncurry $ mkTable tr) (zip [LSM.TableId 0..] kess)
+        ts <- traverse (uncurry $ mkTable tr conf) (zip [LSM.TableId 0..] kess)
         t <- LSM.unions tr (LSM.TableId (length kess)) ts
 
         rep <- dumpRepresentation t
@@ -210,9 +210,9 @@ prop_union_complete kess = length (filter (not . null) kess) > 1 QC.==>
         MLeaf{} -> True
         MNode{} -> False
 
-mkTable :: Tracer (ST s) Event -> LSM.TableId -> [(LSM.Key, LSM.Entry)] -> ST s (LSM s)
-mkTable tr tid ks = do
-    t <- LSM.new tr tid
+mkTable :: Tracer (ST s) Event -> LSMConfig -> LSM.TableId -> [(LSM.Key, LSM.Entry)] -> ST s (LSM s)
+mkTable tr conf tid ks = do
+    t <- LSM.newWith tr tid conf
     LSM.updates tr t ks
     pure t
 
