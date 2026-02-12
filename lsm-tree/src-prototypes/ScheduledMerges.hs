@@ -1992,3 +1992,17 @@ instance QC.Arbitrary LevelMergeType where
 
 instance QC.Arbitrary TreeMergeType where
   arbitrary = QC.elements [MergeLevel, MergeUnion]
+
+instance QC.Arbitrary LSMConfig where
+  arbitrary = do
+      configMaxWriteBufferSize <- QC.chooseInt (1, 10)
+      configSizeRatio <- QC.chooseInt (2, 8)
+      pure LSMConfig {configMaxWriteBufferSize, configSizeRatio}
+  shrink (LSMConfig size ratio) =
+      [ LSMConfig size' ratio'
+      | (size', ratio') <- QC.liftShrink2 QC.shrink shrinkSizeRatio (size, ratio)
+      , size' >= 1
+      ]
+    where
+      shrinkSizeRatio 4 = []
+      shrinkSizeRatio _ = [4]  -- try shrinking to four, the default ratio
