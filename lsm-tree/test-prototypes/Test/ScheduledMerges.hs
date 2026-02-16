@@ -26,6 +26,7 @@ tests = testGroup "Test.ScheduledMerges"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
     , testProperty "prop_union_complete" prop_union_complete
+    , testProperty "prop_union_migrate" prop_union_migrate
     , testGroup "T"
         [ localOption (QuickCheckTests 1000) $  -- super quick, run more
             testProperty "Arbitrary satisfies invariant" prop_arbitrarySatisfiesInvariant
@@ -198,17 +199,63 @@ prop_union_complete conf nestedUnionData =
         pure $ QC.counterexample (show (debt, debt')) $ QC.conjoin
           [ QC.counterexample "before" $
               debt =/= UnionDebt 0
-              .&&. hasUnionWith (not . isCompleted) rep
+              .&&. hasUnionLevelWith (not . mTreeIsCompleted) rep
           , QC.counterexample "after" $
               debt' === UnionDebt 0
-              .&&. hasUnionWith isCompleted rep'
+              .&&. hasUnionLevelWith mTreeIsCompleted rep'
           , QC.counterexample "leftovers" $
               leftovers >= 0
           ]
+
+-- | Completing the union level and then creating a sufficiently large last
+-- level merge (by inserting entries) migrates the union level. It becomes part
+-- of the new level merge (only internally observable).
+prop_union_migrate :: LSMConfig -> NestedUnionData -> Property
+prop_union_migrate conf nestedUnionData =
+    QC.ioProperty $ runWithTracer $ \tr ->
+      stToIO $ do
+        tidCounter <- newSTRef (LSM.TableId 0)
+        t <- mkNestedUnion tr conf tidCounter nestedUnionData
+
+        -- pay off the union
+        do
+          UnionDebt d <- LSM.remainingUnionDebt t
+          _ <- LSM.supplyUnionCredits t (UnionCredits d)
+          pure ()
+
+        -- completely fill up all levels below where the union will fit in
+        -- (at least level 2, since we don't want to migrate into first level)
+        unionRunSize <- length <$> LSM.logicalValue t
+        let levelNo = max 2 (runSizeToLevelNumber LevelLevelling conf unionRunSize)
+        let numEntriesBeforeMigration = maxEntriesInLevels (levelNo-1)
+        LSM.inserts tr t
+          [(K k, V 0, Nothing) | k <- [1 .. numEntriesBeforeMigration]]
+        repBeforeMigration <- dumpRepresentation t
+
+        -- then flush the write buffer once (triggering creation of a new level)
+        LSM.inserts tr t
+          [(K k, V 0, Nothing) | k <- [1 .. maxWriteBufferSize conf]]
+        repAfterMigration <- dumpRepresentation t
+
+        -- check that the union is migrated exactly when we expected it
+        pure $ QC.conjoin
+          [ hasUnionLevelWith mTreeIsCompleted repBeforeMigration
+          , hasNoUnionLevel repAfterMigration
+          ]
   where
-    isCompleted = \case
-        MLeaf{} -> True
-        MNode{} -> False
+    -- These numbers rely on there no being any compaction (duplicate keys), as
+    -- that could lead to runs being held back etc.
+    -- Also, note that since there is a union level, no regular level is last
+    -- level, so they all use tiering.
+    maxEntriesInLevels n =
+      sum (map maxEntriesInTieringLevel [1..n])
+    maxEntriesInTieringLevel n =
+      levelNumberToMaxRunSize LevelTiering conf n * LSM.configSizeRatio conf
+
+mTreeIsCompleted :: MTree r -> Bool
+mTreeIsCompleted = \case
+    MLeaf{} -> True
+    MNode{} -> False
 
 
 -- | For simplicity, this is not a recursive structure. We just nest once, or
@@ -612,10 +659,16 @@ expectShape lsm expectedWb expectedLevels = do
         , "actual shape:   " <> show shape
         ]
 
-hasUnionWith :: (MTree Int -> Bool) -> Representation -> Property
-hasUnionWith p rep = do
+hasNoUnionLevel :: Representation -> Property
+hasNoUnionLevel rep = do
     let (_, _, shape) = representationShape rep
-    QC.counterexample "expected suitable Union" $
+    QC.counterexample "expected no union level" $
+      Nothing === shape
+
+hasUnionLevelWith :: (MTree Int -> Bool) -> Representation -> Property
+hasUnionLevelWith p rep = do
+    let (_, _, shape) = representationShape rep
+    QC.counterexample "expected suitable union level" $
       QC.counterexample (show shape) $
         case shape of
           Nothing -> False
