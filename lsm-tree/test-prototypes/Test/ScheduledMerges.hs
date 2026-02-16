@@ -180,12 +180,12 @@ test_merge_again_with_incoming =
 -- | Supplying enough credits for the remaining debt completes the union merge
 -- (as externally observable through 'LSM.remainingUnionDebt'). However, a
 -- special union level remains.
-prop_union_complete :: LSMConfig -> [[(LSM.Key, LSM.Entry)]] -> Property
-prop_union_complete conf kess = length (filter (not . null) kess) > 1 QC.==>
+prop_union_complete :: LSMConfig -> NestedUnionData -> Property
+prop_union_complete conf nestedUnionData =
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
-        ts <- traverse (uncurry $ mkTable tr conf) (zip [LSM.TableId 0..] kess)
-        t <- LSM.unions tr (LSM.TableId (length kess)) ts
+        tidCounter <- newSTRef (LSM.TableId 0)
+        t <- mkNestedUnion tr conf tidCounter nestedUnionData
 
         rep <- dumpRepresentation t
         debt@(UnionDebt x) <- LSM.remainingUnionDebt t
@@ -210,11 +210,61 @@ prop_union_complete conf kess = length (filter (not . null) kess) > 1 QC.==>
         MLeaf{} -> True
         MNode{} -> False
 
-mkTable :: Tracer (ST s) Event -> LSMConfig -> LSM.TableId -> [(LSM.Key, LSM.Entry)] -> ST s (LSM s)
-mkTable tr conf tid ks = do
+
+-- | For simplicity, this is not a recursive structure. We just nest once, or
+-- not at all if there is just a single 'UnionData'.
+newtype NestedUnionData = NestedUnionData [UnionData]
+  deriving stock Show
+  deriving Arbitrary
+    via (QC.NonEmptyList UnionData)
+
+-- | Note that we want at least two inputs, so there is some merging required.
+newtype UnionData = UnionData [TableData]
+  deriving stock Show
+
+unionInputInvariant :: UnionData -> Bool
+unionInputInvariant (UnionData tableInputs) = length tableInputs >= 2
+
+newtype TableData = TableData [(LSM.Key, LSM.Entry)]
+  deriving stock Show
+  deriving Arbitrary
+    via QC.NonEmptyList (LSM.Key, LSM.Entry)
+
+instance Arbitrary UnionData where
+  arbitrary = do
+    len <- QC.oneof [pure 2, QC.chooseInt (3, 6)]
+    UnionData <$> QC.vectorOf len arbitrary
+
+  shrink (UnionData tableInputs) =
+      filter unionInputInvariant (UnionData <$> shrink tableInputs)
+
+mkNestedUnion :: Tracer (ST s) Event -> LSMConfig -> STRef s LSM.TableId
+              -> NestedUnionData -> ST s (LSM s)
+mkNestedUnion tr conf tidCounter (NestedUnionData unionInputs) = do
+    tid <- freshTableId tidCounter
+    ts <- traverse (mkUnion tr conf tidCounter) unionInputs
+    LSM.unions tr tid ts
+
+mkUnion :: Tracer (ST s) Event -> LSMConfig -> STRef s LSM.TableId
+        -> UnionData -> ST s (LSM s)
+mkUnion tr conf tidCounter (UnionData tableInputs) = do
+    tid <- freshTableId tidCounter
+    ts <- traverse (mkTable tr conf tidCounter) tableInputs
+    LSM.unions tr tid ts
+
+mkTable :: Tracer (ST s) Event -> LSMConfig -> STRef s LSM.TableId
+        -> TableData -> ST s (LSM s)
+mkTable tr conf tidCounter (TableData ks) = do
+    tid <- freshTableId tidCounter
     t <- LSM.newWith tr tid conf
     LSM.updates tr t ks
     pure t
+
+freshTableId :: STRef s LSM.TableId -> ST s LSM.TableId
+freshTableId ref = do
+    tid <- readSTRef ref
+    modifySTRef' ref succ
+    pure tid
 
 -------------------------------------------------------------------------------
 -- tests for MergingTree
