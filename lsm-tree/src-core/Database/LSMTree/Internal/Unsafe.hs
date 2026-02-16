@@ -2076,7 +2076,9 @@ tableContentToMergingTree uc seshEnv conf
        in newPendingLevelMerge (sessionRefCtx seshEnv) runs unionmt
   where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
-    levelToPreExistingRuns Level{incomingRun, residentRuns} =
+    levelToPreExistingRuns EmptyLevel =
+        []
+    levelToPreExistingRuns (Level incomingRun residentRuns) =
         case incomingRun of
           Single        r  -> PreExistingRun r
           Merging _ _ _ mr -> PreExistingMergingRun mr

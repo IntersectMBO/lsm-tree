@@ -232,11 +232,13 @@ mkLevelsCache reg lvls = do
       -> Levels m h
       -> m a
     foldRunAndMergeM k1 k2 ls =
-        fmap fold $ forMStrict ls $ \(Level ir rs) -> do
-          incoming <- case ir of
-            Single         r -> k1 r
-            Merging _ _ _ mr -> k2 mr
-          (incoming <>) . fold <$> V.forM rs k1
+        fmap fold $ forMStrict ls $ \case
+          EmptyLevel -> pure mempty
+          Level ir rs -> do
+            incoming <- case ir of
+              Single         r -> k1 r
+              Merging _ _ _ mr -> k2 mr
+            (incoming <>) . fold <$> V.forM rs k1
 
 {-# SPECIALISE rebuildCache ::
      ActionRegistry IO
@@ -309,10 +311,13 @@ type Levels m h = V.Vector (Level m h)
 -- | A level is a sequence of resident runs at this level, prefixed by an
 -- incoming run, which is usually multiple runs that are being merged. Once
 -- completed, the resulting run will become a resident run at this level.
-data Level m h = Level {
-    incomingRun  :: !(IncomingRun m h)
-  , residentRuns :: !(V.Vector (Ref (Run m h)))
-  }
+--
+-- We create empty levels when we migrate a union run (see 'migrateUnionLevel')
+-- but it is too large for the last level. Empty levels then allow us to migrate
+-- it into a larger level without having to fill the levels inbetween.
+data Level m h =
+    Level !(IncomingRun m h) !(V.Vector (Ref (Run m h)))
+  | EmptyLevel
 
 {-# SPECIALISE duplicateLevels :: ActionRegistry IO -> Levels IO h -> IO (Levels IO h) #-}
 duplicateLevels ::
@@ -321,14 +326,14 @@ duplicateLevels ::
   -> Levels m h
   -> m (Levels m h)
 duplicateLevels reg levels =
-    forMStrict levels $ \Level {incomingRun, residentRuns} -> do
-      incomingRun'  <- withRollback reg (duplicateIncomingRun incomingRun) releaseIncomingRun
-      residentRuns' <- forMStrict residentRuns $ \r ->
-                         withRollback reg (dupRef r) releaseRef
-      pure $! Level {
-        incomingRun  = incomingRun',
-        residentRuns = residentRuns'
-      }
+    forMStrict levels $ \case
+      EmptyLevel ->
+        pure EmptyLevel
+      Level incomingRun residentRuns -> do
+        incomingRun'  <- withRollback reg (duplicateIncomingRun incomingRun) releaseIncomingRun
+        residentRuns' <- forMStrict residentRuns $ \r ->
+                           withRollback reg (dupRef r) releaseRef
+        pure $! Level incomingRun' residentRuns'
 
 {-# SPECIALISE releaseLevels :: ActionRegistry IO -> Levels IO h -> IO () #-}
 releaseLevels ::
@@ -337,13 +342,18 @@ releaseLevels ::
   -> Levels m h
   -> m ()
 releaseLevels reg levels =
-    V.forM_ levels $ \Level {incomingRun, residentRuns} -> do
-      delayedCommit reg (releaseIncomingRun incomingRun)
-      V.mapM_ (delayedCommit reg . releaseRef) residentRuns
+    V.forM_ levels $ \case
+      EmptyLevel ->
+        pure ()
+      Level incomingRun residentRuns -> do
+        delayedCommit reg (releaseIncomingRun incomingRun)
+        V.mapM_ (delayedCommit reg . releaseRef) residentRuns
 
 {-# SPECIALISE iforLevelM_ :: Levels IO h -> (LevelNo -> Level IO h -> IO ()) -> IO () #-}
 iforLevelM_ :: Monad m => Levels m h -> (LevelNo -> Level m h -> m ()) -> m ()
-iforLevelM_ lvls k = V.iforM_ lvls $ \i lvl -> k (LevelNo (i + 1)) lvl
+iforLevelM_ lvls k = V.iforM_ lvls $ \i -> \case
+    EmptyLevel  -> pure ()
+    lvl@Level{} -> k (LevelNo (i + 1)) lvl
 
 {-------------------------------------------------------------------------------
   Union level
@@ -673,7 +683,7 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio refCtx root salt uc r0 r
     go ::
          LevelNo
       -> V.Vector (Ref (Run m h))
-      -> V.Vector (Level m h )
+      -> V.Vector (Level m h)
       -> m (V.Vector (Level m h))
     go !ln rs (V.uncons -> Nothing) = do
         traceWith tr $ AtLevel ln TraceAddLevel
@@ -681,6 +691,13 @@ addRunToLevels tr conf@TableConfig{..} resolve hfs hbio refCtx root salt uc r0 r
         let policyForLevel = mergePolicyForLevel confMergePolicy ln V.empty ul
         ir <- newMerge policyForLevel (mergeTypeForLevel V.empty ul) ln rs
         pure $! V.singleton $ Level ir V.empty
+
+    go !ln rs (V.uncons -> Just (EmptyLevel, ls)) = do
+        assert (not (V.null ls)) $ pure ()  -- no trailing empty levels
+        let policyForLevel = mergePolicyForLevel confMergePolicy ln ls ul
+        ir <- newMerge policyForLevel (mergeTypeForLevel ls ul) ln rs
+        pure $! Level ir V.empty `V.cons` ls
+
     go !ln rs' (V.uncons -> Just (Level ir rs, ls)) = do
         r <- expectCompletedMerge ln ir
         case mergePolicyForLevel confMergePolicy ln ls ul of
@@ -972,8 +989,11 @@ supplyCredits ::
   -> Levels m h
   -> m ()
 supplyCredits refCtx conf deposit levels =
-    iforLevelM_ levels $ \ln (Level ir _rs) ->
-      supplyCreditsIncomingRun refCtx conf ln ir deposit
+    iforLevelM_ levels $ \ln -> \case
+      EmptyLevel ->
+        pure ()
+      (Level ir _rs) ->
+        supplyCreditsIncomingRun refCtx conf ln ir deposit
       --TODO: consider tracing supply of credits,
       -- supplyCreditsIncomingRun could easily return the supplied credits
       -- before & after, which may be useful for tracing.

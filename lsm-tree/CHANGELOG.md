@@ -1,5 +1,27 @@
 # Revision history for `lsm-tree`
 
+## Unreleased
+
+### Breaking changes
+
+* Move to snapshot version v2 due to changes to the internal table
+  representation. While this change is backwards compatible (i.e. new code
+  is still able to read old snapshots), be aware that v2 snapshots cannot be
+  read by older versions of `lsm-tree`.
+  See [PR #834](https://github.com/IntersectMBO/lsm-tree/pull/834).
+
+### New features
+
+None
+
+### Minor changes
+
+None
+
+### Bug fixes
+
+None
+
 ## 1.0.0.2 -- 2026-04-24
 
 ### Breaking changes
