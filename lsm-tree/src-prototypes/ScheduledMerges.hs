@@ -1227,9 +1227,16 @@ doLookup wb runs ul k =
 
     -- both regular and union level: submit multiple batches, combine in the end
     lookupBoth tree = do
-        regularAcc <- lookupRegular
-        unionAcc <- lookupUnion tree
-        pure (mergeAcc MergeLevel [regularAcc, unionAcc])
+        getCompletedMergingTree tree >>= \case
+          Just r -> do
+            -- This case is an optimisation over the one below. We only do a
+            -- single batch of lookups, but there's an extra allocation to
+            -- construct the list of runs.
+            pure (lookupBatch k (Just wb) (runs ++ [r]))
+          _ -> do
+            regularAcc <- lookupRegular
+            unionAcc <- lookupUnion tree
+            pure (mergeAcc MergeLevel [regularAcc, unionAcc])
 
 -- | Perform a batch of lookups for a single key. In the real implementation,
 -- this instead takes all keys at once and performs disk I\/O.
