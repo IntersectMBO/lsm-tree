@@ -1198,40 +1198,45 @@ mergeAcc mt = foldl (updateAcc com) Nothing . catMaybes
       MergeLevel -> combine
       MergeUnion -> combineUnion
 
+resultFromAcc :: LookupAcc -> LookupResult Value Blob
+resultFromAcc = \case
+    Nothing           -> NotFound
+    Just (Insert v b) -> Found v b
+    Just (Mupsert v)  -> Found v Nothing
+    Just Delete       -> NotFound
+
 -- | We handle lookups by accumulating results by going through the runs from
 -- most recent to least recent, starting with the write buffer.
 --
 -- In the real implementation, this is done not on an individual 'LookupAcc',
 -- but one for each key, i.e. @Vector (Maybe Entry)@.
 doLookup :: Buffer -> [Run] -> UnionLevel s -> Key -> ST s (LookupResult Value Blob)
-doLookup wb runs ul k = do
-    let acc0 = lookupBatch (Map.lookup k wb) k runs
-    case ul of
-      NoUnion ->
-        pure (convertAcc acc0)
-      Union tree _ -> do
-        treeBatches <- buildLookupTree tree
-        let treeResults = lookupBatch Nothing k <$> treeBatches
-        pure $ convertAcc $ foldLookupTree $
-          if null wb && null runs
-          then treeResults
-          else LookupNode MergeLevel [LookupBatch acc0, treeResults ]
+doLookup wb runs ul k =
+    fmap resultFromAcc $
+      case ul of
+        NoUnion                             -> lookupRegular
+        Union tree _ | null wb && null runs -> lookupUnion tree
+        Union tree _                        -> lookupBoth tree
   where
-    convertAcc :: LookupAcc -> LookupResult Value Blob
-    convertAcc = \case
-        Nothing           -> NotFound
-        Just (Insert v b) -> Found v b
-        Just (Mupsert v)  -> Found v Nothing
-        Just Delete       -> NotFound
+    lookupRegular =
+        pure (lookupBatch k (Just wb) runs)
 
--- | Perform a batch of lookups, accumulating the result onto an initial
--- 'LookupAcc'.
---
--- In a real implementation, this would take all keys at once and be in IO.
-lookupBatch :: LookupAcc -> Key -> [Run] -> LookupAcc
-lookupBatch acc k rs =
+    lookupUnion tree = do
+        treeBatches <- buildLookupTree tree
+        pure (foldLookupTree (lookupBatch k Nothing <$> treeBatches))
+
+    -- both regular and union level: submit multiple batches, combine in the end
+    lookupBoth tree = do
+        regularAcc <- lookupRegular
+        unionAcc <- lookupUnion tree
+        pure (mergeAcc MergeLevel [regularAcc, unionAcc])
+
+-- | Perform a batch of lookups for a single key. In the real implementation,
+-- this instead takes all keys at once and performs disk I\/O.
+lookupBatch :: Key -> Maybe Buffer -> [Run] -> LookupAcc
+lookupBatch k mwb rs =
     let entries = [entry | r <- rs, Just entry <- [Map.lookup k r]]
-    in foldl (updateAcc combine) acc entries
+    in foldl (updateAcc combine) (Map.lookup k =<< mwb) entries
 
 data LookupTree a = LookupBatch a
                   | LookupNode TreeMergeType [LookupTree a]
