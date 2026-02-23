@@ -2,16 +2,17 @@
 
 ## Installation requirements
 
-Different OS distributions have different installation requirements.
+Different OS distributions have different installation requirements. We recommend
+using [GHCup](https://www.haskell.org/ghcup/) to manage your Haskell toolchain
+(GHC, Cabal, etc.).
 
 ### Linux:
-We recommend installing the `pkgconfig` and `liburing` systems packages, though
-they are not required. However, one would not get the performance benefits of
-performing I/O asynchronously.
+We recommend installing the `pkg-config` and `liburing` systems packages. These
+are required for the high-performance asynchronous I/O backend.
 
 * Ubuntu:
-  ```
-  apt-get install pkg-config liburing-dev
+  ```bash
+  sudo apt-get install pkg-config liburing-dev
   ```
 
 If these packages are not installed, then the `serialblockio` cabal package flag
@@ -64,29 +65,27 @@ There is no strict code style, but try to keep the code style consistent
 throughout the repository and favour readability. Code should be well-documented
 and well-tested.
 
-## Formatting
+## Formatting and Linting
 
-We use `stylish-haskell` to format Haskell files, and we use `cabal-fmt` to
-format `*.cabal` files. We also use `cabal check` to sanity check our cabal
-files. See the helpful scripts in the [scripts folder](./scripts/), and the
-[`stylish-haskell` configuration file](./.stylish-haskell.yaml).
+We use various tools to maintain code quality and consistency. See the helpful
+scripts in the [scripts folder](./scripts/).
 
-To perform a pre-commit code formatting pass, run one of the following:
+### Haskell Code
+We use `stylish-haskell` for formatting and `hlint` for linting.
+* Format: `./scripts/format-stylish-haskell.sh`
+* Lint: `./scripts/lint-hlint.sh`
 
-  *  If you prefer `fd` and have it installed on your system:
-     ```
-     ./format-stylish-fd.sh
-     ./format-cabal-fd.sh
-     ./check-cabal.sh
-     ./haddocks.sh
-     ```
+### Cabal Files
+We use `cabal-fmt` for formatting and `cabal check` for sanity checks.
+* Format: `./scripts/format-cabal-fmt.sh`
+* Check: `./scripts/lint-cabal.sh`
 
-  *  Otherwise using Unix `find`:
-     ```
-     ./format-stylish-find.sh
-     ./format-cabal-find.sh
-     ./check-cabal.sh
-     ./haddocks.sh
+### Other Linters
+* Shell scripts: `./scripts/lint-shellcheck.sh`
+* GitHub Actions: `./scripts/lint-actionlint.sh`
+
+### Documentation
+* Check Haddocks: `./scripts/generate-haddock.sh`
 
 ## Pull requests
 
