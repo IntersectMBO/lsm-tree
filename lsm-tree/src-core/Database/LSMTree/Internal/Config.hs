@@ -99,13 +99,22 @@ For a detailed discussion of fine-tuning the table configuration, see [Fine-tuni
     longer than others. The default is to use a large batch size.
 -}
 data TableConfig = TableConfig {
+    -- | The /merge policy/ balances the performance of lookups against the performance of updates.
     confMergePolicy       :: !MergePolicy
+    -- | The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
   , confMergeSchedule     :: !MergeSchedule
+    -- | The /size ratio/ pushes the effects of the merge policy to the extreme.
   , confSizeRatio         :: !SizeRatio
+    -- | The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the database.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
+    -- | The Bloom filter size balances the performance of lookups against the in-memory size of the database.
   , confBloomFilterAlloc  :: !BloomFilterAlloc
+    -- | The /fence-pointer index type/ supports two types of indexes.
   , confFencePointerIndex :: !FencePointerIndexType
+    -- | The /disk cache policy/ supports caching lookup operations using the OS page cache.
   , confDiskCachePolicy   :: !DiskCachePolicy
+    -- | The merge batch size balances the maximum latency of individual update
+    -- operations, versus the latency of a sequence of update operations.
   , confMergeBatchSize    :: !MergeBatchSize
   }
   deriving stock (Show, Eq)

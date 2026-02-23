@@ -94,20 +94,12 @@ module Database.LSMTree.Simple (
     SnapshotLabel (..),
 
     -- * Table Configuration #table_configuration#
-    TableConfig (
-        confMergePolicy,
-        confSizeRatio,
-        confWriteBufferAlloc,
-        confBloomFilterAlloc,
-        confFencePointerIndex,
-        confDiskCachePolicy,
-        confMergeSchedule
-    ),
+    TableConfig (..),
     MergePolicy (LazyLevelling),
     SizeRatio (Four),
     WriteBufferAlloc (AllocNumEntries),
-    BloomFilterAlloc (AllocFixed, AllocRequestFPR),
-    FencePointerIndexType (OrdinaryIndex, CompactIndex),
+    BloomFilterAlloc (..),
+    FencePointerIndexType (..),
     DiskCachePolicy (..),
     MergeSchedule (..),
     MergeBatchSize (..),
@@ -125,9 +117,9 @@ module Database.LSMTree.Simple (
 
     -- * Key\/Value Serialisation #key_value_serialisation#
     RawBytes (RawBytes),
-    SerialiseKey (serialiseKey, deserialiseKey),
+    SerialiseKey (..),
     SerialiseKeyOrderPreserving,
-    SerialiseValue (serialiseValue, deserialiseValue),
+    SerialiseValue (..),
 
     -- ** Key\/Value Serialisation Property Tests #key_value_serialisation_property_tests#
     serialiseKeyIdentity,

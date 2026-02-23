@@ -110,23 +110,14 @@ module Database.LSMTree (
   Salt,
 
   -- * Table Configuration #table_configuration#
-  TableConfig (
-    confMergePolicy,
-    confSizeRatio,
-    confWriteBufferAlloc,
-    confBloomFilterAlloc,
-    confFencePointerIndex,
-    confDiskCachePolicy,
-    confMergeSchedule,
-    confMergeBatchSize
-  ),
+  TableConfig (..),
   defaultTableConfig,
   MergePolicy (LazyLevelling),
   MergeSchedule (..),
   SizeRatio (Four),
   WriteBufferAlloc (AllocNumEntries),
-  BloomFilterAlloc (AllocFixed, AllocRequestFPR),
-  FencePointerIndexType (OrdinaryIndex, CompactIndex),
+  BloomFilterAlloc (..),
+  FencePointerIndexType (..),
   DiskCachePolicy (..),
   MergeBatchSize (..),
 
@@ -143,9 +134,9 @@ module Database.LSMTree (
 
   -- * Key\/Value Serialisation #key_value_serialisation#
   RawBytes (RawBytes),
-  SerialiseKey (serialiseKey, deserialiseKey),
+  SerialiseKey (..),
   SerialiseKeyOrderPreserving,
-  SerialiseValue (serialiseValue, deserialiseValue),
+  SerialiseValue (..),
 
   -- ** Key\/Value Serialisation Property Tests #key_value_serialisation_property_tests#
   serialiseKeyIdentity,
