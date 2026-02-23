@@ -233,15 +233,15 @@ import           Database.LSMTree.Internal.Vector
   entries both for the first and subsequent pages of a larger-than-page entry.
   The natural thing to do is have each of these subsequent primary index
   entries contain the same key prefix value. This means a binary search will
-  find the /last/ entry in a run of equal prefix values.
+  find the /last/ entry in a sequence of equal prefix values.
 
-  What leads to complexity is that we will /also/ get runs of equal values if
+  What leads to complexity is that we will /also/ get sequences of equal values if
   we have clashes between pages (as discussed above). So in the general case
-  we may have a run of equal values made up of a mixture of clashes and
+  we may have a sequence of equal values made up of a mixture of clashes and
   larger-than-page entries.
 
   So the general situation is that after a binary search we have found the
-  end of what may turn out to be a run of clashes and larger-than-page values
+  end of what may turn out to be a sequence of clashes and larger-than-page values
   and we must disambigutate and return the appropriate single page (for the
   ordinary case) or an interval of pages (for the LTP case).
 
@@ -251,13 +251,13 @@ import           Database.LSMTree.Internal.Vector
   counter-intuitive but it leads to a simpler mathematical definition (below).
 
   The search algorithm involves searching backwards in the clash bits to find
-  the beginning of the run of entries that are involved. To establish which
-  entry within the run is the right one to return, we can consult the tie
+  the beginning of the sequence of entries that are involved. To establish which
+  entry within the sequence is the right one to return, we can consult the tie
   breaker map by looking for the biggest entry that is less than or equal to
-  the full search key. This may then point to an index within the run of
+  the full search key. This may then point to an index within the sequence of
   clashing entries, in which case this is the right entry, but it may also
   point to an earlier and thus irrelevant entry, in which case the first entry
-  in the run is the right one.
+  in the sequence is the right one.
 
   Note that this second case also covers the case of a single non-clashing LTP.
 
