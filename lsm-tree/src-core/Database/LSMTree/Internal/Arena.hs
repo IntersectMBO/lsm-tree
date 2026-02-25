@@ -1,6 +1,8 @@
 {-# LANGUAGE CPP             #-}
 {-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# OPTIONS_HADDOCK not-home #-}
 module Database.LSMTree.Internal.Arena (
     ArenaManager,
@@ -105,7 +107,7 @@ newArena (ArenaManager arenas) = do
             curr <- newBlock >>= newMVar
             free <- newMutVar []
             full <- newMutVar []
-            pure Arena {..}
+            pure Arena { curr = curr, free = free, full = full}
 
 {-# SPECIALISE
     closeArena :: ArenaManager s -> Arena s -> ST s ()
@@ -132,10 +134,10 @@ scrambleArena :: PrimMonad m => Arena (PrimState m) -> m ()
 #ifndef NO_IGNORE_ASSERTS
 scrambleArena _ = pure ()
 #else
-scrambleArena Arena {..} = do
-    readMVar curr >>= scrambleBlock
-    readMutVar full >>= mapM_ scrambleBlock
-    readMutVar free >>= mapM_ scrambleBlock
+scrambleArena arena = do
+    readMVar arena.curr >>= scrambleBlock
+    readMutVar arena.full >>= mapM_ scrambleBlock
+    readMutVar arena.free >>= mapM_ scrambleBlock
 
 {-# SPECIALISE
     scrambleBlock :: Block s -> ST s ()
@@ -157,18 +159,18 @@ scrambleBlock (Block _ mba) = do
   #-}
 -- | Reset arena, i.e. return used blocks to free list.
 resetArena :: PrimMonad m => Arena (PrimState m) -> m ()
-resetArena Arena {..} = do
-    Block off mba <- takeMVar curr
+resetArena arena = do
+    Block off mba <- takeMVar arena.curr
 
     -- reset current block
     writePrimVar off 0
 
     -- move full block to free blocks.
     -- block's offset will be reset in 'newBlockWithFree'
-    full' <- atomicModifyMutVar' full $ \xs -> ([], xs)
-    atomicModifyMutVar' free $ \xs -> (full' <> xs, ())
+    full' <- atomicModifyMutVar' arena.full $ \xs -> ([], xs)
+    atomicModifyMutVar' arena.free $ \xs -> (full' <> xs, ())
 
-    putMVar curr $! Block off mba
+    putMVar arena.curr $! Block off mba
 
 -- | Create unmanaged arena.
 --
@@ -205,9 +207,9 @@ allocateFromArena !arena !size !alignment =
   #-}
 -- TODO!? this is not async exception safe
 allocateFromArena' :: PrimMonad m => Arena (PrimState m)-> Size -> Alignment -> m (Offset, MutableByteArray (PrimState m))
-allocateFromArena' arena@Arena { .. } !size !alignment = do
+allocateFromArena' arena !size !alignment = do
     -- take current block, lock the arena
-    curr'@(Block off mba) <- takeMVar curr
+    curr'@(Block off mba) <- takeMVar arena.curr
 
     off' <- readPrimVar off
     let !ali = alignment - 1
@@ -219,18 +221,18 @@ allocateFromArena' arena@Arena { .. } !size !alignment = do
         -- * update offset
         writePrimVar off end
         -- * release lock
-        putMVar curr curr'
+        putMVar arena.curr curr'
         -- * return data
         pure (off'', mba)
 
     else do
         -- doesn't fit into current block:
         -- * move current block into full
-        atomicModifyMutVar' full (\xs -> (curr' : xs, ()))
+        atomicModifyMutVar' arena.full (\xs -> (curr' : xs, ()))
         -- * allocate new block
-        new <- newBlockWithFree free
+        new <- newBlockWithFree arena.free
         -- * set new block as current, release the lock
-        putMVar curr new
+        putMVar arena.curr new
         -- * go again
         allocateFromArena' arena size alignment
 
