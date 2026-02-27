@@ -1,5 +1,10 @@
 # Revision history for `lsm-tree`
 
+## Unreleased
+
+* NON-BREAKING: Support `io-classes ^>=1.9` and `^>=1.10`. See issue   [#812](https://github.com/IntersectMBO/lsm-tree/issues/812).
+
+
 ## 1.0.0.1 -- 2025-12-03
 
 * PATCH: support `filepath-1.4`. See PR

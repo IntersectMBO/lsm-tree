@@ -1,5 +1,9 @@
 # Revision history for blockio
 
+## Unreleased
+* NON-BREAKING: Support `io-classes ^>=1.9` and `^>=1.10`. See issue
+  [#812](https://github.com/IntersectMBO/lsm-tree/issues/812).
+
 ## 0.1.1.1 -- 2025-12-10
 
 * PATCH: Support `unix-2.8.4`. See PR
