@@ -415,12 +415,17 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
       case mergePolicyForLevel ln ls ul of
         LevelLevelling -> do
           case (ir, mrs) of
-            -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size range already
+            -- A single incoming run (which didn't need merging) in a levelling
+            -- level can be created one of two ways:
+            -- 1. when a levelling level is full, so the run gets promoted to
+            --    the new last level
+            -- 2. when the union level gets migrated.
+            --
+            -- In the latter case, it can be arbitrarily small.
             (Single r, m) -> do
               assertST $ case m of CompletedMerge{} -> True
                                    OngoingMerge{}   -> False
-              assertST $ runToLevelNumber LevelLevelling conf r == ln
+              assertST $ runToLevelNumber LevelLevelling conf r <= ln
 
             -- A completed merge for levelling can be of almost any size at all!
             -- It can be smaller, due to deletions in the last level. But it
@@ -1060,20 +1065,23 @@ update :: Tracer (ST s) Event -> LSM s -> Key -> Entry -> ST s ()
 update tr (LSMHandle tid scr conf lsmr) k entry = do
     traceWith tr $ UpdateEvent tid k entry
     sc <- readSTRef scr
-    content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
+    content@(LSMContent wb ls ul) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels (NominalCredit 1) ls
     invariant conf content
     let wb' = insertWriteBuffer k entry wb
     if writeBufferSize wb' >= maxWriteBufferSize conf
       then do
+        -- The merging tree might have become completed. If so, we want to
+        -- migrate it now, so it can become part of new merges.
+        (ls', ul') <- migrateUnionLevel (LevelEvent tid >$< tr) sc conf ls ul
         let r = flushWriteBuffer wb'
-        ls' <- increment (LevelEvent tid >$< tr) sc conf r ls unionLevel
-        let content' = LSMContent emptyWriteBuffer ls' unionLevel
+        ls'' <- increment (LevelEvent tid >$< tr) sc conf r ls' ul'
+        let content' = LSMContent emptyWriteBuffer ls'' ul'
         invariant conf content'
         writeSTRef lsmr content'
       else
-        writeSTRef lsmr (LSMContent wb' ls unionLevel)
+        writeSTRef lsmr (LSMContent wb' ls ul)
 
 supplyMergeCredits :: LSM s -> NominalCredit -> ST s ()
 supplyMergeCredits (LSMHandle _ scr conf lsmr) credits = do
@@ -1151,12 +1159,17 @@ newtype UnionDebt = UnionDebt Debt
 
 -- | Return the current union debt. This debt can be reduced until it is paid
 -- off using 'supplyUnionCredits'.
+--
+-- As long as there is a union level, there is a non-zero debt. This makes it
+-- clear that 'supplyUnionCredits' should still be called to trigger migration,
+-- even if the merging tree itself has been completed. This becomes necessary
+-- when the tree has been completed by operations on another table via sharing.
 remainingUnionDebt :: LSM s -> ST s UnionDebt
 remainingUnionDebt (LSMHandle _ _ _conf lsmr) = do
     LSMContent _ _ ul <- readSTRef lsmr
     UnionDebt <$> case ul of
       NoUnion      -> pure 0
-      Union tree d -> checkedUnionDebt tree d
+      Union tree d -> (+1) <$> checkedUnionDebt tree d
 
 -- | Credits are used to pay off 'UnionDebt', completing a 'union' in the
 -- process.
@@ -1177,43 +1190,28 @@ newtype UnionCredits = UnionCredits Credit
 -- This function returns any surplus of union credits as /leftover/ credits when
 -- a union has finished. In particular, if the returned number of credits is
 -- non-negative, then the union is finished.
-supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
-supplyUnionCredits (LSMHandle _ scr conf lsmr) (UnionCredits credits)
+supplyUnionCredits :: Tracer (ST s) Event -> LSM s -> UnionCredits -> ST s UnionCredits
+supplyUnionCredits tr (LSMHandle tid scr conf lsmr) (UnionCredits credits)
   | credits <= 0 = pure (UnionCredits 0)
   | otherwise = do
-    content@(LSMContent _ _ ul) <- readSTRef lsmr
+    content@(LSMContent wb ls ul) <- readSTRef lsmr
     UnionCredits <$> case ul of
       NoUnion ->
         pure credits
       Union tree debtRef -> do
+        invariant conf content
+        sc <- readSTRef scr
         modifySTRef' scr (+1)
         _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
         c' <- supplyCreditsMergingTree credits tree
         debt' <- checkedUnionDebt tree debtRef
         when (debt' > 0) $
           assertST $ c' == 0  -- should have spent these credits
-        invariant conf content
+        (ls', ul') <- migrateUnionLevel (LevelEvent tid >$< tr) sc conf ls ul
+        let content' = LSMContent wb ls' ul'
+        invariant conf content'
+        writeSTRef lsmr content'
         pure c'
-
--- TODO: At some point the completed merging tree should to moved into the
--- regular levels, so it can be merged with other runs and last level merges can
--- happen again to drop deletes. Also, lookups then don't need to handle the
--- merging tree any more. There are two possible strategies:
---
--- 1. As soon as the merging tree completes, move the resulting run to the
---    regular levels. However, its size does generally not fit the last level,
---    which requires relaxing 'invariant' and adjusting 'increment'.
---
---    If the run is much larger than the resident and incoming runs of the last
---    level, it should also not be included into a merge yet, as that merge
---    would be expensive, but offer very little potential for compaction (the
---    run from the merging tree is already compacted after all). So it needs to
---    be bumped to the next level instead.
---
--- 2. Initially leave the completed run in the union level. Then every time a
---    new last level merge is created in 'increment', check if there is a
---    completed run in the union level with a size that fits the new merge. If
---    yes, move it over.
 
 -- | Like 'remainingDebtMergingTree', but additionally asserts that the debt
 -- never increases.
@@ -1224,6 +1222,52 @@ checkedUnionDebt tree debtRef = do
     assertST $ debt <= storedDebt
     writeSTRef debtRef debt
     pure debt
+
+-- | At some point the completed merging tree should become part of the regular
+-- levels, so it can be merged with other runs. Otherwise, we could never
+-- perform a last level merge, which is especially important for compaction, as
+-- it allows us to drop deletes. Also, lookups then don't need to consider the
+-- merging tree any more.
+--
+-- We can do this as soon as the tree is completed by appending a new regular
+-- level containing only the run that resulted from the tree merge. If the
+-- run is too large to fit into the level directly after the existing ones, we
+-- first add empty levels.
+migrateUnionLevel :: forall s. Tracer (ST s) (EventAt EventDetail)
+                  -> Counter -> LSMConfig -> Levels s -> UnionLevel s
+                  -> ST s (Levels s, UnionLevel s)
+migrateUnionLevel _ _ _ ls NoUnion = do
+    -- nothing to do
+    pure (ls, NoUnion)
+migrateUnionLevel tr sc conf ls ul@(Union t _) =
+    getCompletedMergingTree t >>= \case
+      Nothing ->
+        -- Still in progress, leave it.
+        pure (ls, ul)
+      Just r -> do
+        -- Before migration, there is usually a last regular (i.e. non-union)
+        -- level, which uses tiering. We could potentially add the completed
+        -- union (or rather the run it resulted in) directly to the resident
+        -- tiering runs of that last regular level, but that would clash with
+        -- some invariants. Instead, we always create a new last level, which
+        -- only makes a small difference, but keeps the invariants simpler.
+        --
+        -- Also note even empty runs get migrated. This doesn't violate any
+        -- invariants, as levelling levels can already contain empty runs.
+        -- Dropping the run would be more complicated since the previous level
+        -- then suddenly becomes the last one while potentially still containing
+        -- midlevel merges.
+        let levelNo = maximum
+              [ 2              -- First level is tiering, don't migrate there.
+              , length ls + 1  -- Must come after existing levels.
+              , runToLevelNumber LevelLevelling conf r
+                               -- Run must not be too large for the level.
+              ]
+        let emptyLevels = replicate (levelNo - 1 - length ls) EmptyLevel
+        let levels = ls ++ emptyLevels ++ [Level (Single r) []]
+        assertST $ length levels == levelNo
+        traceWith tr $ EventAt sc levelNo $ UnionLevelMigratedEvent r
+        pure (levels, NoUnion)
 
 -------------------------------------------------------------------------------
 -- Lookups
@@ -1835,6 +1879,12 @@ expectCompletedChildren (PendingMerge mt prs trees) = do
 expectCompletedMergingTree :: HasCallStack => MergingTree s -> ST s Run
 expectCompletedMergingTree = expectInvariant . isCompletedMergingTree
 
+getCompletedMergingTree :: MergingTree s -> ST s (Maybe Run)
+getCompletedMergingTree t =
+    evalInvariant (isCompletedMergingTree t) >>= \case
+      Left _  -> pure Nothing
+      Right r -> pure (Just r)
+
 -------------------------------------------------------------------------------
 -- Measurements
 --
@@ -1991,6 +2041,8 @@ data EventDetail =
         mergeSize   :: Int
       }
   | SingleRunCompletedEvent Run
+
+  | UnionLevelMigratedEvent Run
 
   | RunTooSmallForLevelEvent MergePolicyForLevel Run
   | LevelIsFullEvent MergePolicyForLevel
