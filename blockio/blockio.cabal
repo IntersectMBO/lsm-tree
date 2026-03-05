@@ -84,10 +84,10 @@ library
     System.FS.BlockIO.Serial
 
   build-depends:
-    , base        >=4.16  && <4.22
+    , base        >=4.16  && <4.23
     , deepseq     ^>=1.4  || ^>=1.5
     , fs-api      ^>=0.4
-    , io-classes  ^>=1.6  || ^>=1.7 || ^>=1.8.0.1
+    , io-classes  ^>=1.6  || ^>=1.7 || ^>=1.8.0.1 || ^>=1.9
     , primitive   ^>=0.9
     , vector      ^>=0.13
 
@@ -144,12 +144,12 @@ library sim
   hs-source-dirs:  src-sim
   exposed-modules: System.FS.BlockIO.Sim
   build-depends:
-    , base                   >=4.16  && <4.22
+    , base                   >=4.16  && <4.23
     , blockio
     , bytestring             ^>=0.11 || ^>=0.12
     , fs-api                 ^>=0.4
     , fs-sim                 ^>=0.4
-    , io-classes             ^>=1.6  || ^>=1.7  || ^>=1.8.0.1
+    , io-classes             ^>=1.6  || ^>=1.7  || ^>=1.8.0.1 || ^>=1.9
     , io-classes:strict-stm
     , primitive              ^>=0.9
 
