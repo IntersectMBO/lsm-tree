@@ -84,7 +84,7 @@ jobs:
       run: ./scripts/generate-haddock.sh
 
     - name: 📦 Upload documentation
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: haddocks-${{ runner.os }}-ghc-${{ env.ghc-version }}-cabal-${{ env.cabal-version }}
         path: haddocks
@@ -113,7 +113,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: 📦 Download documentation
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: haddocks-${{ runner.os }}-ghc-${{ env.ghc-version }}-cabal-${{ env.cabal-version }}
           path: haddocks
