@@ -513,6 +513,10 @@ common warnings
 
   ghc-options: -Werror=missing-deriving-strategies
 
+  -- In ghc-9.14 the `pattern` namespace specifier is deprecated.
+  if impl(ghc >=9.14)
+    ghc-options: -Wno-pattern-namespace-specifier
+
 common wno-x-partial
   if impl(ghc >=9.8)
     -- No errors for x-partial functions. We might remove this in the future if
@@ -533,7 +537,7 @@ common language
     ViewPatterns
 
 library
-  import:          language, warnings, wno-x-partial
+  import:          language, warnings
   hs-source-dirs:  src
   exposed-modules:
     Database.LSMTree
@@ -690,6 +694,12 @@ library extras
 
 test-suite lsm-tree-test
   import:          language, warnings, wno-x-partial
+
+  -- ghc-9.14 gives redundant constraint warnings on some constraints
+  -- that are needed for earlier compilers.
+  if impl(ghc >=9.14)
+    ghc-options: -Wno-redundant-constraints
+
   type:            exitcode-stdio-1.0
   hs-source-dirs:  test
   main-is:         Main.hs
@@ -851,7 +861,7 @@ benchmark lsm-tree-micro-bench
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 benchmark lsm-tree-bench-bloomfilter
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-bloomfilter.hs
@@ -868,7 +878,7 @@ benchmark lsm-tree-bench-bloomfilter
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 benchmark lsm-tree-bench-lookups
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-lookups.hs
@@ -891,7 +901,7 @@ benchmark lsm-tree-bench-lookups
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 library mcg
-  import:          language, warnings, wno-x-partial
+  import:          language, warnings
   visibility:      private
   hs-source-dirs:  src-mcg
   exposed-modules: MCG
@@ -900,7 +910,7 @@ library mcg
     , primes
 
 benchmark unions-bench
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench-unions
   main-is:        Main.hs
@@ -934,7 +944,7 @@ common measure-batch-latency
     cpp-options: -DMEASURE_BATCH_LATENCY
 
 benchmark utxo-bench
-  import:         language, warnings, wno-x-partial, measure-batch-latency
+  import:         language, warnings, measure-batch-latency, wno-x-partial
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        utxo-bench.hs
@@ -966,7 +976,7 @@ flag rocksdb
   manual:      False
 
 benchmark utxo-rocksdb-bench
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        utxo-rocksdb-bench.hs
@@ -1008,7 +1018,7 @@ library rocksdb
     , indexed-traversable
 
 library kmerge
-  import:          language, warnings, wno-x-partial
+  import:          language, warnings
   visibility:      private
   hs-source-dirs:  src-kmerge
   exposed-modules:
@@ -1058,7 +1068,7 @@ benchmark kmerge-bench
     , vector
 
 test-suite map-range-test
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: test
   main-is:        map-range-test.hs
@@ -1172,8 +1182,7 @@ test-suite demo
     , fs-api
     , fs-sim
     , io-classes
-    -- Version 1.10 drops the flushEventLog method of MonadEventlog.
-    , io-sim < 1.10
+    , io-sim         <1.10
     , lsm-tree
     , primitive
     , vector
