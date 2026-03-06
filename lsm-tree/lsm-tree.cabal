@@ -513,6 +513,10 @@ common warnings
 
   ghc-options: -Werror=missing-deriving-strategies
 
+  -- In ghc-9.14 the `pattern` namespace specifier is deprecated.
+  if impl(ghc >=9.14)
+    ghc-options: -Wno-pattern-namespace-specifier
+
 common wno-x-partial
   if impl(ghc >=9.8)
     -- No errors for x-partial functions. We might remove this in the future if
@@ -533,19 +537,19 @@ common language
     ViewPatterns
 
 library
-  import:          language, warnings, wno-x-partial
+  import:          language, warnings
   hs-source-dirs:  src
   exposed-modules:
     Database.LSMTree
     Database.LSMTree.Simple
 
   build-depends:
-    , base                    >=4.16   && <4.22
+    , base                    >=4.16   && <4.23
     , blockio                 ^>=0.1
     , contra-tracer           ^>=0.1   || ^>=0.2
     , deepseq                 ^>=1.4   || ^>=1.5
     , fs-api                  ^>=0.4
-    , io-classes              ^>=1.6   || ^>=1.7 || ^>=1.8.0.1
+    , io-classes              ^>=1.6   || ^>=1.7 || ^>=1.8.0.1 || ^>=1.9
     , io-classes:strict-mvar
     , lsm-tree:control
     , lsm-tree:core
@@ -617,19 +621,19 @@ library core
     Database.LSMTree.Internal.WriteBufferWriter
 
   build-depends:
-    , base                    >=4.16      && <4.22
+    , base                    >=4.16      && <4.23
     , bitvec                  ^>=1.1
     , blockio                 ^>=0.1
     , bloomfilter-blocked     ^>=0.1
     , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
     , cborg                   ^>=0.2.10.0
-    , containers              ^>=0.6      || ^>=0.7
+    , containers              ^>=0.6      || ^>=0.7      || ^>=0.8
     , contra-tracer           ^>=0.1      || ^>=0.2
     , crc32c                  ^>=0.2.1
     , deepseq                 ^>=1.4      || ^>=1.5
     , filepath                ^>=1.4      || ^>=1.5
     , fs-api                  ^>=0.4
-    , io-classes              ^>=1.6      || ^>=1.7      || ^>=1.8.0.1
+    , io-classes              ^>=1.6      || ^>=1.7      || ^>=1.8.0.1 || ^>=1.9
     , io-classes:strict-mvar
     , lsm-tree:control
     , lsm-tree:kmerge
@@ -663,7 +667,7 @@ library extras
     Database.LSMTree.Extras.UTxO
 
   build-depends:
-    , base                    >=4.16 && <4.22
+    , base                    >=4.16 && <4.23
     , bitvec
     , blockio
     , bytestring
@@ -690,6 +694,12 @@ library extras
 
 test-suite lsm-tree-test
   import:          language, warnings, wno-x-partial
+
+  -- ghc-9.14 gives redundant constraint warnings on some constraints
+  -- that are needed for earlier compilers.
+  if impl(ghc >=9.14)
+    ghc-options: -Wno-redundant-constraints
+
   type:            exitcode-stdio-1.0
   hs-source-dirs:  test
   main-is:         Main.hs
@@ -851,7 +861,7 @@ benchmark lsm-tree-micro-bench
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 benchmark lsm-tree-bench-bloomfilter
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-bloomfilter.hs
@@ -868,7 +878,7 @@ benchmark lsm-tree-bench-bloomfilter
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 benchmark lsm-tree-bench-lookups
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        lsm-tree-bench-lookups.hs
@@ -891,7 +901,7 @@ benchmark lsm-tree-bench-lookups
   ghc-options:    -rtsopts -with-rtsopts=-T -threaded
 
 library mcg
-  import:          language, warnings, wno-x-partial
+  import:          language, warnings
   visibility:      private
   hs-source-dirs:  src-mcg
   exposed-modules: MCG
@@ -900,7 +910,7 @@ library mcg
     , primes
 
 benchmark unions-bench
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench-unions
   main-is:        Main.hs
@@ -934,7 +944,7 @@ common measure-batch-latency
     cpp-options: -DMEASURE_BATCH_LATENCY
 
 benchmark utxo-bench
-  import:         language, warnings, wno-x-partial, measure-batch-latency
+  import:         language, warnings, measure-batch-latency, wno-x-partial
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        utxo-bench.hs
@@ -966,7 +976,7 @@ flag rocksdb
   manual:      False
 
 benchmark utxo-rocksdb-bench
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: bench/macro
   main-is:        utxo-rocksdb-bench.hs
@@ -1008,7 +1018,7 @@ library rocksdb
     , indexed-traversable
 
 library kmerge
-  import:          language, warnings, wno-x-partial
+  import:          language, warnings
   visibility:      private
   hs-source-dirs:  src-kmerge
   exposed-modules:
@@ -1026,7 +1036,7 @@ test-suite kmerge-test
   hs-source-dirs: test
   main-is:        kmerge-test.hs
   build-depends:
-    , base              >=4.16 && <4.22
+    , base              >=4.16 && <4.23
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -1045,7 +1055,7 @@ benchmark kmerge-bench
   main-is:        kmerge-test.hs
   cpp-options:    -DKMERGE_BENCHMARKS
   build-depends:
-    , base              >=4.16 && <4.22
+    , base              >=4.16 && <4.23
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -1058,12 +1068,12 @@ benchmark kmerge-bench
     , vector
 
 test-suite map-range-test
-  import:         language, warnings, wno-x-partial
+  import:         language, warnings
   type:           exitcode-stdio-1.0
   hs-source-dirs: test
   main-is:        map-range-test.hs
   build-depends:
-    , base              >=4.16 && <4.22
+    , base              >=4.16 && <4.23
     , bytestring
     , containers
     , lsm-tree:core
@@ -1127,9 +1137,9 @@ library control
     Control.RefCount
 
   build-depends:
-    , base                   >=4.16 && <4.22
+    , base                   >=4.16 && <4.23
     , deepseq                ^>=1.4 || ^>=1.5
-    , io-classes             ^>=1.6 || ^>=1.7 || ^>=1.8.0.1
+    , io-classes             ^>=1.6 || ^>=1.7 || ^>=1.8.0.1 || ^>=1.9
     , io-classes:strict-stm
     , primitive              ^>=0.9
 
@@ -1172,7 +1182,7 @@ test-suite demo
     , fs-api
     , fs-sim
     , io-classes
-    , io-sim
+    , io-sim         <1.10
     , lsm-tree
     , primitive
     , vector

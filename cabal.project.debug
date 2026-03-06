@@ -38,3 +38,42 @@ if impl(ghc >=9.4.6 && <9.5 || >=9.6.3)
   package fs-sim
     ghc-options: -fcheck-prim-bounds
 
+-- Eariler versions fail to compile due to symbol name clash.
+constraints:
+  , nonempty-containers >= 0.3.2
+
+-- cabal-allow-newer
+if impl (ghc >= 9.14)
+  allow-newer:
+    , aeson:QuickCheck
+    , aeson:containers
+    , aeson:semialign
+    , aeson:template-haskell
+    , aeson:time
+    , binary-orphans:base
+    , blockio-uring:base
+    , boring:base
+    , cborg:base
+    , cborg:containers
+    , data-elevator:base
+    , fs-sim:QuickCheck
+    , indexed-traversable:base
+    , indexed-traversable:containers
+    , indexed-traversable-instances:base
+    , microstache:base
+    , microstache:containers
+    , nonempty-vector:base
+    , quickcheck-instances:QuickCheck
+    , quickcheck-instances:base
+    , quickcheck-instances:these
+    , quickcheck-instances:uuid-types
+    , safe-wild-cards:template-haskell
+    , semialign:base
+    , semialign:containers
+    , serialise:base
+    , serialise:containers
+    , text:base
+    , text:template-haskell
+    , these:base
+    , unix:time
+    , uuid-types:template-haskell
