@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-* NON-BREAKING: Support `io-classes ^>=1.9` and `^>=1.10`. See issue   [#812](https://github.com/IntersectMBO/lsm-tree/issues/812).
+* PATCH: Support `io-classes ^>=1.9` and `^>=1.10`. See PR [#819](https://github.com/IntersectMBO/lsm-tree/pull/819).
 
 
 ## 1.0.0.1 -- 2025-12-03
