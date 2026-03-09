@@ -1,5 +1,12 @@
 # Revision history for `lsm-tree`
 
+<<<<<<< feature/811-modern-record-extensions
+=======
+## Unreleased
+
+* PATCH: Support `io-classes ^>=1.9` and `^>=1.10`. See PR [#819](https://github.com/IntersectMBO/lsm-tree/pull/819).
+
+>>>>>>> main
 
 ## 1.0.0.1 -- 2025-12-03
 
