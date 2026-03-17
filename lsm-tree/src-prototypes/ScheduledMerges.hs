@@ -105,7 +105,7 @@ import           Data.Foldable (for_, toList, traverse_)
 import           Data.Functor.Contravariant
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, maybeToList)
 import           Data.Primitive.Types
 import           Data.STRef
 
@@ -149,7 +149,7 @@ type Counter = Int
 -- | The levels of the table, from most to least recently inserted.
 data LSMContent s =
     LSMContent
-      Buffer          -- ^ write buffer is level 0 of the table, in-memory
+      WriteBuffer     -- ^ write buffer is level 0 of the table, in-memory
       (Levels s)      -- ^ \"regular\" levels 1+, on disk in real implementation
       (UnionLevel s)  -- ^ a potential last level
 
@@ -287,17 +287,33 @@ pattern PendingMerge :: TreeMergeType
                      -> PendingMerge s
 pattern PendingMerge mt prs ts <- (pendingContent -> (mt, prs, ts))
 
-type Run    = Map Key Entry
-type Buffer = Map Key Entry
-
-bufferToRun :: Buffer -> Run
-bufferToRun = id
+newtype Run = Run { runEntries :: Map Key Entry }
+  deriving newtype Show
 
 runSize :: Run -> Int
-runSize = Map.size
+runSize = Map.size . runEntries
 
-bufferSize :: Buffer -> Int
-bufferSize = Map.size
+lookupRun :: Key -> Run -> Maybe Entry
+lookupRun k = Map.lookup k . runEntries
+
+newtype WriteBuffer = WriteBuffer { bufferEntries :: Map Key Entry }
+
+emptyWriteBuffer :: WriteBuffer
+emptyWriteBuffer = WriteBuffer Map.empty
+
+writeBufferSize :: WriteBuffer -> Int
+writeBufferSize = Map.size . bufferEntries
+
+insertWriteBuffer :: Key -> Entry -> WriteBuffer -> WriteBuffer
+insertWriteBuffer k e = WriteBuffer . Map.insertWith combine k e . bufferEntries
+
+lookupWriteBuffer :: Key -> WriteBuffer -> Maybe Entry
+lookupWriteBuffer k = Map.lookup k . bufferEntries
+
+-- | Flush a write buffer. In the real implementation, this involves IO.
+-- Note that we should not never flush an empty write buffer.
+flushWriteBuffer :: WriteBuffer -> Run
+flushWriteBuffer (WriteBuffer m) = assert (not (null m)) (Run m)
 
 type Entry = Update Value Blob
 
@@ -917,8 +933,10 @@ newMergingRun mergeType runs = do
 
 mergek :: IsMergeType t => t -> [Run] -> Run
 mergek t =
-      (if isLastLevel t then Map.filter (/= Delete) else id)
+      Run
+    . (if isLastLevel t then Map.filter (/= Delete) else id)
     . Map.unionsWith (if isUnion t then combineUnion else combine)
+    . map runEntries
 
 -- | Combines two entries that have been performed after another. Therefore, the
 -- newer one overwrites the old one (or modifies it for 'Mupsert'). Only take a
@@ -1005,7 +1023,7 @@ newWith tr tid conf
   | otherwise = do
       traceWith tr $ NewTableEvent tid conf
       c   <- newSTRef 0
-      lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
+      lsm <- newSTRef (LSMContent emptyWriteBuffer [] NoUnion)
       pure (LSMHandle tid c conf lsm)
 
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
@@ -1043,11 +1061,12 @@ update tr (LSMHandle tid scr conf lsmr) k entry = do
     modifySTRef' scr (+1)
     supplyCreditsLevels (NominalCredit 1) ls
     invariant conf content
-    let wb' = Map.insertWith combine k entry wb
-    if bufferSize wb' >= maxWriteBufferSize conf
+    let wb' = insertWriteBuffer k entry wb
+    if writeBufferSize wb' >= maxWriteBufferSize conf
       then do
-        ls' <- increment (LevelEvent tid >$< tr) sc conf (bufferToRun wb') ls unionLevel
-        let content' = LSMContent Map.empty ls' unionLevel
+        let r = flushWriteBuffer wb'
+        ls' <- increment (LevelEvent tid >$< tr) sc conf r ls unionLevel
+        let content' = LSMContent emptyWriteBuffer ls' unionLevel
         invariant conf content'
         writeSTRef lsmr content'
       else
@@ -1112,7 +1131,7 @@ unions tr childTid lsms = do
       Just tree -> do
         debt <- fst <$> remainingDebtMergingTree tree
         Union tree <$> newSTRef debt
-    lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
+    lsmr <- newSTRef (LSMContent emptyWriteBuffer [] unionLevel)
     c    <- newSTRef 0
     pure (LSMHandle childTid c conf lsmr)
 
@@ -1225,9 +1244,9 @@ mergeAcc mt = foldl (updateAcc com) Nothing . catMaybes
 --
 -- In the real implementation, this is done not on an individual 'LookupAcc',
 -- but one for each key, i.e. @Vector (Maybe Entry)@.
-doLookup :: Buffer -> [Run] -> UnionLevel s -> Key -> ST s (LookupResult Value Blob)
+doLookup :: WriteBuffer -> [Run] -> UnionLevel s -> Key -> ST s (LookupResult Value Blob)
 doLookup wb runs ul k = do
-    let acc0 = lookupBatch (Map.lookup k wb) k runs
+    let acc0 = lookupBatch (lookupWriteBuffer k wb) k runs
     case ul of
       NoUnion ->
         pure (convertAcc acc0)
@@ -1235,7 +1254,7 @@ doLookup wb runs ul k = do
         treeBatches <- buildLookupTree tree
         let treeResults = lookupBatch Nothing k <$> treeBatches
         pure $ convertAcc $ foldLookupTree $
-          if null wb && null runs
+          if writeBufferSize wb == 0 && null runs
           then treeResults
           else LookupNode MergeLevel [LookupBatch acc0, treeResults ]
   where
@@ -1252,7 +1271,7 @@ doLookup wb runs ul k = do
 -- In a real implementation, this would take all keys at once and be in IO.
 lookupBatch :: LookupAcc -> Key -> [Run] -> LookupAcc
 lookupBatch acc k rs =
-    let entries = [entry | r <- rs, Just entry <- [Map.lookup k r]]
+    let entries = [entry | r <- rs, Just entry <- [lookupRun k r]]
     in foldl (updateAcc combine) acc entries
 
 data LookupTree a = LookupBatch a
@@ -1642,12 +1661,12 @@ newPendingUnionMerge trees = do
 
 contentToMergingTree :: LSMContent s -> ST s (Maybe (MergingTree s))
 contentToMergingTree (LSMContent wb ls ul) =
-    newPendingLevelMerge (buffers ++ levels) trees
+    newPendingLevelMerge (maybeToList buffer ++ levels) trees
   where
     -- flush the write buffer (but this should not modify the content)
-    buffers
-      | bufferSize wb == 0 = []
-      | otherwise          = [Single (bufferToRun wb)]
+    buffer
+      | writeBufferSize wb == 0 = Nothing
+      | otherwise               = Just (Single (flushWriteBuffer wb))
 
     levels = flip concatMap ls $ \(Level ir rs) -> ir : map Single rs
 
@@ -1812,7 +1831,7 @@ data MTree r = MLeaf r
              | MNode TreeMergeType [MTree r]
   deriving stock (Eq, Foldable, Functor, Show)
 
-allLevels :: LSM s -> ST s (Buffer, [[Run]], Maybe (MTree Run))
+allLevels :: LSM s -> ST s (WriteBuffer, [[Run]], Maybe (MTree Run))
 allLevels (LSMHandle _ _ _conf lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     rs <- flattenLevels ls
@@ -1864,8 +1883,9 @@ logicalValue lsm = do
     (wb, levels, tree) <- allLevels lsm
     let r = mergek
               MergeLevel
-              (wb : concat levels ++ toList (mergeTree <$> tree))
-    pure (Map.mapMaybe justInsert r)
+              (Run (bufferEntries wb)  -- we don't flush, but treat wb as a run
+                : concat levels ++ toList (mergeTree <$> tree))
+    pure (Map.mapMaybe justInsert (runEntries r))
   where
     mergeTree :: MTree Run -> Run
     mergeTree (MLeaf r)     = r
@@ -1875,7 +1895,7 @@ logicalValue lsm = do
     justInsert  Delete      = Nothing
     justInsert (Mupsert v)  = Just (v, Nothing)
 
-type Representation = (Run, [LevelRepresentation], Maybe (MTree Run))
+type Representation = (WriteBuffer, [LevelRepresentation], Maybe (MTree Run))
 
 type LevelRepresentation =
     (Maybe (MergePolicyForLevel, NominalDebt, NominalCredit,
@@ -1905,18 +1925,16 @@ dumpLevel (Level (Merging mp nd ncv (MergingRun mt _ ref)) rs) = do
 representationShape :: Representation
                     -> (Int, [([Int], [Int])], Maybe (MTree Int))
 representationShape (wb, levels, tree) =
-    (summaryRun wb, map summaryLevel levels, fmap (fmap summaryRun) tree)
+    (writeBufferSize wb, map summaryLevel levels, fmap (fmap runSize) tree)
   where
     summaryLevel (mmr, rs) =
       let (ongoing, complete) = summaryMR mmr
-      in (ongoing, complete <> map summaryRun rs)
-
-    summaryRun = runSize
+      in (ongoing, complete <> map runSize rs)
 
     summaryMR = \case
       Nothing                          -> ([], [])
-      Just (_, _, _, _, CompletedMerge r)    -> ([], [summaryRun r])
-      Just (_, _, _, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
+      Just (_, _, _, _, CompletedMerge r)    -> ([], [runSize r])
+      Just (_, _, _, _, OngoingMerge _ rs _) -> (map runSize rs, [])
 
 -------------------------------------------------------------------------------
 -- Tracing
@@ -1986,6 +2004,10 @@ instance (QC.Arbitrary v, QC.Arbitrary b) => QC.Arbitrary (Update v b) where
       , (1, Mupsert <$> QC.arbitrary)
       , (1, pure Delete)
       ]
+
+instance QC.Arbitrary Run where
+  arbitrary = Run <$> QC.arbitrary
+  shrink = map Run . QC.shrink . runEntries
 
 instance QC.Arbitrary LevelMergeType where
   arbitrary = QC.elements [MergeMidLevel, MergeLastLevel]

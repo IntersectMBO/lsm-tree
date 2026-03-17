@@ -528,7 +528,7 @@ instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
 --
 genMergeCreditForRuns :: [NonEmptyRun] -> QC.Gen (MergeDebt, MergeCredit)
 genMergeCreditForRuns rs = do
-      let totalDebt    = sum (map (length . getNonEmptyRun) rs)
+      let totalDebt    = sum (map (runSize . getNonEmptyRun) rs)
       suppliedCredits <- QC.chooseInt (0, totalDebt-1)
       unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
       let spentCredits = suppliedCredits - unspentCredits
@@ -552,7 +552,7 @@ shrinkMergeCreditForRuns :: [NonEmptyRun]
 shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
     [ assert (mergeDebtInvariant md' mc')
       (md', mc')
-    | let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
+    | let totalDebt'    = sum (map (runSize . getNonEmptyRun) rs')
     , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
                                       (totalDebt'-1))
     , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
@@ -567,8 +567,8 @@ shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
     ]
 
 instance Arbitrary NonEmptyRun where
-  arbitrary = NonEmptyRun <$> (arbitrary `QC.suchThat` (not . null))
-  shrink (NonEmptyRun r) = [NonEmptyRun r' | r' <- shrink r, not (null r')]
+  arbitrary = NonEmptyRun <$> (arbitrary `QC.suchThat` (\r -> runSize r > 0))
+  shrink (NonEmptyRun r) = [NonEmptyRun r' | r' <- shrink r, runSize r' > 0]
 
 prop_arbitrarySatisfiesInvariant :: T -> Property
 prop_arbitrarySatisfiesInvariant t =
