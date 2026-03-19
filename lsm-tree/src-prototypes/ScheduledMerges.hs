@@ -397,11 +397,8 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
           -- be slightly larger if a run has been held back (creating a
           -- (T+1)-way merge).
           --
-          -- TODO: This is actually still not really true, but will hold in
-          -- practice. In the pathological case, all runs passed to the next
-          -- level can be factor ((T+1)/T) too large, so holding back there can
-          -- lead to factor ((T+2)/T) etc., until eventually at level 12 a run
-          -- is two levels too large.
+          -- TODO: Holding back runs can theoretically result in runs that are
+          -- more than one size too large. See issue #829.
           assertST $ all (\r -> runToLevelNumber LevelTiering conf r `elem` [ln, ln+1]) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
@@ -1941,7 +1938,7 @@ representationShape (wb, levels, tree) =
 --
 
 -- TODO: these events are incomplete, in particular we should also trace what
--- happens in the union level.
+-- happens in the union level. Somewhat related: issue #445.
 data Event =
     NewTableEvent TableId LSMConfig
   | UpdateEvent TableId Key Entry
