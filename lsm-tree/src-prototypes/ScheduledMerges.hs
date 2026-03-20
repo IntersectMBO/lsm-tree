@@ -162,7 +162,11 @@ type LevelNo = Int
 -- | A level is a sequence of resident runs at this level, prefixed by an
 -- incoming run, which is usually multiple runs that are being merged. Once
 -- completed, the resulting run will become a resident run at this level.
+--
+-- Levels can also be empty, although we currently never create empty levels.
+-- We plan to make use of them when migrating a completed union level.
 data Level s = Level !(IncomingRun s) ![Run]
+             | EmptyLevel
 
 -- | We represent single runs specially, rather than putting them in as a
 -- 'CompletedMerge'. This is for two reasons: to see statically that it's a
@@ -354,6 +358,9 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
   where
     levelsInvariant :: Int -> Levels s -> ST s ()
     levelsInvariant !_ [] = pure ()
+
+    levelsInvariant !_ (EmptyLevel : ls) = do
+      assertST $ not (null ls)  -- last level shouldn't be empty
 
     levelsInvariant !ln (Level ir rs : ls) = do
       mrs <- case ir of
@@ -1467,6 +1474,14 @@ increment tr sc conf run0 ls0 ul = do
       where
         tr' = contramap (EventAt sc ln) tr
 
+    go !ln incoming (EmptyLevel : ls) = do
+        assertST $ mergePolicyForLevel ln ls ul == LevelTiering  -- mid level
+        traceWith tr' LevelWasEmptyEvent
+        ir <- newLevelMerge tr' conf ln LevelTiering (mergeTypeFor ls) incoming
+        pure (Level ir [] : ls)
+      where
+        tr' = contramap (EventAt sc ln) tr
+
     go !ln incoming (Level ir rs : ls) = do
       r <- case ir of
         Single r -> do
@@ -1841,6 +1856,7 @@ flattenLevels :: Levels s -> ST s [[Run]]
 flattenLevels = mapM flattenLevel
 
 flattenLevel :: Level s -> ST s [Run]
+flattenLevel EmptyLevel    = pure []
 flattenLevel (Level ir rs) = (++ rs) <$> flattenIncomingRun ir
 
 flattenIncomingRun :: IncomingRun s -> ST s [Run]
@@ -1909,6 +1925,8 @@ dumpRepresentation (LSMHandle _ _ _conf lsmr) = do
     pure (wb, levels, tree)
 
 dumpLevel :: Level s -> ST s LevelRepresentation
+dumpLevel EmptyLevel =
+    pure (Nothing, [])
 dumpLevel (Level (Single r) rs) =
     pure (Nothing, (r:rs))
 dumpLevel (Level (Merging mp nd ncv (MergingRun mt _ ref)) rs) = do
@@ -1977,6 +1995,7 @@ data EventDetail =
   | RunTooSmallForLevelEvent MergePolicyForLevel Run
   | LevelIsFullEvent MergePolicyForLevel
   | LevelIsNotFullEvent MergePolicyForLevel
+  | LevelWasEmptyEvent
   deriving stock Show
 
 -------------------------------------------------------------------------------
