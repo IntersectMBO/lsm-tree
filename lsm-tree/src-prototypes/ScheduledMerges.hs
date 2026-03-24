@@ -1,7 +1,6 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE UnboxedTuples   #-}
 
-{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 
 -- | A prototype of an LSM with explicitly scheduled incremental merges.
@@ -924,7 +923,7 @@ newMergingRun mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
     (debt, state) <- case filter (\r -> runSize r > 0) runs of
-      []  -> let (r:_) = runs -- just reuse the empty input
+      []  -> let r = head runs -- just reuse the empty input
               in pure (runSize r, CompletedMerge r)
       [r] -> pure (runSize r, CompletedMerge r)
       rs  -> do
@@ -1369,11 +1368,12 @@ newtype NominalDebt = NominalDebt Credit
 -- inserting without calling 'supplyUnionCredits'.
 supplyCreditsLevels :: NominalCredit -> Levels s -> ST s ()
 supplyCreditsLevels nominalDeposit =
-  traverse_ $ \(Level ir _rs) -> do
-    case ir of
-      Single{} -> pure ()
-      Merging _mp nominalDebt nominalCreditVar
-              mr@(MergingRun _  physicalDebt _) -> do
+  traverse_ $ \lvl -> do
+    case lvl of
+      EmptyLevel -> pure ()
+      Level Single{} _ -> pure ()
+      Level (Merging _mp nominalDebt nominalCreditVar
+                     mr@(MergingRun _  physicalDebt _)) _ -> do
 
         nominalCredit       <- depositNominalCredit
                                  nominalDebt nominalCreditVar nominalDeposit
@@ -1675,8 +1675,9 @@ contentToMergingTree (LSMContent wb ls ul) =
       | writeBufferSize wb == 0 = Nothing
       | otherwise               = Just (PreExistingRun (flushWriteBuffer wb))
 
-    levels = flip concatMap ls $ \(Level ir rs) ->
-               toPreExisting ir : map PreExistingRun rs
+    levels = flip concatMap ls $ \case
+               EmptyLevel  -> []
+               Level ir rs -> toPreExisting ir : map PreExistingRun rs
 
     toPreExisting (Single         r) = PreExistingRun r
     toPreExisting (Merging _ _ _ mr) = PreExistingMergingRun mr
