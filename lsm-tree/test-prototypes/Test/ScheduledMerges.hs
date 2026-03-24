@@ -13,7 +13,8 @@ import           Text.Printf (printf)
 import           ScheduledMerges as LSM
 
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Arbitrary (arbitrary, shrink), Property)
+import           Test.QuickCheck (Arbitrary (arbitrary, shrink), Property,
+                     (.&&.))
 import           Test.QuickCheck.Exception (isDiscard)
 import           Test.Tasty
 import           Test.Tasty.HUnit (HasCallStack, testCase)
@@ -24,7 +25,7 @@ tests :: TestTree
 tests = testGroup "Test.ScheduledMerges"
     [ testCase "test_regression_empty_run" test_regression_empty_run
     , testCase "test_merge_again_with_incoming" test_merge_again_with_incoming
-    , testProperty "prop_union" prop_union
+    , testProperty "prop_union_complete" prop_union_complete
     , testGroup "T"
         [ localOption (QuickCheckTests 1000) $  -- super quick, run more
             testProperty "Arbitrary satisfies invariant" prop_arbitrarySatisfiesInvariant
@@ -176,34 +177,113 @@ test_merge_again_with_incoming =
 -- properties
 --
 
--- | Supplying enough credits for the remaining debt completes the union merge.
-prop_union :: [[(LSM.Key, LSM.Entry)]] -> Property
-prop_union kess = length (filter (not . null) kess) > 1 QC.==>
+-- | Supplying enough credits for the remaining debt completes the union merge
+-- (as externally observable through 'LSM.remainingUnionDebt'). However, a
+-- special union level remains.
+prop_union_complete :: LSMConfig -> NestedUnionData -> Property
+prop_union_complete conf nestedUnionData =
     QC.ioProperty $ runWithTracer $ \tr ->
       stToIO $ do
-        ts <- traverse (uncurry $ mkTable tr) (zip [LSM.TableId 0..] kess)
-        t <- LSM.unions tr (LSM.TableId (length kess)) ts
-
-        debt@(UnionDebt x) <- LSM.remainingUnionDebt t
-        _ <- LSM.supplyUnionCredits t (UnionCredits x)
-        debt' <- LSM.remainingUnionDebt t
+        tidCounter <- newSTRef (LSM.TableId 0)
+        t <- mkNestedUnion tr conf tidCounter nestedUnionData
 
         rep <- dumpRepresentation t
+        debt@(UnionDebt x) <- LSM.remainingUnionDebt t
+
+        leftovers <- LSM.supplyUnionCredits t (UnionCredits x)
+
+        rep' <- dumpRepresentation t
+        debt' <- LSM.remainingUnionDebt t
+
         pure $ QC.counterexample (show (debt, debt')) $ QC.conjoin
-          [ debt =/= UnionDebt 0
-          , debt' === UnionDebt 0
-          , hasUnionWith isCompleted rep
+          [ QC.counterexample "before" $
+              -- The input is a non-empty list of structurally non-empty tables
+              -- (i.e. they have runs or at least a non-empty write buffer).
+              -- Therefore there must be a merging tree.
+              debt =/= UnionDebt 0
+              .&&. hasUnionWith (not . isCompleted) rep
+          , QC.counterexample "after" $
+              debt' === UnionDebt 0
+              .&&. hasUnionWith isCompleted rep'
+          , QC.counterexample "leftovers" $
+              leftovers >= 0
           ]
   where
     isCompleted = \case
         MLeaf{} -> True
         MNode{} -> False
 
-mkTable :: Tracer (ST s) Event -> LSM.TableId -> [(LSM.Key, LSM.Entry)] -> ST s (LSM s)
-mkTable tr tid ks = do
-    t <- LSM.new tr tid
+
+-- | For simplicity, this is not a recursive structure. We just nest once, or
+-- not at all if there is just a single 'UnionData'.
+newtype NestedUnionData = NestedUnionData [UnionData]
+  deriving stock Show
+
+instance Arbitrary NestedUnionData where
+  arbitrary = do
+    numUnionInputs <- QC.chooseInt (1, 10)
+    NestedUnionData <$> QC.vectorOf numUnionInputs arbitrary
+
+  shrink (NestedUnionData unionInputs) =
+    [ NestedUnionData unionInputs'
+    | unionInputs' <- shrink unionInputs
+    , not (null unionInputs')
+    ]
+
+-- | Inputs to a union, plus some extra updates to perform on the result.
+-- Note that we want at least two inputs, so there is some merging required.
+data UnionData = UnionData [(LSM.Key, LSM.Entry)] [TableData]
+  deriving stock Show
+
+unionDataInvariant :: UnionData -> Bool
+unionDataInvariant (UnionData _ tableInputs) = length tableInputs >= 2
+
+instance Arbitrary UnionData where
+  arbitrary = do
+    numUnionInputs <- QC.oneof [pure 2, QC.chooseInt (3, 6)]
+    UnionData <$> arbitrary <*> QC.vectorOf numUnionInputs arbitrary
+
+  shrink (UnionData kes tableInputs) =
+    [ data'
+    | (kes', tableInputs') <- shrink (kes, tableInputs)
+    , let data' = UnionData kes' tableInputs'
+    , unionDataInvariant data'
+    ]
+
+newtype TableData = TableData [(LSM.Key, LSM.Entry)]
+  deriving stock Show
+  deriving Arbitrary
+    via QC.NonEmptyList (LSM.Key, LSM.Entry)
+
+mkNestedUnion :: Tracer (ST s) Event -> LSMConfig -> STRef s LSM.TableId
+              -> NestedUnionData -> ST s (LSM s)
+mkNestedUnion tr conf tidCounter (NestedUnionData unionInputs) = do
+    tid <- freshTableId tidCounter
+    ts <- traverse (mkUnion tr conf tidCounter) unionInputs
+    LSM.unions tr tid ts
+
+mkUnion :: Tracer (ST s) Event -> LSMConfig -> STRef s LSM.TableId
+        -> UnionData -> ST s (LSM s)
+mkUnion tr conf tidCounter (UnionData kes tableInputs) = do
+    tid <- freshTableId tidCounter
+    ts <- traverse (mkTable tr conf tidCounter) tableInputs
+    table <- LSM.unions tr tid ts
+    LSM.updates tr table kes
+    pure table
+
+mkTable :: Tracer (ST s) Event -> LSMConfig -> STRef s LSM.TableId
+        -> TableData -> ST s (LSM s)
+mkTable tr conf tidCounter (TableData ks) = do
+    tid <- freshTableId tidCounter
+    t <- LSM.newWith tr tid conf
     LSM.updates tr t ks
     pure t
+
+freshTableId :: STRef s LSM.TableId -> ST s LSM.TableId
+freshTableId ref = do
+    tid <- readSTRef ref
+    modifySTRef' ref succ
+    pure tid
 
 -------------------------------------------------------------------------------
 -- tests for MergingTree
@@ -448,7 +528,7 @@ instance (Arbitrary t, IsMergeType t) => Arbitrary (M t) where
 --
 genMergeCreditForRuns :: [NonEmptyRun] -> QC.Gen (MergeDebt, MergeCredit)
 genMergeCreditForRuns rs = do
-      let totalDebt    = sum (map (length . getNonEmptyRun) rs)
+      let totalDebt    = sum (map (runSize . getNonEmptyRun) rs)
       suppliedCredits <- QC.chooseInt (0, totalDebt-1)
       unspentCredits  <- QC.chooseInt (0, min (mergeBatchSize-1) suppliedCredits)
       let spentCredits = suppliedCredits - unspentCredits
@@ -472,7 +552,7 @@ shrinkMergeCreditForRuns :: [NonEmptyRun]
 shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
     [ assert (mergeDebtInvariant md' mc')
       (md', mc')
-    | let totalDebt'    = sum (map (length . getNonEmptyRun) rs')
+    | let totalDebt'    = sum (map (runSize . getNonEmptyRun) rs')
     , suppliedCredits' <- shrink (min (spentCredits+unspentCredits)
                                       (totalDebt'-1))
     , unspentCredits'  <- shrink (min unspentCredits suppliedCredits')
@@ -487,8 +567,8 @@ shrinkMergeCreditForRuns rs' MergeCredit {spentCredits, unspentCredits} =
     ]
 
 instance Arbitrary NonEmptyRun where
-  arbitrary = NonEmptyRun <$> (arbitrary `QC.suchThat` (not . null))
-  shrink (NonEmptyRun r) = [NonEmptyRun r' | r' <- shrink r, not (null r')]
+  arbitrary = NonEmptyRun <$> (arbitrary `QC.suchThat` (\r -> runSize r > 0))
+  shrink (NonEmptyRun r) = [NonEmptyRun r' | r' <- shrink r, runSize r' > 0]
 
 prop_arbitrarySatisfiesInvariant :: T -> Property
 prop_arbitrarySatisfiesInvariant t =
