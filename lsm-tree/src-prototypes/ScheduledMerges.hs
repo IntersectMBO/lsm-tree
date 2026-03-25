@@ -1191,27 +1191,30 @@ newtype UnionCredits = UnionCredits Credit
 -- a union has finished. In particular, if the returned number of credits is
 -- non-negative, then the union is finished.
 supplyUnionCredits :: Tracer (ST s) Event -> LSM s -> UnionCredits -> ST s UnionCredits
-supplyUnionCredits tr (LSMHandle tid scr conf lsmr) (UnionCredits credits)
-  | credits <= 0 = pure (UnionCredits 0)
-  | otherwise = do
-    content@(LSMContent wb ls ul) <- readSTRef lsmr
-    UnionCredits <$> case ul of
-      NoUnion ->
-        pure credits
-      Union tree debtRef -> do
-        invariant conf content
-        sc <- readSTRef scr
-        modifySTRef' scr (+1)
-        _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
-        c' <- supplyCreditsMergingTree credits tree
-        debt' <- checkedUnionDebt tree debtRef
-        when (debt' > 0) $
-          assertST $ c' == 0  -- should have spent these credits
-        (ls', ul') <- migrateUnionLevel (LevelEvent tid >$< tr) sc conf ls ul
-        let content' = LSMContent wb ls' ul'
-        invariant conf content'
-        writeSTRef lsmr content'
-        pure c'
+supplyUnionCredits tr (LSMHandle tid scr conf lsmr) (UnionCredits credits) = do
+    traceWith tr $ SupplyUnionCreditsEvent tid credits
+    if credits <= 0
+      then
+        pure (UnionCredits 0)
+      else do
+        content@(LSMContent wb ls ul) <- readSTRef lsmr
+        UnionCredits <$> case ul of
+          NoUnion ->
+            pure credits
+          Union tree debtRef -> do
+            invariant conf content
+            sc <- readSTRef scr
+            modifySTRef' scr (+1)
+            _debt <- checkedUnionDebt tree debtRef  -- make sure it's checked
+            c' <- supplyCreditsMergingTree credits tree
+            debt' <- checkedUnionDebt tree debtRef
+            when (debt' > 0) $
+              assertST $ c' == 0  -- we should have spent these credits
+            (ls', ul') <- migrateUnionLevel (LevelEvent tid >$< tr) sc conf ls ul
+            let content' = LSMContent wb ls' ul'
+            invariant conf content'
+            writeSTRef lsmr content'
+            pure c'
 
 -- | Like 'remainingDebtMergingTree', but additionally asserts that the debt
 -- never increases.
@@ -2013,6 +2016,7 @@ data Event =
   | LookupEvent TableId Key
   | DuplicateEvent TableId TableId
   | UnionsEvent TableId [TableId]
+  | SupplyUnionCreditsEvent TableId Credit
   | LevelEvent TableId (EventAt EventDetail)
   deriving stock Show
 
