@@ -1,4 +1,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- Definitions for override table config options.
@@ -103,7 +107,7 @@ instance Override TableConfigOverride SnapshotMetaData where
 
 instance Override MergeBatchSize SnapshotMetaData where
   override mbs smd =
-    smd { snapMetaConfig = override mbs (snapMetaConfig smd) }
+    smd { snapMetaConfig = override mbs (smd.snapMetaConfig) }
 
 instance Override MergeBatchSize TableConfig where
   override confMergeBatchSize' tc =

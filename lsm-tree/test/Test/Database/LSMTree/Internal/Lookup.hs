@@ -10,6 +10,9 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Database.LSMTree.Internal.Lookup (
@@ -84,11 +87,11 @@ tests = testGroup "Test.Database.LSMTree.Internal.Lookup" [
           testProperty "prop_bloomQueriesModel" $
             prop_bloomQueriesModel
         , testProperty "prop_indexSearchesModel" $
-            prop_indexSearchesModel
+            prop_indexSearchesModel 
         , testProperty "prop_prepLookupsModel" $
             prop_prepLookupsModel
-        , testProperty "input distribution" $ \dats ->
-            tabulateInMemLookupDataN (getSmallList dats) True
+        , testProperty "input distribution" $ \(dats :: SmallList (InMemLookupData SerialisedKey SerialisedValue BlobSpan)) ->
+            tabulateInMemLookupDataN dats.getSmallList True
         ]
     , testGroup "With multi-page values" [
           testGroup "InMemLookupData" $
@@ -139,10 +142,10 @@ prop_bloomQueriesModel dats =
     counterexample (show model ++ " is not a subsequence of " ++ show real) $
     property (model `List.isSubsequenceOf` real)
   where
-    runDatas = getSmallList $ fmap runData dats
+    runDatas = fmap (.runData) dats.getSmallList
     runs = fmap mkTestRun runDatas
     blooms = fmap snd3 runs
-    lookupss = concatMap lookups $ getSmallList dats
+    lookupss = concatMap (.lookups) dats.getSmallList 
     real  = map (\(RunIxKeyIx rix kix) -> (rix,kix)) $ VP.toList $
             bloomQueries testSalt (V.fromList blooms) (V.fromList lookupss)
     model = bloomQueriesModel (fmap Map.keysSet runDatas) lookupss
@@ -174,8 +177,8 @@ prop_indexSearchesModel dats =
     rkixsGen [] = pure []
     rkixsGen xs = listOf (elements xs)
 
-    runs = getSmallList $ fmap (mkTestRun . runData) dats
-    lookupss = concatMap lookups $ getSmallList dats
+    runs = fmap (mkTestRun . (.runData)) dats.getSmallList
+    lookupss = concatMap (.lookups) dats.getSmallList 
     real rkixs = runST $ withUnmanagedArena $ \arena -> do
       let rs = V.fromList (fmap runWithHandle runs)
           ks = V.fromList lookupss
@@ -200,8 +203,8 @@ prop_prepLookupsModel ::
   -> Property
 prop_prepLookupsModel dats = real === model
   where
-    runs = getSmallList $ fmap (mkTestRun . runData) dats
-    lookupss = concatMap lookups $ getSmallList dats
+    runs = fmap (mkTestRun . (.runData)) dats.getSmallList
+    lookupss = concatMap (.lookups) dats.getSmallList
     real = runST $ withUnmanagedArena $ \arena -> do
       let rs = V.fromList (fmap runWithHandle runs)
           ks = V.fromList lookupss
@@ -326,7 +329,7 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
     withTempIOHasBlockIO "prop_roundtripFromWriteBufferLookupIO" $ \hfs hbio ->
     withWbAndRuns hfs hbio refCtx Index.Ordinary dats $ \wb wbblobs runs -> do
     let model :: Map SerialisedKey (Entry SerialisedValue SerialisedBlob)
-        model = Map.unionsWith (Entry.combine resolveV) (map runData dats)
+        model = Map.unionsWith (Entry.combine resolveV) $ map (.runData) dats
         keys  = V.fromList [ k | InMemLookupData{lookups} <- dats
                                , k <- lookups ]
         modelres :: V.Vector (Maybe (Entry SerialisedValue SerialisedBlob))
@@ -341,9 +344,9 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         testSalt
         wb wbblobs
         runs
-        (V.map (\(DeRef r) -> Run.runFilter   r) runs)
-        (V.map (\(DeRef r) -> Run.runIndex    r) runs)
-        (V.map (\(DeRef r) -> Run.runKOpsFile r) runs)
+        (V.map (\(DeRef r) -> r.bloomFilter) runs)
+        (V.map (\(DeRef r) -> r.index) runs)
+        (V.map (\(DeRef r) -> r.kOpsFile) runs)
         keys
     pure $ modelres === realres
   where
@@ -378,9 +381,9 @@ withWbAndRuns hfs _ refCtx _ [] action =
 withWbAndRuns hfs hbio refCtx indexType (wbdat:rundats) action =
     bracket (WBB.new hfs refCtx (FS.mkFsPath ["wbblobs"])) releaseRef $ \wbblobs -> do
       wbkops <- traverse (traverse (WBB.addBlob hfs wbblobs))
-                         (runData wbdat)
+                         (wbdat.runData )
       let wb = WB.fromMap wbkops
-      let rds = map (RunData . runData) rundats
+      let rds = map (RunData . (.runData)) rundats
       counter <- newUniqCounter 1
       withRuns hfs hbio refCtx testSalt (runParams indexType) (FS.mkFsPath []) counter rds $
         \runs ->
@@ -398,7 +401,7 @@ instance Arbitrary a => Arbitrary (SmallList a) where
   arbitrary = do
       n <- chooseInt (0, 5)
       SmallList <$> vectorOf n arbitrary
-  shrink = fmap SmallList . shrink . getSmallList
+  shrink = fmap SmallList . shrink . (.getSmallList)
 
 conjoinF :: (Testable prop, Foldable f) => f prop -> Property
 conjoinF = conjoin . F.toList
@@ -488,7 +491,7 @@ tabulateInMemLookupDataN ::
   => [InMemLookupData SerialisedKey SerialisedValue BlobSpan]
   -> (prop -> Property)
 tabulateInMemLookupDataN dats = appEndo (foldMap Endo [
-      let run = mkTestRun (runData dat)
+      let run = mkTestRun dat.runData
       in  tabulateInMemLookupData dat run
     | dat <- dats
     ])

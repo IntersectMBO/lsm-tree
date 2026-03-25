@@ -3,7 +3,9 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
-
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 #if MIN_VERSION_GLASGOW_HASKELL(9,8,1,0)
 {-# LANGUAGE TypeAbstractions      #-}
 #endif
@@ -437,7 +439,7 @@ getAllSessionTables ::
   -> m [SomeTable m]
 getAllSessionTables (R.Types.Session s) = do
     R.Unsafe.withKeepSessionOpen s $ \seshEnv -> do
-      ts <- readMVar (R.Unsafe.sessionOpenTables seshEnv)
+      ts <- readMVar (seshEnv.sessionOpenTables)
       pure ((\x -> SomeTable (R.Types.Table x))  <$> Map.elems ts)
 
 getAllSessionCursors ::
@@ -446,7 +448,7 @@ getAllSessionCursors ::
   -> m [SomeCursor m]
 getAllSessionCursors (R.Types.Session s) =
     R.Unsafe.withKeepSessionOpen s $ \seshEnv -> do
-      cs <- readMVar (R.Unsafe.sessionOpenCursors seshEnv)
+      cs <- readMVar (seshEnv.sessionOpenCursors)
       pure ((\x -> SomeCursor (R.Types.Cursor x))  <$> Map.elems cs)
 
 createSystemTempDirectory ::  [Char] -> IO (FilePath, HasFS IO HandleIO, HasBlockIO IO HandleIO)
@@ -1550,7 +1552,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "SaveSnapshot" env merrs
             (do Class.saveSnapshot name label table
-                forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
+                forM_ mcorr $ \corr -> Class.corruptSnapshot (corr.bitChoice) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
@@ -1591,7 +1593,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
                   Class.supplyUnionCredits table (portion `portionOf` debt))
               (\_ -> pure ()) -- TODO(err)
       where
-        session = envSession env
+        session = env.envSession 
 
     lookUp' :: Var m h x -> x
     lookUp' = realLookupVar lookUp
@@ -1661,7 +1663,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "SaveSnapshot" env merrs
             (do Class.saveSnapshot name label table
-                forM_ mcorr $ \corr -> Class.corruptSnapshot (bitChoice corr) name table)
+                forM_ mcorr $ \corr -> Class.corruptSnapshot (corr.bitChoice) name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
@@ -1702,7 +1704,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
                   Class.supplyUnionCredits table (portion `portionOf` debt))
               (\_ -> pure ()) -- TODO(err)
       where
-        session = envSession env
+        session = env.envSession 
 
     lookUp' :: Var m h x -> x
     lookUp' = realLookupVar lookUp
@@ -1766,10 +1768,10 @@ runRealWithInjectedErrors s env merrs k rollback =
           else
             pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
   where
-    errsVar = envErrors env
-    logVar = envErrorsLog env
-    faultsVar = envInjectFaultResults env
-    handlers = envHandlers env
+    errsVar = env.envErrors 
+    logVar = env.envErrorsLog 
+    faultsVar = env.envInjectFaultResults 
+    handlers = env.envHandlers 
 
 catchErr ::
      forall m a e. MonadCatch m
@@ -2332,10 +2334,10 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
 
     updSnapshotted stats = case (action', result) of
       (SaveSnapshot _ name _ _, MEither (Right (MUnit ()))) -> stats {
-          snapshotted = Set.insert name (snapshotted stats)
+          snapshotted = Set.insert name (stats.snapshotted)
         }
       (DeleteSnapshot name, MEither (Right (MUnit ()))) -> stats {
-          snapshotted = Set.delete name (snapshotted stats)
+          snapshotted = Set.delete name (stats.snapshotted)
         }
       _ -> stats
 
@@ -2351,7 +2353,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                   NotFound        -> (nf+1, f  , fwb  )
                   Found{}         -> (nf  , f+1, fwb  )
                   FoundWithBlob{} -> (nf  , f  , fwb+1)
-            in V.foldl' count (numLookupsResults stats) lrs
+            in V.foldl' count (stats.numLookupsResults) lrs
         }
       _ -> stats
 
@@ -2380,17 +2382,17 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                 R.Insert _ Just{}  -> (i  , iwb+1, d  , m  )
                 R.Delete{}         -> (i  , iwb  , d+1, m  )
                 R.Upsert{}         -> (i  , iwb  , d  , m+1)
-          in V.foldl' count (numUpdates stats) upds
+          in V.foldl' count (stats.numUpdates) upds
 
     updSuccessActions stats = case result of
         MEither (Right _) -> stats {
-            successActions = actionName action : successActions stats
+            successActions = actionName action : stats.successActions
           }
         _ -> stats
 
     updFailActions stats = case result of
         MEither (Left (MErr e)) -> stats {
-            failActions = (actionName action, e) : failActions stats
+            failActions = (actionName action, e) : stats.failActions
           }
         _ -> stats
 
@@ -2445,7 +2447,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         initCount table =
           let tid = Model.tableID table
            in stats {
-                numActionsPerTable = Map.insert tid 0 (numActionsPerTable stats)
+                numActionsPerTable = Map.insert tid 0 (stats.numActionsPerTable)
               }
 
         -- Note that batches (of inserts lookups etc) count as one action.
@@ -2456,7 +2458,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
           let tid = getTableId (lookUp tableVar)
            in stats {
                 numActionsPerTable = Map.insertWith (+) tid 1
-                                                    (numActionsPerTable stats)
+                                                    (stats.numActionsPerTable)
               }
 
     updClosedTables stats = case (action', result) of
@@ -2466,7 +2468,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
             -- This lookup can fail if the table was already closed:
           , Just (_, table) <- Map.lookup tid (Model.tables modelBefore)
           -> stats {
-               closedTables = Map.insert tid table (closedTables stats)
+               closedTables = Map.insert tid table (stats.closedTables)
              }
         _ -> stats
 
@@ -2489,7 +2491,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
       stats {
         parentTable = Map.insert (Model.tableID tbl)
                                  [Model.tableID tbl]
-                                 (parentTable stats)
+                                 (stats.parentTable)
       }
 
     -- insert an entry into the parentTable for a table derived from a parent
@@ -2503,12 +2505,12 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                          | ptblVar <- ptblVars
                            -- immediate and ultimate parent table id:
                          , let iptblId = getTableId (lookUp ptblVar)
-                         , uptblId <- parentTable stats Map.! iptblId
+                         , uptblId <- stats.parentTable Map.! iptblId
                          ]
        in stats {
             parentTable = Map.insert (Model.tableID tbl)
                                      uptblIds
-                                     (parentTable stats)
+                                     (stats.parentTable)
           }
 
     updDupTableActionLog stats | MEither (Right _) <- result =
@@ -2556,8 +2558,8 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
           stats {
             dupTableActionLog = List.foldl'
                                   (flip (Map.alter extendLog))
-                                  (dupTableActionLog stats)
-                                  (parentTable stats Map.! thid)
+                                  (stats.dupTableActionLog)
+                                  (stats.parentTable Map.! thid)
           }
           where
             thid = getTableId (lookUp tableVar)
@@ -2584,7 +2586,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
           , Just (_,tbl) <- Map.lookup tid (Model.tables modelAfter)
           , let sz = Model.withSomeTable Model.size tbl
           = stats {
-              unionTables = Map.insert tid sz (unionTables stats)
+              unionTables = Map.insert tid sz (stats.unionTables)
             }
           | otherwise
           = stats
@@ -2639,35 +2641,35 @@ tagStep' (ModelState _stateBefore statsBefore,
   where
     tagSnapshotTwice
       | SaveSnapshot _ name _ _ <- action'
-      , name `Set.member` snapshotted statsBefore
+      , name `Set.member`  statsBefore.snapshotted
       = Just SnapshotTwice
       | otherwise
       = Nothing
 
     tagOpenExistingSnapshot
       | OpenTableFromSnapshot _ name _ <- action'
-      , name `Set.member` snapshotted statsBefore
+      , name `Set.member` statsBefore.snapshotted
       = Just OpenExistingSnapshot
       | otherwise
       = Nothing
 
     tagOpenMissingSnapshot
       | OpenTableFromSnapshot _ name _ <- action'
-      , not (name `Set.member` snapshotted statsBefore)
+      , not (name `Set.member` statsBefore.snapshotted)
       = Just OpenMissingSnapshot
       | otherwise
       = Nothing
 
     tagDeleteExistingSnapshot
       | DeleteSnapshot name <- action'
-      , name `Set.member` snapshotted statsBefore
+      , name `Set.member` statsBefore.snapshotted
       = Just DeleteExistingSnapshot
       | otherwise
       = Nothing
 
     tagDeleteMissingSnapshot
       | DeleteSnapshot name <- action'
-      , not (name `Set.member` snapshotted statsBefore)
+      , not (name `Set.member` statsBefore.snapshotted)
       = Just DeleteMissingSnapshot
       | otherwise
       = Nothing
@@ -2757,7 +2759,7 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
         , ("Lookups found"          , [NumLookupsFound         $ showPowersOf 10 f])
         , ("Lookups found with blob", [NumLookupsFoundWithBlob $ showPowersOf 10 fwb])
         ]
-      where (nf, f, fwb) = numLookupsResults finalStats
+      where (nf, f, fwb) = finalStats.numLookupsResults
 
     tagNumUpdates = [
           ("Inserts"            , [NumInserts          $ showPowersOf 10 i])
@@ -2765,34 +2767,34 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
         , ("Deletes"            , [NumDeletes          $ showPowersOf 10 d])
         , ("Upserts"            , [NumMupserts         $ showPowersOf 10 m])
         ]
-      where (i, iwb, d, m) = numUpdates finalStats
+      where (i, iwb, d, m) = finalStats.numUpdates
 
     tagNumActions =
-        [ let n = length (successActions finalStats) in
+        [ let n = length (finalStats.successActions) in
           ("Actions that succeeded total", [NumActions (showPowersOf 10 n)])
-        , let n = length (failActions finalStats) in
+        , let n = length (finalStats.failActions) in
           ("Actions that failed total", [NumActions (showPowersOf 10 n)])
-        , let n = length (successActions finalStats)
-                + length (failActions finalStats) in
+        , let n = length (finalStats.successActions)
+                + length (finalStats.failActions) in
           ("Actions total", [NumActions (showPowersOf 10 n)])
         ]
 
     tagSuccessActions =
         [ ("Actions that succeeded", [ActionSuccess c])
-        | c <- successActions finalStats ]
+        | c <- finalStats.successActions ]
 
     tagFailActions =
         [ ("Actions that failed", [ActionFail c e])
-        | (c, e) <- failActions finalStats ]
+        | (c, e) <- finalStats.failActions ]
 
     tagNumTables =
         [ ("Number of tables", [NumTables (showPowersOf 2 n)])
-        | let n = Map.size (numActionsPerTable finalStats)
+        | let n = Map.size (finalStats.numActionsPerTable)
         ]
 
     tagNumTableActions =
         [ ("Number of actions per table", [ NumTableActions (showPowersOf 2 n) ])
-        | n <- Map.elems (numActionsPerTable finalStats)
+        | n <- Map.elems (finalStats.numActionsPerTable)
         ]
 
     tagTableSizes =
@@ -2801,14 +2803,14 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
               openSizes   = Model.withSomeTable Model.size . snd <$>
                               Model.tables finalState
               closedSizes = Model.withSomeTable Model.size <$>
-                              closedTables finalStats
+                              finalStats.closedTables
         , size <- Map.elems (openSizes `Map.union` closedSizes)
         ]
 
     tagDupTableActionLog =
         [ ("Interleaved actions on table duplicates or unions",
            [DupTableActionLog (showPowersOf 2 n)])
-        | (_, alog) <- Map.toList (dupTableActionLog finalStats)
+        | (_, alog) <- Map.toList (finalStats.dupTableActionLog)
         , let n = length alog
         ]
 
@@ -2819,14 +2821,14 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
            [NumTables (showPowersOf 2 (Map.size nonTrivial))])
         ]
       where
-        (nonTrivial, trivial) = Map.partition (> 0) (unionTables finalStats)
+        (nonTrivial, trivial) = Map.partition (> 0) (finalStats.unionTables)
 
     tagNumUnionTableActions =
         [ ("Number of actions per table with non-empty unions",
            [ NumTableActions (showPowersOf 2 n) ])
-        | n <- Map.elems $ numActionsPerTable finalStats
+        | n <- Map.elems $ finalStats.numActionsPerTable
                              `Map.intersection`
-                           Map.filter (> 0) (unionTables finalStats)
+                           Map.filter (> 0) (finalStats.unionTables)
         ]
 
 {-------------------------------------------------------------------------------
@@ -2918,5 +2920,5 @@ toggleForgottenRefChecksSession :: R.IOLike m => CheckRefs -> R.Session m -> m (
 toggleForgottenRefChecksSession flag (R.Types.Session session) =
     R.Unsafe.withKeepSessionOpen session $ \seshEnv ->
     case flag of
-      CheckRefs   -> enableForgottenRefChecks (R.Unsafe.sessionRefCtx seshEnv)
-      NoCheckRefs -> disableForgottenRefChecks (R.Unsafe.sessionRefCtx seshEnv)
+      CheckRefs   -> enableForgottenRefChecks (seshEnv.sessionRefCtx )
+      NoCheckRefs -> disableForgottenRefChecks (seshEnv.sessionRefCtx )

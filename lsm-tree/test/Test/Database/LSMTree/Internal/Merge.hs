@@ -128,19 +128,19 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = withRefCtx $ 
     isLarge = not . uncurry entryWouldFitInPage
 
     getRunContent run@(DeRef Run.Run {
-                         Run.runFilter,
-                         Run.runIndex,
-                         Run.runKOpsFile,
-                         Run.runBlobFile
+                         Run.bloomFilter,
+                         Run.index,
+                         Run.kOpsFile,
+                         Run.blobFile
                        }) = do
       runSize         <- evaluate (Run.size run)
       runKOps         <- readKOps Nothing run
-      kopsFileContent <- FS.hGetAll fs runKOpsFile
-      blobFileContent <- withRef runBlobFile $
+      kopsFileContent <- FS.hGetAll fs kOpsFile
+      blobFileContent <- withRef blobFile $
                          FS.hGetAll fs . BlobFile.blobFileHandle
       pure ( runSize
-             , runFilter
-             , runIndex
+             , bloomFilter
+             , index
              , runKOps
              , kopsFileContent
              , blobFileContent

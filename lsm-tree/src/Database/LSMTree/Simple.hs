@@ -1,3 +1,6 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 {- |
 Module      : Database.LSMTree.Simple
 Copyright   : (c) 2023-2025, Cardano Development Foundation
@@ -483,7 +486,7 @@ closeSession ::
     IO ()
 closeSession (Session session@(LSMT.Session session')) = do
     HasBlockIO{close} <- Internal.withKeepSessionOpen session' $
-                          pure . Internal.sessionHasBlockIO
+                          pure . (.sessionHasBlockIO)
     LSMT.closeSession session `finally` close
 
 --------------------------------------------------------------------------------

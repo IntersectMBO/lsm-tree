@@ -1,5 +1,9 @@
-{-# LANGUAGE CPP       #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE CPP                   #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- | This module brings together the internal parts to provide an API in terms
@@ -443,7 +447,7 @@ data SessionEnv m h = SessionEnv {
 
 {-# INLINE sessionId #-}
 sessionId :: SessionEnv m h -> SessionId
-sessionId = SessionId . getSessionRoot . sessionRoot
+sessionId env = SessionId (getSessionRoot env.sessionRoot)
 
 -- | The session is closed.
 data SessionClosedError
@@ -465,7 +469,7 @@ withKeepSessionOpen ::
   => Session m h
   -> (SessionEnv m h -> m a)
   -> m a
-withKeepSessionOpen sesh action = RW.withReadAccess (sessionState sesh) $ \case
+withKeepSessionOpen sesh action = RW.withReadAccess (sesh.sessionState) $ \case
     SessionClosed -> throwIO ErrSessionClosed
     SessionOpen seshEnv -> action seshEnv
 
@@ -777,24 +781,24 @@ closeSession Session{sessionState, sessionTracer} = do
           -- close cursors
           cursors <-
             withRollback reg
-              (swapMVar (sessionOpenCursors seshEnv) Map.empty)
-              (void . swapMVar (sessionOpenCursors seshEnv))
+              (swapMVar (seshEnv.sessionOpenCursors) Map.empty)
+              (void . swapMVar (seshEnv.sessionOpenCursors))
           mapM_ (delayedCommit reg . closeCursor) cursors
 
           -- close tables
           tables <-
             withRollback reg
-              (swapMVar (sessionOpenTables seshEnv) Map.empty)
-              (void . swapMVar (sessionOpenTables seshEnv))
+              (swapMVar (seshEnv.sessionOpenTables) Map.empty)
+              (void . swapMVar (seshEnv.sessionOpenTables))
           mapM_ (delayedCommit reg . close) tables
 
-          delayedCommit reg $ FS.hUnlock (sessionLockFile seshEnv)
+          delayedCommit reg $ FS.hUnlock (seshEnv.sessionLockFile)
 
         -- Note: we're "abusing" the action registry to trace the success
         -- message as late as possible.
           delayedCommit reg $ traceWith sessionTracer TraceClosedSession
 
-          pure (SessionClosed, Just (sessionRefCtx seshEnv))
+          pure (SessionClosed, Just (seshEnv.sessionRefCtx))
 
     -- Check for forgotten references as the very last thing before returning
     -- from 'closeSession'.
@@ -953,32 +957,32 @@ data TableEnv m h = TableEnv {
 {-# INLINE tableSessionRoot #-}
  -- | Inherited from session for ease of access.
 tableSessionRoot :: TableEnv m h -> SessionRoot
-tableSessionRoot = sessionRoot . tableSessionEnv
+tableSessionRoot env = env.tableSessionEnv.sessionRoot
 
 {-# INLINE tableSessionId #-}
  -- | Inherited from session for ease of access.
 tableSessionId :: TableEnv m h -> SessionId
-tableSessionId = sessionId . tableSessionEnv
+tableSessionId env = sessionId env.tableSessionEnv
 
 {-# INLINE tableSessionSalt #-}
  -- | Inherited from session for ease of access.
 tableSessionSalt :: TableEnv m h -> Bloom.Salt
-tableSessionSalt = sessionSalt . tableSessionEnv
+tableSessionSalt env = env.tableSessionEnv.sessionSalt
 
 {-# INLINE tableHasFS #-}
 -- | Inherited from session for ease of access.
 tableHasFS :: TableEnv m h -> HasFS m h
-tableHasFS = sessionHasFS . tableSessionEnv
+tableHasFS env = env.tableSessionEnv.sessionHasFS
 
 {-# INLINE tableHasBlockIO #-}
 -- | Inherited from session for ease of access.
 tableHasBlockIO :: TableEnv m h -> HasBlockIO m h
-tableHasBlockIO = sessionHasBlockIO . tableSessionEnv
+tableHasBlockIO env = env.tableSessionEnv.sessionHasBlockIO
 
 {-# INLINE tableSessionUniqCounter #-}
 -- | Inherited from session for ease of access.
 tableSessionUniqCounter :: Table m h -> UniqCounter m
-tableSessionUniqCounter = sessionUniqCounter . tableSession
+tableSessionUniqCounter t =  t.tableSession.sessionUniqCounter
 
 {-# INLINE tableSessionUntrackTable #-}
 {-# SPECIALISE tableSessionUntrackTable :: TableId -> TableEnv IO h -> IO () #-}
@@ -986,7 +990,7 @@ tableSessionUniqCounter = sessionUniqCounter . tableSession
 -- closed it should become untracked (forgotten).
 tableSessionUntrackTable :: MonadMVar m => TableId -> TableEnv m h -> m ()
 tableSessionUntrackTable tableId tEnv =
-    modifyMVar_ (sessionOpenTables (tableSessionEnv tEnv)) $ pure . Map.delete tableId
+    modifyMVar_ (tEnv.tableSessionEnv.sessionOpenTables) $ pure . Map.delete tableId
 
 -- | The table is closed.
 data TableClosedError
@@ -1008,7 +1012,7 @@ withKeepTableOpen ::
   => Table m h
   -> (TableEnv m h -> m a)
   -> m a
-withKeepTableOpen t action = RW.withReadAccess (tableState t) $ \case
+withKeepTableOpen t action = RW.withReadAccess (t.tableState) $ \case
     TableClosed -> throwIO ErrTableClosed
     TableOpen tEnv -> action tEnv
 
@@ -1041,14 +1045,14 @@ new ::
   -> TableConfig
   -> m (Table m h)
 new sesh conf = do
-    tableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter sesh)
-    let tr = TraceTable tableId `contramap` lsmTreeTracer sesh
+    tableId <- uniqueToTableId <$> incrUniqCounter (sesh.sessionUniqCounter)
+    let tr = TraceTable tableId `contramap` sesh.lsmTreeTracer
     traceWith tr $ TraceNewTable conf
 
     withKeepSessionOpen sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
         am <- newArenaManager
-        tc <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
+        tc <- newEmptyTableContent (sesh.sessionUniqCounter) seshEnv reg
         newWith reg sesh seshEnv conf am tr tableId tc
 
 {-# SPECIALISE newEmptyTableContent ::
@@ -1063,12 +1067,12 @@ newEmptyTableContent ::
   -> ActionRegistry m
   -> m (TableContent m h)
 newEmptyTableContent uc seshEnv reg = do
-    blobpath <- Paths.tableBlobPath (sessionRoot seshEnv) <$>
+    blobpath <- Paths.tableBlobPath (seshEnv.sessionRoot) <$>
                   incrUniqCounter uc
     let tableWriteBuffer = WB.empty
     tableWriteBufferBlobs
       <- withRollback reg
-           (WBB.new (sessionHasFS seshEnv) (sessionRefCtx seshEnv) blobpath)
+           (WBB.new (seshEnv.sessionHasFS) (seshEnv.sessionRefCtx) blobpath)
            releaseRef
     let tableLevels = V.empty
     tableCache <- mkLevelsCache reg tableLevels
@@ -1115,7 +1119,7 @@ newWith reg sesh seshEnv conf !am !tr !tableId !tc = do
     let !t = Table conf tableVar am tr tableId sesh
     -- Track the current table
     delayedCommit reg $
-      modifyMVar_ (sessionOpenTables seshEnv) $
+      modifyMVar_ (seshEnv.sessionOpenTables) $
         pure . Map.insert tableId t
 
     -- Note: we're "abusing" the action registry to trace the success
@@ -1132,24 +1136,24 @@ close ::
   => Table m h
   -> m ()
 close t = do
-    traceWith (tableTracer t) TraceCloseTable
+    traceWith (t.tableTracer) TraceCloseTable
     modifyWithActionRegistry_
-      (RW.unsafeAcquireWriteAccess (tableState t))
-      (atomically . RW.unsafeReleaseWriteAccess (tableState t)) $ \reg -> \case
+      (RW.unsafeAcquireWriteAccess (t.tableState))
+      (atomically . RW.unsafeReleaseWriteAccess (t.tableState)) $ \reg -> \case
       TableClosed -> pure TableClosed
       TableOpen tEnv -> do
         -- Since we have a write lock on the table state, we know that we are the
         -- only thread currently closing the table. We can safely make the session
         -- forget about this table.
-        delayedCommit reg (tableSessionUntrackTable (tableId t) tEnv)
-        RW.withWriteAccess_ (tableContent tEnv) $ \tc -> do
+        delayedCommit reg (tableSessionUntrackTable (t.tableId) tEnv)
+        RW.withWriteAccess_ (tEnv.tableContent) $ \tc -> do
           releaseTableContent reg tc
           pure tc
 
         -- Note: we're "abusing" the action registry to trace the success
         -- message as late as possible.
         delayedCommit reg $
-          traceWith (tableTracer t) TraceClosedTable
+          traceWith (t.tableTracer) TraceClosedTable
 
         pure TableClosed
 
@@ -1166,35 +1170,35 @@ lookups ::
   -> Table m h
   -> m (V.Vector (Maybe (Entry SerialisedValue (WeakBlobRef m h))))
 lookups resolve ks t = do
-    traceWith (tableTracer t) $ TraceLookups (V.length ks)
+    traceWith (t.tableTracer) $ TraceLookups (V.length ks)
     withKeepTableOpen t $ \tEnv ->
-      RW.withReadAccess (tableContent tEnv) $ \tc -> do
-        case tableUnionLevel tc of
+      RW.withReadAccess (tEnv.tableContent) $ \tc -> do
+        case tc.tableUnionLevel of
           NoUnion -> lookupsRegular tEnv tc
           Union tree unionCache -> do
             isStructurallyEmpty tree >>= \case
               True  -> lookupsRegular tEnv tc
-              False -> if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
+              False -> if WB.null (tc.tableWriteBuffer) && V.null (tc.tableLevels)
                          then lookupsUnion tEnv unionCache
                          else lookupsRegularAndUnion tEnv tc unionCache
   where
     lookupsRegular tEnv tc = do
-        let !cache = tableCache tc
+        let !cache = tc.tableCache
         lookupsIOWithWriteBuffer
           (tableHasBlockIO tEnv)
-          (tableArenaManager t)
+          (t.tableArenaManager)
           resolve
           (tableSessionSalt tEnv)
-          (tableWriteBuffer tc)
-          (tableWriteBufferBlobs tc)
-          (cachedRuns cache)
-          (cachedFilters cache)
-          (cachedIndexes cache)
-          (cachedKOpsFiles cache)
+          (tc.tableWriteBuffer)
+          (tc.tableWriteBufferBlobs)
+          (cache.cachedRuns)
+          (cache.cachedFilters)
+          (cache.cachedIndexes)
+          (cache.cachedKOpsFiles)
           ks
 
     lookupsUnion tEnv unionCache = do
-        treeResults <- flip MT.mapMStrict (cachedTree unionCache) $ \runs ->
+        treeResults <- flip MT.mapMStrict (unionCache.cachedTree) $ \runs ->
           Async.async $ lookupsUnionSingleBatch tEnv runs
         MT.foldLookupTree resolve treeResults
 
@@ -1202,7 +1206,7 @@ lookups resolve ks t = do
         -- asynchronously, so tree lookup batches can already be submitted
         -- without waiting for the regular level result.
         regularResult <- Async.async $ lookupsRegular tEnv tc
-        treeResults <- flip MT.mapMStrict (cachedTree unionCache) $ \runs ->
+        treeResults <- flip MT.mapMStrict (unionCache.cachedTree) $ \runs ->
           Async.async $ lookupsUnionSingleBatch tEnv runs
         MT.foldLookupTree resolve $
           MT.mkLookupNode MR.MergeLevel $ V.fromList
@@ -1213,13 +1217,13 @@ lookups resolve ks t = do
     lookupsUnionSingleBatch tEnv runs =
         lookupsIO
           (tableHasBlockIO tEnv)
-          (tableArenaManager t)
+          (t.tableArenaManager)
           resolve
           (tableSessionSalt tEnv)
           runs
-          (V.mapStrict (\(DeRef r) -> Run.runFilter   r) runs)
-          (V.mapStrict (\(DeRef r) -> Run.runIndex    r) runs)
-          (V.mapStrict (\(DeRef r) -> Run.runKOpsFile r) runs)
+          (V.mapStrict (\(DeRef r) -> r.bloomFilter) runs)
+          (V.mapStrict (\(DeRef r) -> r.index    ) runs)
+          (V.mapStrict (\(DeRef r) -> r.kOpsFile) runs)
           ks
 
 {-# SPECIALISE rangeLookup ::
@@ -1238,7 +1242,7 @@ rangeLookup ::
      -- ^ How to map to a query result
   -> m (V.Vector res)
 rangeLookup resolve range t fromEntry = do
-    traceWith (tableTracer t) $ TraceRangeLookup range
+    traceWith (t.tableTracer) $ TraceRangeLookup range
     case range of
       FromToExcluding lb ub ->
         withCursor resolve (OffsetKey lb) t $ \cursor ->
@@ -1277,21 +1281,21 @@ updates ::
   -> Table m h
   -> m ()
 updates resolve es t = do
-    traceWith (tableTracer t) $ TraceUpdates (V.length es)
-    let conf = tableConfig t
+    traceWith (t.tableTracer) $ TraceUpdates (V.length es)
+    let conf = t.tableConfig
     withKeepTableOpen t $ \tEnv -> do
       let hfs = tableHasFS tEnv
       modifyWithActionRegistry_
-        (RW.unsafeAcquireWriteAccess (tableContent tEnv))
-        (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv)) $ \reg tc -> do
+        (RW.unsafeAcquireWriteAccess (tEnv.tableContent))
+        (atomically . RW.unsafeReleaseWriteAccess (tEnv.tableContent)) $ \reg tc -> do
           tc' <-
             updatesWithInterleavedFlushes
-              (contramapTraceMerge $ tableTracer t)
+              (contramapTraceMerge $ t.tableTracer)
               conf
               resolve
               hfs
               (tableHasBlockIO tEnv)
-              (sessionRefCtx (tableSessionEnv tEnv))
+              (tEnv.tableSessionEnv.sessionRefCtx)
               (tableSessionRoot tEnv)
               (tableSessionSalt tEnv)
               (tableSessionUniqCounter t)
@@ -1302,7 +1306,7 @@ updates resolve es t = do
           -- Note: we're "abusing" the action registry to trace the success
           -- message as late as possible.
           delayedCommit reg $
-            traceWith (tableTracer t) $ TraceUpdated (V.length es)
+            traceWith (t.tableTracer) $ TraceUpdated (V.length es)
 
           pure tc'
 
@@ -1335,12 +1339,12 @@ retrieveBlobs ::
   -> V.Vector (WeakBlobRef m h)
   -> m (V.Vector SerialisedBlob)
 retrieveBlobs sesh wrefs = do
-    traceWith (sessionTracer sesh) $ TraceRetrieveBlobs (V.length wrefs)
+    traceWith (sesh.sessionTracer) $ TraceRetrieveBlobs (V.length wrefs)
     withKeepSessionOpen sesh $ \seshEnv ->
-      let hbio = sessionHasBlockIO seshEnv in
+      let hbio = seshEnv.sessionHasBlockIO in
       handle (\(BlobRef.WeakBlobRefInvalid i) ->
                 throwIO (ErrBlobRefInvalid i)) $
-      BlobRef.readWeakBlobRefs hbio (sessionRefCtx seshEnv) wrefs
+      BlobRef.readWeakBlobRefs hbio (seshEnv.sessionRefCtx) wrefs
 
 {-------------------------------------------------------------------------------
   Cursors
@@ -1443,12 +1447,12 @@ newCursor ::
   -> Table m h
   -> m (Cursor m h)
 newCursor !resolve !offsetKey t = withKeepTableOpen t $ \tEnv -> do
-    let cursorSession = tableSession t
-    let cursorSessionEnv = tableSessionEnv tEnv
+    let cursorSession = t.tableSession
+    let cursorSessionEnv = tEnv.tableSessionEnv
     cursorId <- uniqueToCursorId <$>
       incrUniqCounter (tableSessionUniqCounter t)
-    let cursorTracer = TraceCursor cursorId `contramap` lsmTreeTracer cursorSession
-    traceWith cursorTracer $ TraceNewCursor (tableId t) $ case offsetKey of
+    let cursorTracer = TraceCursor cursorId `contramap` cursorSession.lsmTreeTracer
+    traceWith cursorTracer $ TraceNewCursor (t.tableId) $ case offsetKey of
       NoOffsetKey                     -> Nothing
       OffsetKey (SerialisedKey bytes) -> Just bytes
 
@@ -1457,7 +1461,7 @@ newCursor !resolve !offsetKey t = withKeepTableOpen t $ \tEnv -> do
     withKeepSessionOpen cursorSession $ \_ -> do
       withActionRegistry $ \reg -> do
         (wb, wbblobs, cursorRuns, cursorUnion) <-
-          dupTableContent reg (tableContent tEnv)
+          dupTableContent reg (tEnv.tableContent)
         let cursorSources =
                 Readers.FromWriteBuffer wb wbblobs
               : fmap Readers.FromRun (V.toList cursorRuns)
@@ -1478,7 +1482,7 @@ newCursor !resolve !offsetKey t = withKeepTableOpen t $ \tEnv -> do
         -- Therefore, we only track the cursor if 'withActionRegistry' exits
         -- successfully, i.e. using 'delayedCommit'.
         delayedCommit reg $
-          modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
+          modifyMVar_ (cursorSessionEnv.sessionOpenCursors) $
             pure . Map.insert cursorId cursor
 
         -- Note: we're "abusing" the action registry to trace the success
@@ -1492,13 +1496,13 @@ newCursor !resolve !offsetKey t = withKeepTableOpen t $ \tEnv -> do
     -- references to each run, so it is safe.
     dupTableContent reg contentVar = do
         RW.withReadAccess contentVar $ \content -> do
-          let !wb      = tableWriteBuffer content
-              !wbblobs = tableWriteBufferBlobs content
+          let !wb      = content.tableWriteBuffer
+              !wbblobs = content.tableWriteBufferBlobs
           wbblobs' <- withRollback reg (dupRef wbblobs) releaseRef
-          let runs = cachedRuns (tableCache content)
+          let runs =  content.tableCache.cachedRuns
           runs' <- V.forM runs $ \r ->
                      withRollback reg (dupRef r) releaseRef
-          unionCache <- case tableUnionLevel content of
+          unionCache <- case content.tableUnionLevel of
             NoUnion   -> pure Nothing
             Union _ c -> Just <$!> duplicateUnionCache reg c
           pure (wb, wbblobs', runs', unionCache)
@@ -1535,7 +1539,7 @@ closeCursor Cursor {..} = do
         -- In that case, the cursor ends up closed, but resources might not have
         -- been freed. Probably better than the other way around, though.
         delayedCommit reg $
-          modifyMVar_ (sessionOpenCursors cursorSessionEnv) $
+          modifyMVar_ (cursorSessionEnv.sessionOpenCursors) $
             pure . Map.delete cursorId
 
         forM_ cursorReaders $ delayedCommit reg . Readers.close
@@ -1605,7 +1609,7 @@ readCursorWhile resolve keyIsWanted n Cursor {..} fromEntry = do
     res <- modifyMVar cursorState $ \case
       CursorClosed -> throwIO ErrCursorClosed
       state@(CursorOpen cursorEnv) -> do
-        case cursorReaders cursorEnv of
+        case cursorEnv.cursorReaders of
           Nothing ->
             -- a drained cursor will just return an empty vector
             pure (state, V.empty)
@@ -1644,7 +1648,7 @@ saveSnapshot ::
   -> Table m h
   -> m ()
 saveSnapshot snap label t = do
-    traceWith (tableTracer t) $ TraceSaveSnapshot snap
+    traceWith (t.tableTracer) $ TraceSaveSnapshot snap
     withKeepTableOpen t $ \tEnv ->
       withActionRegistry $ \reg -> do -- TODO: use the action registry for all side effects
         let hfs  = tableHasFS tEnv
@@ -1653,7 +1657,7 @@ saveSnapshot snap label t = do
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (tableSessionRoot tEnv) snap
-        snapshotExists <- doesSnapshotDirExist snap (tableSessionEnv tEnv)
+        snapshotExists <- doesSnapshotDirExist snap (tEnv.tableSessionEnv)
         if snapshotExists then
           throwIO (ErrSnapshotExists snap)
         else
@@ -1666,7 +1670,7 @@ saveSnapshot snap label t = do
         -- Duplicate references to the table content, so that resources do not disappear
         -- from under our feet while taking a snapshot. These references are released
         -- again after the snapshot files/directories are written.
-        content <- RW.withReadAccess (tableContent tEnv) (duplicateTableContent reg)
+        content <- RW.withReadAccess (tEnv.tableContent) (duplicateTableContent reg)
 
         -- Fresh UniqCounter so that we start numbering from 0 in the named
         -- snapshot directory
@@ -1674,19 +1678,19 @@ saveSnapshot snap label t = do
 
         -- Snapshot the write buffer.
         let activeDir = Paths.activeDir (tableSessionRoot tEnv)
-        let wb = tableWriteBuffer content
-        let wbb = tableWriteBufferBlobs content
+        let wb = content.tableWriteBuffer
+        let wbb = content.tableWriteBufferBlobs
         snapWriteBufferNumber <- Paths.writeBufferNumber <$>
             snapshotWriteBuffer hfs hbio activeUc snapUc reg activeDir snapDir wb wbb
 
         -- Convert to snapshot format
-        snapLevels <- toSnapLevels (tableLevels content)
+        snapLevels <- toSnapLevels (content.tableLevels)
 
         -- Hard link runs into the named snapshot directory
         snapLevels' <- traverse (snapshotRun hfs hbio snapUc reg snapDir) snapLevels
 
         -- If a merging tree exists, do the same hard-linking for the runs within
-        mTreeOpt <- case tableUnionLevel content of
+        mTreeOpt <- case content.tableUnionLevel of
           NoUnion -> pure Nothing
           Union mTreeRef _cache -> do
             mTree <- toSnapMergingTree mTreeRef
@@ -1696,7 +1700,7 @@ saveSnapshot snap label t = do
 
         let snapMetaData = SnapshotMetaData
                 label
-                (tableConfig t)
+                (t.tableConfig)
                 snapWriteBufferNumber
                 snapLevels'
                 mTreeOpt
@@ -1710,7 +1714,7 @@ saveSnapshot snap label t = do
         -- Note: we're "abusing" the action registry to trace the success
         -- message as late as possible.
         delayedCommit reg $
-          traceWith (tableTracer t) $ TraceSavedSnapshot snap
+          traceWith (t.tableTracer) $ TraceSavedSnapshot snap
 
 -- | The named snapshot does not exist.
 data SnapshotDoesNotExistError
@@ -1755,19 +1759,19 @@ openTableFromSnapshot ::
   -> ResolveSerialisedValue
   -> m (Table m h)
 openTableFromSnapshot policyOveride sesh snap label resolve = do
-  tableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter sesh)
-  let tr = TraceTable tableId `contramap` lsmTreeTracer sesh
+  tableId <- uniqueToTableId <$> incrUniqCounter (sesh.sessionUniqCounter)
+  let tr = TraceTable tableId `contramap` sesh.lsmTreeTracer
   traceWith tr $ TraceOpenTableFromSnapshot snap policyOveride
 
   wrapFileCorruptedErrorAsSnapshotCorruptedError snap $ do
     withKeepSessionOpen sesh $ \seshEnv -> do
       withActionRegistry $ \reg -> do
-        let hfs     = sessionHasFS seshEnv
-            hbio    = sessionHasBlockIO seshEnv
-            uc      = sessionUniqCounter sesh
+        let hfs     = seshEnv.sessionHasFS
+            hbio    = seshEnv.sessionHasBlockIO
+            uc      = sesh.sessionUniqCounter
 
         -- Guard that the snapshot exists
-        let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
+        let snapDir = Paths.namedSnapshotDir (seshEnv.sessionRoot) snap
         FS.doesDirectoryExist hfs (Paths.getNamedSnapshotDir snapDir) >>= \b ->
           unless b $ throwIO (ErrSnapshotDoesNotExist snap)
 
@@ -1784,21 +1788,21 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
 
         am <- newArenaManager
 
-        let salt = sessionSalt seshEnv
-        let activeDir = Paths.activeDir (sessionRoot seshEnv)
+        let salt = seshEnv.sessionSalt
+        let activeDir = Paths.activeDir (seshEnv.sessionRoot)
 
         -- Read write buffer
         let snapWriteBufferPaths = Paths.WriteBufferFsPaths (Paths.getNamedSnapshotDir snapDir) snapWriteBuffer
         (tableWriteBuffer, tableWriteBufferBlobs) <-
-          openWriteBuffer reg resolve hfs hbio (sessionRefCtx seshEnv) uc activeDir snapWriteBufferPaths
+          openWriteBuffer reg resolve hfs hbio (seshEnv.sessionRefCtx) uc activeDir snapWriteBufferPaths
 
         -- Hard link runs into the active directory,
-        snapLevels' <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) snapLevels
+        snapLevels' <- traverse (openRun hfs hbio (seshEnv.sessionRefCtx) uc reg snapDir activeDir salt) snapLevels
         unionLevel <- case mTreeOpt of
               Nothing -> pure NoUnion
               Just mTree -> do
-                snapTree <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) mTree
-                mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
+                snapTree <- traverse (openRun hfs hbio (seshEnv.sessionRefCtx) uc reg snapDir activeDir salt) mTree
+                mt <- fromSnapMergingTree hfs hbio (seshEnv.sessionRefCtx) salt uc resolve activeDir reg snapTree
                 isStructurallyEmpty mt >>= \case
                   True ->
                     pure NoUnion
@@ -1808,7 +1812,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
                     pure (Union mt cache)
 
         -- Convert from the snapshot format, restoring merge progress in the process
-        tableLevels <- fromSnapLevels hfs hbio (sessionRefCtx seshEnv) salt uc conf resolve reg activeDir snapLevels'
+        tableLevels <- fromSnapLevels hfs hbio (seshEnv.sessionRefCtx) salt uc conf resolve reg activeDir snapLevels'
         traverse_ (delayedCommit reg . releaseRef) snapLevels'
 
         tableCache <- mkLevelsCache reg tableLevels
@@ -1849,8 +1853,8 @@ doesSnapshotExist sesh snap = withKeepSessionOpen sesh (doesSnapshotDirExist sna
 -- | Internal helper: Variant of 'doesSnapshotExist' that does not take a session lock.
 doesSnapshotDirExist :: SnapshotName -> SessionEnv m h -> m Bool
 doesSnapshotDirExist snap seshEnv = do
-  let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
-  FS.doesDirectoryExist (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
+  let snapDir = Paths.namedSnapshotDir (seshEnv.sessionRoot) snap
+  FS.doesDirectoryExist (seshEnv.sessionHasFS) (Paths.getNamedSnapshotDir snapDir)
 
 {-# SPECIALISE deleteSnapshot ::
      Session IO h
@@ -1863,13 +1867,13 @@ deleteSnapshot ::
   -> SnapshotName
   -> m ()
 deleteSnapshot sesh snap = do
-    traceWith (sessionTracer sesh) $ TraceDeleteSnapshot snap
+    traceWith (sesh.sessionTracer) $ TraceDeleteSnapshot snap
     withKeepSessionOpen sesh $ \seshEnv -> do
-      let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
+      let snapDir = Paths.namedSnapshotDir (seshEnv.sessionRoot) snap
       snapshotExists <- doesSnapshotDirExist snap seshEnv
       unless snapshotExists $ throwIO (ErrSnapshotDoesNotExist snap)
-      FS.removeDirectoryRecursive (sessionHasFS seshEnv) (Paths.getNamedSnapshotDir snapDir)
-    traceWith (sessionTracer sesh) $ TraceDeletedSnapshot snap
+      FS.removeDirectoryRecursive (seshEnv.sessionHasFS) (Paths.getNamedSnapshotDir snapDir)
+    traceWith (sesh.sessionTracer) $ TraceDeletedSnapshot snap
 
 {-# SPECIALISE listSnapshots :: Session IO h -> IO [SnapshotName] #-}
 -- |  See 'Database.LSMTree.listSnapshots'.
@@ -1878,11 +1882,11 @@ listSnapshots ::
   => Session m h
   -> m [SnapshotName]
 listSnapshots sesh = do
-    traceWith (sessionTracer sesh) TraceListSnapshots
+    traceWith (sesh.sessionTracer) TraceListSnapshots
     withKeepSessionOpen sesh $ \seshEnv -> do
-      let hfs = sessionHasFS seshEnv
-          root = sessionRoot seshEnv
-      contents <- FS.listDirectory hfs (Paths.snapshotsDir (sessionRoot seshEnv))
+      let hfs = seshEnv.sessionHasFS
+          root = seshEnv.sessionRoot
+      contents <- FS.listDirectory hfs (Paths.snapshotsDir (seshEnv.sessionRoot))
       snaps <- mapM (checkSnapshot hfs root) $ Set.toList contents
       pure $ catMaybes snaps
   where
@@ -1907,7 +1911,7 @@ duplicate ::
   -> m (Table m h)
 duplicate t@Table{..} = do
     childTableId <- uniqueToTableId <$> incrUniqCounter (tableSessionUniqCounter t)
-    let childTableTracer = TraceTable childTableId `contramap` lsmTreeTracer tableSession
+    let childTableTracer = TraceTable childTableId `contramap` tableSession.lsmTreeTracer
         parentTableId = tableId
     traceWith childTableTracer $ TraceDuplicate parentTableId
 
@@ -1965,9 +1969,9 @@ unions ::
 unions ts = do
     sesh <- ensureSessionsMatch ts
 
-    childTableId <- uniqueToTableId <$> incrUniqCounter (sessionUniqCounter sesh)
-    let childTableTracer = TraceTable childTableId `contramap` lsmTreeTracer sesh
-    traceWith childTableTracer $ TraceIncrementalUnions (NE.map tableId ts)
+    childTableId <- uniqueToTableId <$> incrUniqCounter (sesh.sessionUniqCounter)
+    let childTableTracer = TraceTable childTableId `contramap` sesh.lsmTreeTracer
+    traceWith childTableTracer $ TraceIncrementalUnions (NE.map (\t -> t.tableId) ts)
 
     -- The TableConfig for the new table is taken from the last table in the
     -- union. This corresponds to the "Data.Map.union updates baseMap" order,
@@ -1978,13 +1982,13 @@ unions ts = do
     -- will have an empty write buffer and no runs in the normal levels. All
     -- the existing runs get squashed down into a single run before rejoining
     -- as a last level.
-    let conf = tableConfig (NE.last ts)
+    let conf = (NE.last ts).tableConfig
 
     -- We acquire a read-lock on the session open-state to prevent races, see
     -- 'sessionOpenTables'.
     modifyWithActionRegistry
-      (atomically $ RW.unsafeAcquireReadAccess (sessionState sesh))
-      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sessionState sesh)) $
+      (atomically $ RW.unsafeAcquireReadAccess (sesh.sessionState))
+      (\_ -> atomically $ RW.unsafeReleaseReadAccess (sesh.sessionState)) $
       \reg -> \case
         SessionClosed -> throwIO ErrSessionClosed
         seshState@(SessionOpen seshEnv) -> do
@@ -2013,14 +2017,14 @@ unionsInOpenSession ::
 unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
     mts <- forM (NE.toList ts) $ \t ->
       withKeepTableOpen t $ \tEnv ->
-        RW.withReadAccess (tableContent tEnv) $ \tc ->
+        RW.withReadAccess (tEnv.tableContent) $ \tc ->
           -- tableContentToMergingTree duplicates all runs and merges
           -- so the ones from the tableContent here do not escape
           -- the read access.
           withRollback reg
-            (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
+            (tableContentToMergingTree (sesh.sessionUniqCounter) seshEnv conf tc)
             releaseRef
-    mt <- withRollback reg (newPendingUnionMerge (sessionRefCtx seshEnv) mts) releaseRef
+    mt <- withRollback reg (newPendingUnionMerge (seshEnv.sessionRefCtx) mts) releaseRef
 
     -- The mts here is a temporary value, since newPendingUnionMerge
     -- will make its own references, so release mts at the end of
@@ -2031,16 +2035,16 @@ unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
       True -> do
         -- no need to have an empty merging tree
         delayedCommit reg (releaseRef mt)
-        newEmptyTableContent ((sessionUniqCounter sesh)) seshEnv reg
+        newEmptyTableContent ((sesh.sessionUniqCounter)) seshEnv reg
       False -> do
-        empty <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
+        empty <- newEmptyTableContent (sesh.sessionUniqCounter) seshEnv reg
         cache <- mkUnionCache reg mt
         pure empty { tableUnionLevel = Union mt cache }
 
     -- Pick the arena manager to optimise the case of:
     -- someUpdates <> bigTableWithLotsOfLookups
     -- by reusing the arena manager from the last one.
-    let am = tableArenaManager (NE.last ts)
+    let am = (NE.last ts).tableArenaManager
 
     newWith reg sesh seshEnv conf am tr tableId content
 
@@ -2073,7 +2077,7 @@ tableContentToMergingTree uc seshEnv conf
                     NoUnion    -> Nothing
                     Union mt _ -> Just mt  -- we could reuse the cache, but it
                                            -- would complicate things
-       in newPendingLevelMerge (sessionRefCtx seshEnv) runs unionmt
+       in newPendingLevelMerge (seshEnv.sessionRefCtx) runs unionmt
   where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
     levelToPreExistingRuns Level{incomingRun, residentRuns} =
@@ -2131,18 +2135,18 @@ ensureSessionsMatch ::
   => NonEmpty (Table m h)
   -> m (Session m h)
 ensureSessionsMatch (t :| ts) = do
-  let sesh = tableSession t
+  let sesh = t.tableSession
   withKeepSessionOpen sesh $ \seshEnv -> do
-    let root = FS.mkFsErrorPath (sessionHasFS seshEnv) (getSessionRoot (sessionRoot seshEnv))
+    let root = FS.mkFsErrorPath (seshEnv.sessionHasFS) (getSessionRoot (seshEnv.sessionRoot))
     -- Check that the session roots for all tables are the same. There can only
     -- be one *open/active* session per directory because of cooperative file
     -- locks, so each unique *open* session has a unique session root. We check
     -- that all the table's sessions are open at the same time while comparing
     -- the session roots.
     for_ (zip [1..] ts) $ \(i, t') -> do
-      let sesh' = tableSession t'
+      let sesh' = t'.tableSession
       withKeepSessionOpen sesh' $ \seshEnv' -> do
-        let root' = FS.mkFsErrorPath (sessionHasFS seshEnv') (getSessionRoot (sessionRoot seshEnv'))
+        let root' = FS.mkFsErrorPath (seshEnv'.sessionHasFS) (getSessionRoot (seshEnv'.sessionRoot))
         -- TODO: compare LockFileHandle instead of SessionRoot (?).
         -- We can write an Eq instance for LockFileHandle based on pointer equality,
         -- just like base does for Handle.
@@ -2168,10 +2172,10 @@ remainingUnionDebt ::
      (MonadSTM m, MonadMVar m, MonadThrow m, PrimMonad m)
   => Table m h -> m UnionDebt
 remainingUnionDebt t = do
-    traceWith (tableTracer t) TraceRemainingUnionDebt
+    traceWith (t.tableTracer) TraceRemainingUnionDebt
     withKeepTableOpen t $ \tEnv -> do
-      RW.withReadAccess (tableContent tEnv) $ \tableContent -> do
-        case tableUnionLevel tableContent of
+      RW.withReadAccess (tEnv.tableContent) $ \tableContent -> do
+        case tableContent.tableUnionLevel of
           NoUnion ->
             pure (UnionDebt 0)
           Union mt _ -> do
@@ -2191,18 +2195,18 @@ supplyUnionCredits ::
      (MonadST m, MonadSTM m, MonadMVar m, MonadMask m)
   => ResolveSerialisedValue -> Table m h -> UnionCredits -> m UnionCredits
 supplyUnionCredits resolve t credits = do
-    traceWith (tableTracer t) $ TraceSupplyUnionCredits credits
+    traceWith (t.tableTracer) $ TraceSupplyUnionCredits credits
     withKeepTableOpen t $ \tEnv -> do
       -- We also want to mutate the table content to re-build the union cache,
       -- but we don't need to hold a writer lock while we work on the tree
       -- itself.
       -- TODO: revisit the locking strategy here.
-      leftovers <- RW.withReadAccess (tableContent tEnv) $ \tc -> do
-        case tableUnionLevel tc of
+      leftovers <- RW.withReadAccess (tEnv.tableContent) $ \tc -> do
+        case tc.tableUnionLevel of
           NoUnion ->
             pure (max 0 credits)  -- all leftovers (but never negative)
           Union mt _ -> do
-            let conf = tableConfig t
+            let conf = t.tableConfig
             let AllocNumEntries x = confWriteBufferAlloc conf
             -- We simply use the write buffer capacity as merge credit threshold, as
             -- the regular level merges also do.
@@ -2212,7 +2216,7 @@ supplyUnionCredits resolve t credits = do
               MT.supplyCredits
                 (tableHasFS tEnv)
                 (tableHasBlockIO tEnv)
-                (sessionRefCtx (tableSessionEnv tEnv))
+                (tEnv.tableSessionEnv.sessionRefCtx)
                 resolve
                 (tableSessionSalt tEnv)
                 (runParamsForLevel conf UnionLevel)
@@ -2222,13 +2226,13 @@ supplyUnionCredits resolve t credits = do
                 mt
                 (let UnionCredits c = credits in MergeCredits c)
             pure (UnionCredits leftovers)
-      traceWith (tableTracer t) $ TraceSuppliedUnionCredits credits leftovers
+      traceWith (t.tableTracer) $ TraceSuppliedUnionCredits credits leftovers
       -- TODO: don't go into this section if we know there is NoUnion
       modifyWithActionRegistry_
-        (RW.unsafeAcquireWriteAccess (tableContent tEnv))
-        (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv))
+        (RW.unsafeAcquireWriteAccess (tEnv.tableContent))
+        (atomically . RW.unsafeReleaseWriteAccess (tEnv.tableContent))
         $ \reg tc ->
-          case tableUnionLevel tc of
+          case tc.tableUnionLevel of
             NoUnion -> pure tc
             Union mt cache -> do
               unionLevel' <- MT.isStructurallyEmpty mt >>= \case
