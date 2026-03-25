@@ -1,4 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 
 module Database.LSMTree.Internal.Snapshot (
     -- * Snapshot metadata
@@ -385,9 +388,9 @@ toSnapLevel ::
      (PrimMonad m, MonadMVar m)
   => Level m h
   -> m (SnapLevel (Ref (Run m h)))
-toSnapLevel Level{..} = do
-    sir <- toSnapIncomingRun incomingRun
-    pure (SnapLevel sir residentRuns)
+toSnapLevel level = do
+    sir <- toSnapIncomingRun level.incomingRun
+    pure (SnapLevel sir level.residentRuns)
 
 {-# SPECIALISE toSnapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun (Ref (Run IO h))) #-}
 toSnapIncomingRun ::
@@ -529,7 +532,7 @@ openWriteBuffer reg resolve hfs hbio refCtx uc activeDir snapWriteBufferPaths = 
   let kOpsPath = ForKOps (writeBufferKOpsPath snapWriteBufferPaths)
   writeBuffer <-
     withRef writeBufferBlobs $ \wbb ->
-      WBR.readWriteBuffer resolve hfs hbio kOpsPath (WBB.blobFile wbb)
+      WBR.readWriteBuffer resolve hfs hbio kOpsPath (wbb.blobFile)
   pure (writeBuffer, writeBufferBlobs)
 
 {-------------------------------------------------------------------------------
@@ -573,8 +576,9 @@ snapshotRun ::
   -> Ref (Run m h)
   -> m SnapshotRun
 snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
+    let DeRef r = run
     rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
-    let sourcePaths = Run.runFsPaths run
+    let sourcePaths = r.fsPaths
     let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
     hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
     pure SnapshotRun {

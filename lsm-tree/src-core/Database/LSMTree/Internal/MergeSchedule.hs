@@ -1,6 +1,9 @@
-{-# LANGUAGE CPP           #-}
-{-# LANGUAGE MagicHash     #-}
-{-# LANGUAGE UnboxedTuples #-}
+{-# LANGUAGE CPP                   #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE MagicHash             #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE UnboxedTuples         #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- TODO: establish that this implementation matches up with the ScheduledMerges
@@ -216,9 +219,9 @@ mkLevelsCache reg lvls = do
       lvls
     pure $! LevelsCache_ {
         cachedRuns      = rs
-      , cachedFilters   = mapStrict (\(DeRef r) -> Run.runFilter   r) rs
-      , cachedIndexes   = mapStrict (\(DeRef r) -> Run.runIndex    r) rs
-      , cachedKOpsFiles = mapStrict (\(DeRef r) -> Run.runKOpsFile r) rs
+      , cachedFilters   = mapStrict (\(DeRef r) -> r.bloomFilter ) rs
+      , cachedIndexes   = mapStrict (\(DeRef r) -> r.index) rs
+      , cachedKOpsFiles = mapStrict (\(DeRef r) -> r.kOpsFile) rs
       }
   where
     dupRun r = withRollback reg (dupRef r) releaseRef
@@ -283,7 +286,7 @@ duplicateLevelsCache ::
   -> LevelsCache m h
   -> m (LevelsCache m h)
 duplicateLevelsCache reg cache = do
-    rs' <- forMStrict (cachedRuns cache) $ \r ->
+    rs' <- forMStrict (cache.cachedRuns) $ \r ->
              withRollback reg (dupRef r) releaseRef
     pure cache { cachedRuns = rs' }
 
@@ -297,7 +300,7 @@ releaseLevelsCache ::
   -> LevelsCache m h
   -> m ()
 releaseLevelsCache reg cache =
-    V.forM_ (cachedRuns cache) $ \r ->
+    V.forM_ (cache.cachedRuns) $ \r ->
       delayedCommit reg (releaseRef r)
 
 {-------------------------------------------------------------------------------
@@ -494,14 +497,14 @@ updatesWithInterleavedFlushes ::
   -> TableContent m h
   -> m (TableContent m h)
 updatesWithInterleavedFlushes tr conf resolve hfs hbio refCtx root salt uc es reg tc = do
-    let wb = tableWriteBuffer tc
-        wbblobs = tableWriteBufferBlobs tc
+    let wb = tc.tableWriteBuffer
+        wbblobs = tc.tableWriteBufferBlobs
     (wb', es') <- addWriteBufferEntries hfs resolve wbblobs maxn wb es
     -- Supply credits before flushing, so that we complete merges in time. The
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
-    supplyCredits refCtx conf (NominalCredits numAdded) (tableLevels tc)
+    supplyCredits refCtx conf (NominalCredits numAdded) (tc.tableLevels)
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
@@ -593,10 +596,10 @@ flushWriteBuffer ::
   -> TableContent m h
   -> m (TableContent m h)
 flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc
-  | WB.null (tableWriteBuffer tc) = pure tc
+  | WB.null (tc.tableWriteBuffer) = pure tc
   | otherwise = do
     !uniq <- incrUniqCounter uc
-    let !size      = WB.numEntries (tableWriteBuffer tc)
+    let !size      = WB.numEntries (tc.tableWriteBuffer)
         !ln        = LevelNo 1
         (!runParams,
          runPaths) = mergingRunParamsForLevel
@@ -608,23 +611,23 @@ flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc
             (Run.fromWriteBuffer
               hfs hbio refCtx salt
               runParams runPaths
-              (tableWriteBuffer tc)
-              (tableWriteBufferBlobs tc))
+              (tc.tableWriteBuffer)
+              (tc.tableWriteBufferBlobs))
             releaseRef
-    delayedCommit reg (releaseRef (tableWriteBufferBlobs tc))
+    delayedCommit reg (releaseRef (tc.tableWriteBufferBlobs))
     wbblobs' <- withRollback reg (WBB.new hfs refCtx (Paths.tableBlobPath root uniq))
                                  releaseRef
     levels' <- addRunToLevels tr conf resolve hfs hbio refCtx root salt uc r reg
-                 (tableLevels tc)
-                 (tableUnionLevel tc)
-    tableCache' <- rebuildCache reg (tableCache tc) levels'
+                 (tc.tableLevels)
+                 (tc.tableUnionLevel)
+    tableCache' <- rebuildCache reg (tc.tableCache) levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableWriteBufferBlobs = wbblobs'
       , tableLevels = levels'
       , tableCache = tableCache'
         -- TODO: move into regular levels if merge completed and size fits
-      , tableUnionLevel = tableUnionLevel tc
+      , tableUnionLevel = tc.tableUnionLevel
       }
 
 {-# SPECIALISE addRunToLevels ::

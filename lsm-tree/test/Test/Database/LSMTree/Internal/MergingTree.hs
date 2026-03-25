@@ -1,3 +1,6 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Database.LSMTree.Internal.MergingTree (tests) where
@@ -176,9 +179,9 @@ prop_lookupTree hfs hbio keys mtd = withRefCtx $ \refCtx -> do
             resolveVal
             testSalt
             runs
-            (fmap (\(DeRef r) -> Run.runFilter   r) runs)
-            (fmap (\(DeRef r) -> Run.runIndex    r) runs)
-            (fmap (\(DeRef r) -> Run.runKOpsFile r) runs)
+            (fmap (\(DeRef r) -> r.bloomFilter) runs)
+            (fmap (\(DeRef r) -> r.index) runs)
+            (fmap (\(DeRef r) -> r.kOpsFile) runs)
             keys
 
 type SerialisedEntry = Entry SerialisedValue SerialisedBlob

@@ -1,15 +1,18 @@
-{-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE DeriveAnyClass     #-}
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE DerivingVia           #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- | Runs of sorted key\/value data.
 module Database.LSMTree.Internal.Run (
     -- * Run
-    Run (Run, runIndex, runHasFS, runHasBlockIO, runRunDataCaching,
-         runBlobFile, runFilter, runKOpsFile)
+    Run (Run, index, hasFS, hasBlockIO, dataCaching,
+         blobFile, bloomFilter, kOpsFile, fsPaths, numEntries, refCounter)
   , RunFsPaths
   , size
   , sizeInPages
@@ -68,75 +71,79 @@ import           System.FS.BlockIO.API (HasBlockIO)
 -- | The in-memory representation of a completed LSM run.
 --
 data Run m h = Run {
-      runNumEntries     :: !NumEntries
+      numEntries  :: !NumEntries
       -- | The reference count for the LSM run. This counts the
       -- number of references from LSM handles to this run. When
       -- this drops to zero the open files will be closed.
-    , runRefCounter     :: !(RefCounter m)
+    , refCounter  :: !(RefCounter m)
       -- | The file system paths for all the files used by the run.
-    , runRunFsPaths     :: !RunFsPaths
+    , fsPaths     :: !RunFsPaths
       -- | The bloom filter for the set of keys in this run.
-    , runFilter         :: !(Bloom SerialisedKey)
+    , bloomFilter :: !(Bloom SerialisedKey)
       -- | The in-memory index mapping keys to page numbers in the
       -- Key\/Ops file. In future we may support alternative index
       -- representations.
-    , runIndex          :: !Index
+    , index       :: !Index
       -- | The file handle for the Key\/Ops file. This file is opened
       -- read-only and is accessed in a page-oriented way, i.e. only
       -- reading whole pages, at page offsets. It will be opened with
       -- 'O_DIRECT' on supported platforms.
-    , runKOpsFile       :: !(FS.Handle h)
+    , kOpsFile    :: !(FS.Handle h)
       -- | The file handle for the BLOBs file. This file is opened
       -- read-only and is accessed in a normal style using buffered
       -- I\/O, reading arbitrary file offset and length spans.
-    , runBlobFile       :: !(Ref (BlobFile m h))
-    , runRunDataCaching :: !RunDataCaching
-    , runHasFS          :: !(HasFS m h)
-    , runHasBlockIO     :: !(HasBlockIO m h)
+    , blobFile    :: !(Ref (BlobFile m h))
+    , dataCaching :: !RunDataCaching
+    , hasFS       :: !(HasFS m h)
+    , hasBlockIO  :: !(HasBlockIO m h)
     }
 
 -- | Shows only the 'runRunFsPaths' field.
 instance Show (Run m h) where
-  showsPrec _ run = showString "Run { runRunFsPaths = " . showsPrec 0 (runRunFsPaths run) .  showString " }"
+  showsPrec _ run = showString "Run { fsPaths = " . showsPrec 0 run.fsPaths .  showString " }"
 
 instance NFData h => NFData (Run m h) where
-  rnf (Run a b c d e f g h i j) =
-      rnf a `seq` rwhnf b `seq` rnf c `seq` rnf d `seq` rnf e `seq`
-      rnf f `seq` rnf g `seq` rnf h `seq` rwhnf i `seq` rwhnf j
+  rnf r =
+      rnf r.numEntries `seq` rwhnf r.refCounter `seq` rnf r.fsPaths `seq`
+      rnf r.bloomFilter `seq` rnf r.index       `seq` rnf r.kOpsFile `seq`
+      rnf r.blobFile     `seq` rnf r.dataCaching `seq` rwhnf r.hasFS `seq` rwhnf r.hasBlockIO
+
+
+
 
 instance RefCounted m (Run m h) where
-    getRefCounter = runRefCounter
+    getRefCounter r = r.refCounter
 
 size :: Ref (Run m h) -> NumEntries
-size (DeRef run) = runNumEntries run
+size (DeRef run) = run.numEntries
 
 sizeInPages :: Ref (Run m h) -> NumPages
-sizeInPages (DeRef run) = Index.sizeInPages (runIndex run)
+sizeInPages (DeRef run) = Index.sizeInPages (run.index)
 
 runFsPaths :: Ref (Run m h) -> RunFsPaths
-runFsPaths (DeRef r) = runRunFsPaths r
+runFsPaths (DeRef r) = r.fsPaths
 
 runFsPathsNumber :: Ref (Run m h) -> RunNumber
 runFsPathsNumber = Paths.runNumber . runFsPaths
 
 -- | See 'openFromDisk'
 runIndexType :: Ref (Run m h) -> IndexType
-runIndexType (DeRef r) = Index.indexToIndexType (runIndex r)
+runIndexType (DeRef r) = Index.indexToIndexType (r.index)
 
 -- | See 'openFromDisk'
 runDataCaching :: Ref (Run m h) -> RunDataCaching
-runDataCaching (DeRef r) = runRunDataCaching r
+runDataCaching (DeRef r) = r.dataCaching
 
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
 mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
-mkRawBlobRef Run{runBlobFile} blobspan =
-    BlobRef.mkRawBlobRef runBlobFile blobspan
+mkRawBlobRef run =
+    BlobRef.mkRawBlobRef run.blobFile
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
 mkWeakBlobRef :: Ref (Run m h) -> BlobSpan -> WeakBlobRef m h
-mkWeakBlobRef (DeRef Run{runBlobFile}) blobspan =
-    BlobRef.mkWeakBlobRef runBlobFile blobspan
+mkWeakBlobRef (DeRef run) blobspan =
+    BlobRef.mkWeakBlobRef run.blobFile blobspan
 
 {-# SPECIALISE finaliser ::
      HasFS IO h
@@ -227,7 +234,18 @@ fromBuilder refCtx builder = do
     setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
     newRef refCtx
            (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
-           (\runRefCounter -> Run { .. })
+           (\refCounter -> Run {
+               numEntries  =  runNumEntries
+              , refCounter =  refCounter
+              , fsPaths    =  runRunFsPaths
+              , bloomFilter = runFilter
+              , index       = runIndex
+              , kOpsFile    = runKOpsFile
+              , blobFile    = runBlobFile
+              , dataCaching = runRunDataCaching
+              , hasFS       = runHasFS
+              , hasBlockIO  = runHasBlockIO
+            })
 
 {-# SPECIALISE fromWriteBuffer ::
      HasFS IO h
@@ -336,9 +354,17 @@ openFromDisk fs hbio refCtx runRunDataCaching indexType expectedSalt runRunFsPat
     setRunDataCaching hbio runKOpsFile runRunDataCaching
     newRef refCtx (finaliser fs runKOpsFile runBlobFile runRunFsPaths) $ \runRefCounter ->
       Run {
-        runHasFS = fs
-      , runHasBlockIO = hbio
-      , ..
+        numEntries  = runNumEntries
+      , refCounter  = runRefCounter
+      , fsPaths     = runRunFsPaths
+      , bloomFilter = runFilter
+      , index       = runIndex
+      , kOpsFile    = runKOpsFile
+      , blobFile    = runBlobFile
+      , dataCaching = runRunDataCaching
+      , hasFS       = fs
+      , hasBlockIO  = hbio
+
       }
   where
     -- Note: all file data for this path is evicted from the page cache /if/ the

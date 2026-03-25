@@ -1,4 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 
 -- | A run that is being read incrementally.
 --
@@ -74,19 +77,19 @@ import           System.FS.BlockIO.API (HasBlockIO)
 data RunReader m h = RunReader {
       -- | The disk page currently being read. If it is 'Nothing', the reader
       -- is considered closed.
-      readerCurrentPage    :: !(MutVar (PrimState m) (Maybe RawPage))
+      currentPage    :: !(MutVar (PrimState m) (Maybe RawPage))
       -- | The index of the entry to be returned by the next call to 'next'.
-    , readerCurrentEntryNo :: !(PrimVar (PrimState m) Word16)
+    , currentEntryNo :: !(PrimVar (PrimState m) Word16)
       -- | Read mode file handle into the run's k\/ops file. We rely on it to
       -- track the position of the next disk page to read, instead of keeping
       -- a counter ourselves. Also, the run's handle is supposed to be opened
       -- with @O_DIRECT@, which is counterproductive here.
-    , readerKOpsHandle     :: !(FS.Handle h)
+    , kOpsHandle     :: !(FS.Handle h)
       -- | The blob file from the run this reader is reading from.
-    , readerBlobFile       :: !(Ref (BlobFile m h))
-    , readerRunDataCaching :: !Run.RunDataCaching
-    , readerHasFS          :: !(HasFS m h)
-    , readerHasBlockIO     :: !(HasBlockIO m h)
+    , blobFile       :: !(Ref (BlobFile m h))
+    , runDataCaching :: !Run.RunDataCaching
+    , hasFS          :: !(HasFS m h)
+    , hasBlockIO     :: !(HasBlockIO m h)
     }
 
 data OffsetKey = NoOffsetKey | OffsetKey !SerialisedKey
@@ -101,36 +104,35 @@ new :: forall m h.
   => OffsetKey
   -> Ref (Run.Run m h)
   -> m  (RunReader m h)
-new !offsetKey
-    readerRun@(DeRef Run.Run {
-      runBlobFile,
-      runRunDataCaching = readerRunDataCaching,
-      runHasFS          = readerHasFS,
-      runHasBlockIO     = readerHasBlockIO,
-      runIndex          = index
-    }) = do
-    (readerKOpsHandle :: FS.Handle h) <-
-      FS.hOpen readerHasFS (runKOpsPath (Run.runFsPaths readerRun)) FS.ReadMode >>= \h -> do
-        fileSize <- FS.hGetSize readerHasFS h
+new !offsetKey readerRun@(DeRef run) = do
+    let blobFile             = run.blobFile
+        runDataCaching = run.dataCaching
+        hasFS          = run.hasFS
+        hasBlockIO     = run.hasBlockIO
+        index          = run.index
+
+    (kOpsHandle :: FS.Handle h) <-
+      FS.hOpen hasFS (runKOpsPath (Run.runFsPaths readerRun)) FS.ReadMode >>= \h -> do
+        fileSize <- FS.hGetSize hasFS h
         let fileSizeInPages = fileSize `div` toEnum pageSize
         let indexedPages = getNumPages $ Run.sizeInPages readerRun
         assert (indexedPages == fileSizeInPages) $ pure h
     -- Advise the OS that this file is being read sequentially, which will
     -- double the readahead window in response (only for this file descriptor)
-    FS.hAdviseAll readerHasBlockIO readerKOpsHandle FS.AdviceSequential
+    FS.hAdviseAll hasBlockIO kOpsHandle FS.AdviceSequential
 
-    (page, entryNo) <- seekFirstEntry readerKOpsHandle
+    (page, entryNo) <- seekFirstEntry hasFS index kOpsHandle
 
-    readerBlobFile <- dupRef runBlobFile
-    readerCurrentEntryNo <- newPrimVar entryNo
-    readerCurrentPage <- newMutVar page
+    blobFile <- dupRef run.blobFile
+    currentEntryNo <- newPrimVar entryNo
+    currentPage <- newMutVar page
     let reader = RunReader {..}
 
     when (isNothing page) $
       close reader
     pure reader
   where
-    seekFirstEntry readerKOpsHandle =
+    seekFirstEntry readerHasFS index readerKOpsHandle =
         case offsetKey of
           NoOffsetKey -> do
             -- Load first page from disk, if it exists.
@@ -173,12 +175,12 @@ close ::
      (MonadSTM m, MonadMask m, PrimMonad m)
   => RunReader m h
   -> m ()
-close RunReader{..} = do
-    when (readerRunDataCaching == Run.NoCacheRunData) $
+close r = do -- Use 'r' instead of RunReader{..}
+    when (r.runDataCaching == Run.NoCacheRunData) $
       -- drop the file from the OS page cache
-      FS.hDropCacheAll readerHasBlockIO readerKOpsHandle
-    FS.hClose readerHasFS readerKOpsHandle
-    releaseRef readerBlobFile
+      FS.hDropCacheAll r.hasBlockIO r.kOpsHandle
+    FS.hClose r.hasFS r.kOpsHandle
+    releaseRef r.blobFile
     --TODO: arguably we should have distinct finish and close and require that
     -- readers are _always_ closed, even after they have been drained.
     -- This would allow BlobRefs to remain valid until the reader is closed.
@@ -247,12 +249,12 @@ next :: forall m h.
      (MonadMask m, MonadSTM m, MonadST m)
   => RunReader m h
   -> m (Result m h)
-next reader@RunReader {..} = do
-    readMutVar readerCurrentPage >>= \case
+next reader = do
+    readMutVar reader.currentPage >>= \case
       Nothing ->
         pure Empty
       Just page -> do
-        entryNo <- readPrimVar readerCurrentEntryNo
+        entryNo <- readPrimVar reader.currentEntryNo
         go entryNo page
   where
     go :: Word16 -> RawPage -> m (Result m h)
@@ -261,26 +263,26 @@ next reader@RunReader {..} = do
         case rawPageIndex page entryNo of
           IndexNotPresent -> do
             -- if it is past the last one, load a new page from disk, try again
-            newPage <- readDiskPage readerHasFS readerKOpsHandle
-            stToIO $ writeMutVar readerCurrentPage newPage
+            newPage <- readDiskPage reader.hasFS reader.kOpsHandle
+            stToIO $ writeMutVar reader.currentPage newPage
             case newPage of
               Nothing -> do
                 close reader
                 pure Empty
               Just p -> do
-                writePrimVar readerCurrentEntryNo 0
+                writePrimVar reader.currentEntryNo 0
                 go 0 p  -- try again on the new page
           IndexEntry key entry -> do
-            modifyPrimVar readerCurrentEntryNo (+1)
-            let entry' = fmap (BlobRef.mkRawBlobRef readerBlobFile) entry
+            modifyPrimVar reader.currentEntryNo (+1)
+            let entry' = fmap (BlobRef.mkRawBlobRef reader.blobFile) entry
             let rawEntry = Entry entry'
             pure (ReadEntry key rawEntry)
           IndexEntryOverflow key entry lenSuffix -> do
             -- TODO: we know that we need the next page, could already load?
-            modifyPrimVar readerCurrentEntryNo (+1)
+            modifyPrimVar reader.currentEntryNo (+1)
             let entry' :: E.Entry SerialisedValue (RawBlobRef m h)
-                entry' = fmap (BlobRef.mkRawBlobRef readerBlobFile) entry
-            overflowPages <- readOverflowPages readerHasFS readerKOpsHandle lenSuffix
+                entry' = fmap (BlobRef.mkRawBlobRef reader.blobFile) entry
+            overflowPages <- readOverflowPages reader.hasFS reader.kOpsHandle lenSuffix
             let rawEntry = mkEntryOverflow entry' page lenSuffix overflowPages
             pure (ReadEntry key rawEntry)
 
