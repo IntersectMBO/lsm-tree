@@ -90,36 +90,36 @@ module Database.LSMTree.Simple
     SnapshotName,
     isValidSnapshotName,
     toSnapshotName,
-    SnapshotLabel (..),
+    SnapshotLabel (SnapshotLabel),
 
     -- * Table Configuration #table_configuration#
     TableConfig
       ( confMergePolicy,
-        confMergeSchedule,
         confSizeRatio,
         confWriteBufferAlloc,
         confBloomFilterAlloc,
         confFencePointerIndex,
-        confDiskCachePolicy
+        confDiskCachePolicy,
+        confMergeBatchSize
       ),
     MergePolicy (LazyLevelling),
     SizeRatio (Four),
     WriteBufferAlloc (AllocNumEntries),
     BloomFilterAlloc (AllocFixed, AllocRequestFPR),
     FencePointerIndexType (OrdinaryIndex, CompactIndex),
-    DiskCachePolicy (..),
-    MergeSchedule (..),
+    DiskCachePolicy (DiskCacheAll, DiskCacheLevelOneTo, DiskCacheNone),
+    MergeSchedule (OneShot, Incremental),
 
     -- ** Table Configuration Overrides #table_configuration_overrides#
-    TableConfigOverride (..),
+    TableConfigOverride (TableConfigOverride, overrideDiskCachePolicy, overrideMergeBatchSize),
     noTableConfigOverride,
 
     -- * Ranges #ranges#
-    Range (..),
+    Range (FromToExcluding, FromToIncluding),
 
     -- * Union Credit and Debt
-    UnionCredits (..),
-    UnionDebt (..),
+    UnionCredits (UnionCredits),
+    UnionDebt (UnionDebt),
 
     -- * Key\/Value Serialisation #key_value_serialisation#
     RawBytes (RawBytes),
@@ -136,20 +136,20 @@ module Database.LSMTree.Simple
     packSlice,
 
     -- * Errors #errors#
-    SessionDirDoesNotExistError (..),
-    SessionDirLockedError (..),
-    SessionDirCorruptedError (..),
-    SessionClosedError (..),
-    TableClosedError (..),
-    TableCorruptedError (..),
-    TableTooLargeError (..),
-    TableUnionNotCompatibleError (..),
-    SnapshotExistsError (..),
-    SnapshotDoesNotExistError (..),
-    SnapshotCorruptedError (..),
-    SnapshotNotCompatibleError (..),
-    CursorClosedError (..),
-    InvalidSnapshotNameError (..),
+    SessionDirDoesNotExistError (ErrSessionDirDoesNotExist),
+    SessionDirLockedError (ErrSessionDirLocked),
+    SessionDirCorruptedError (ErrSessionDirCorrupted),
+    SessionClosedError (ErrSessionClosed),
+    TableClosedError (ErrTableClosed),
+    TableCorruptedError (ErrLookupByteCountDiscrepancy),
+    TableTooLargeError (ErrTableTooLarge),
+    TableUnionNotCompatibleError (ErrTableUnionHandleTypeMismatch, ErrTableUnionSessionMismatch),
+    SnapshotExistsError (ErrSnapshotExists),
+    SnapshotDoesNotExistError (ErrSnapshotDoesNotExist),
+    SnapshotCorruptedError (ErrSnapshotCorrupted),
+    SnapshotNotCompatibleError (ErrSnapshotWrongLabel),
+    CursorClosedError (ErrCursorClosed),
+    InvalidSnapshotNameError (ErrInvalidSnapshotName),
   )
 where
 
@@ -189,15 +189,15 @@ import Database.LSMTree
     SnapshotExistsError (..),
     SnapshotLabel (..),
     SnapshotName,
-    SnapshotNotCompatibleError (..),
-    TableClosedError (..),
+    SnapshotNotCompatibleError (ErrSnapshotWrongLabel),
+    TableClosedError (ErrTableClosed),
     TableConfig (..),
-    TableConfigOverride (..),
-    TableCorruptedError (..),
-    TableTooLargeError (..),
-    UnionCredits (..),
-    UnionDebt (..),
-    WriteBufferAlloc,
+    TableConfigOverride (TableConfigOverride, overrideDiskCachePolicy, overrideMergeBatchSize),
+    TableCorruptedError (ErrLookupByteCountDiscrepancy),
+    TableTooLargeError (ErrTableTooLarge),
+    UnionCredits (UnionCredits),
+    UnionDebt (UnionDebt),
+    WriteBufferAlloc (AllocNumEntries),
     isValidSnapshotName,
     noTableConfigOverride,
     packSlice,

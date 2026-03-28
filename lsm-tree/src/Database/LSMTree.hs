@@ -37,12 +37,12 @@ module Database.LSMTree
     -- ** Table Lookups #table_lookups#
     member,
     members,
-    LookupResult (..),
+    LookupResult (NotFound, Found, FoundWithBlob),
     getValue,
     getBlob,
     lookup,
     lookups,
-    Entry (..),
+    Entry (Entry, EntryWithBlob),
     getEntryKey,
     getEntryValue,
     getEntryBlob,
@@ -55,7 +55,7 @@ module Database.LSMTree
     upserts,
     delete,
     deletes,
-    Update (..),
+    Update (Insert, Delete, Upsert),
     update,
     updates,
 
@@ -103,7 +103,7 @@ module Database.LSMTree
     SnapshotName,
     isValidSnapshotName,
     toSnapshotName,
-    SnapshotLabel (..),
+    SnapshotLabel (SnapshotLabel),
 
     -- * Session Configuration #session_configuration#
     Salt,
@@ -111,7 +111,6 @@ module Database.LSMTree
     -- * Table Configuration #table_configuration#
     TableConfig
       ( confMergePolicy,
-        confMergeSchedule,
         confSizeRatio,
         confWriteBufferAlloc,
         confBloomFilterAlloc,
@@ -121,24 +120,24 @@ module Database.LSMTree
       ),
     defaultTableConfig,
     MergePolicy (LazyLevelling),
-    MergeSchedule (..),
+    MergeSchedule (OneShot, Incremental),
     SizeRatio (Four),
     WriteBufferAlloc (AllocNumEntries),
     BloomFilterAlloc (AllocFixed, AllocRequestFPR),
     FencePointerIndexType (OrdinaryIndex, CompactIndex),
-    DiskCachePolicy (..),
-    MergeBatchSize (..),
+    DiskCachePolicy (DiskCacheAll, DiskCacheLevelOneTo, DiskCacheNone),
+    MergeBatchSize (MergeBatchSize),
 
     -- ** Table Configuration Overrides #table_configuration_overrides#
-    TableConfigOverride (..),
+    TableConfigOverride (TableConfigOverride, overrideDiskCachePolicy, overrideMergeBatchSize),
     noTableConfigOverride,
 
     -- * Ranges #ranges#
-    Range (..),
+    Range (FromToExcluding, FromToIncluding),
 
     -- * Union Credit and Debt
-    UnionCredits (..),
-    UnionDebt (..),
+    UnionCredits (UnionCredits),
+    UnionDebt (UnionDebt),
 
     -- * Key\/Value Serialisation #key_value_serialisation#
     RawBytes (RawBytes),
@@ -155,9 +154,9 @@ module Database.LSMTree
     packSlice,
 
     -- * Monoidal Value Resolution #monoidal_value_resolution#
-    ResolveValue (..),
-    ResolveViaSemigroup (..),
-    ResolveAsFirst (..),
+    ResolveValue (resolve, resolveSerialised),
+    ResolveViaSemigroup (ResolveViaSemigroup),
+    ResolveAsFirst (ResolveAsFirst, unResolveAsFirst),
 
     -- ** Monoidal Value Resolution Property Tests #monoidal_value_resolution_property_tests#
     resolveCompatibility,
@@ -165,21 +164,21 @@ module Database.LSMTree
     resolveAssociativity,
 
     -- * Errors #errors#
-    SessionDirDoesNotExistError (..),
-    SessionDirLockedError (..),
-    SessionDirCorruptedError (..),
-    SessionClosedError (..),
-    TableClosedError (..),
-    TableCorruptedError (..),
-    TableTooLargeError (..),
-    TableUnionNotCompatibleError (..),
-    SnapshotExistsError (..),
-    SnapshotDoesNotExistError (..),
-    SnapshotCorruptedError (..),
-    SnapshotNotCompatibleError (..),
-    BlobRefInvalidError (..),
-    CursorClosedError (..),
-    InvalidSnapshotNameError (..),
+    SessionDirDoesNotExistError (ErrSessionDirDoesNotExist),
+    SessionDirLockedError (ErrSessionDirLocked),
+    SessionDirCorruptedError (ErrSessionDirCorrupted),
+    SessionClosedError (ErrSessionClosed),
+    TableClosedError (ErrTableClosed),
+    TableCorruptedError (ErrLookupByteCountDiscrepancy),
+    TableTooLargeError (ErrTableTooLarge),
+    TableUnionNotCompatibleError (ErrTableUnionHandleTypeMismatch, ErrTableUnionSessionMismatch),
+    SnapshotExistsError (ErrSnapshotExists),
+    SnapshotDoesNotExistError (ErrSnapshotDoesNotExist),
+    SnapshotCorruptedError (ErrSnapshotCorrupted),
+    SnapshotNotCompatibleError (ErrSnapshotWrongLabel),
+    BlobRefInvalidError (ErrBlobRefInvalid),
+    CursorClosedError (ErrCursorClosed),
+    InvalidSnapshotNameError (ErrInvalidSnapshotName),
 
     -- * Traces #traces#
     Tracer,
