@@ -125,4 +125,4 @@ jobs:
 
       - name: 🚀 Publish documentation to Pages
         id: publish-pages
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
