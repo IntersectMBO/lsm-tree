@@ -7,9 +7,11 @@ module Test.Database.LSMTree.Internal.Snapshot.Codec.Golden (
   , Annotation
   ) where
 
+import           Codec.CBOR.Read (deserialiseFromBytes)
 import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Monad (when)
-import qualified Data.ByteString.Lazy as BSL (writeFile)
+import           Control.Monad.Class.MonadThrow (Exception (displayException))
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -38,14 +40,22 @@ import           Test.QuickCheck (Property, counterexample, ioProperty, once,
 import qualified Test.Tasty as Tasty
 import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Tasty.Golden as Au
+import           Test.Tasty.HUnit (Assertion, assertEqual, assertFailure,
+                     testCase)
 import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
-    handleOutputFiles $
-    testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" $
-         concat (forallSnapshotTypes snapshotCodecGoldenTest)
-      ++ [testProperty "prop_noUnexpectedOrMissingGoldenFiles" prop_noUnexpectedOrMissingGoldenFiles]
+    testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" [
+        handleOutputFiles $
+        testGroup "Generate golden files" $
+            concat (forallSnapshotTypes snapshotCodecGoldenTest) ++
+          [ testProperty "prop_noUnexpectedOrMissingGoldenFiles" prop_noUnexpectedOrMissingGoldenFiles
+          ]
+      , testGroup "Backwards compatibility" [
+            testCase "test_compatTableConfigV0" test_compatTableConfigV0
+          ]
+      ]
 
 {-------------------------------------------------------------------------------
   Configuration
@@ -120,6 +130,43 @@ prop_noUnexpectedOrMissingGoldenFiles = once $ ioProperty $ do
             (Set.null unexpectedFiles)
 
     pure $ propMissing .&&. propUnexpected
+
+{-------------------------------------------------------------------------------
+  Backwards compatibility tests
+-------------------------------------------------------------------------------}
+
+test_compatTableConfigV0 :: Assertion
+test_compatTableConfigV0 =
+    assertGoldenFileDecodesTo (Proxy @TableConfig) "A" V0 $
+      TableConfig {
+          confMergePolicy = singGolden
+        , confMergeSchedule = singGolden
+        , confSizeRatio = singGolden
+        , confWriteBufferAlloc = singGolden
+        , confBloomFilterAlloc = singGolden
+        , confFencePointerIndex = singGolden
+        , confDiskCachePolicy = singGolden
+          -- MergeBatchSize not included in V0, decoder uses WriteBufferAlloc
+        , confMergeBatchSize = MergeBatchSize magicNumber2
+        }
+
+-- | For types that changed their snapshot format between versions, we should
+-- also test that we can in fact still decode the old format.
+assertGoldenFileDecodesTo ::
+     (DecodeVersioned a, Eq a, Show a, Typeable a)
+  => Proxy a
+  -> String
+  -> SnapshotVersion
+  -> a
+  -> Assertion
+assertGoldenFileDecodesTo proxy ann v expected = do
+    let fp = goldenDataFilePath </> filePathGolden proxy ann v
+    lbs <- BSL.readFile fp
+    case deserialiseFromBytes (decodeVersioned v) lbs of
+      Left err ->
+        assertFailure $ "Error decoding " ++ fp ++ ": " ++ displayException err
+      Right (_, decoded) ->
+        assertEqual "" expected decoded
 
 {-------------------------------------------------------------------------------
   Mapping
