@@ -109,8 +109,33 @@ module Database.LSMTree
     Salt,
 
     -- * Table Configuration #table_configuration#
+    -- |
+    -- [@confMergePolicy@]:
+    --     The /merge policy/ balances the performance of lookups against the performance of updates.
+    --
+    -- [@confMergeSchedule@]:
+    --     The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
+    --
+    -- [@confSizeRatio@]:
+    --     The /size ratio/ pushes the effects of the merge policy to the extreme.
+    --
+    -- [@confWriteBufferAlloc@]:
+    --     The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the database.
+    --
+    -- [@confBloomFilterAlloc@]:
+    --     The Bloom filter size balances the performance of lookups against the in-memory size of the database.
+    --
+    -- [@confFencePointerIndex@]:
+    --     The /fence-pointer index type/ supports two types of indexes.
+    --
+    -- [@confDiskCachePolicy@]:
+    --     The /disk cache policy/ supports caching lookup operations using the OS page cache.
+    --
+    -- [@confMergeBatchSize@]:
+    --     The merge batch size balances the maximum latency of individual update operations, versus the latency of a sequence of update operations.
     TableConfig
       ( confMergePolicy,
+        confMergeSchedule,
         confSizeRatio,
         confWriteBufferAlloc,
         confBloomFilterAlloc,
