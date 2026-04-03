@@ -1,7 +1,5 @@
 {-# LANGUAGE CPP                   #-}
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE MagicHash             #-}
-{-# LANGUAGE NoFieldSelectors      #-}
 {-# LANGUAGE OverloadedRecordDot   #-}
 {-# LANGUAGE UnboxedTuples         #-}
 {-# OPTIONS_HADDOCK not-home #-}
@@ -286,7 +284,7 @@ duplicateLevelsCache ::
   -> LevelsCache m h
   -> m (LevelsCache m h)
 duplicateLevelsCache reg cache = do
-    rs' <- forMStrict (cache.cachedRuns) $ \r ->
+    rs' <- forMStrict cache.cachedRuns $ \r ->
              withRollback reg (dupRef r) releaseRef
     pure cache { cachedRuns = rs' }
 
@@ -300,7 +298,7 @@ releaseLevelsCache ::
   -> LevelsCache m h
   -> m ()
 releaseLevelsCache reg cache =
-    V.forM_ (cache.cachedRuns) $ \r ->
+    V.forM_ cache.cachedRuns $ \r ->
       delayedCommit reg (releaseRef r)
 
 {-------------------------------------------------------------------------------
@@ -504,7 +502,7 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio refCtx root salt uc es re
     -- number of supplied credits is based on the size increase of the write
     -- buffer, not the number of processed entries @length es' - length es@.
     let numAdded = unNumEntries (WB.numEntries wb') - unNumEntries (WB.numEntries wb)
-    supplyCredits refCtx conf (NominalCredits numAdded) (tc.tableLevels)
+    supplyCredits refCtx conf (NominalCredits numAdded) tc.tableLevels
     let tc' = tc { tableWriteBuffer = wb' }
     if WB.numEntries wb' < maxn then do
       pure $! tc'
@@ -596,10 +594,10 @@ flushWriteBuffer ::
   -> TableContent m h
   -> m (TableContent m h)
 flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc
-  | WB.null (tc.tableWriteBuffer) = pure tc
+  | WB.null tc.tableWriteBuffer = pure tc
   | otherwise = do
     !uniq <- incrUniqCounter uc
-    let !size      = WB.numEntries (tc.tableWriteBuffer)
+    let !size      = WB.numEntries tc.tableWriteBuffer
         !ln        = LevelNo 1
         (!runParams,
          runPaths) = mergingRunParamsForLevel
@@ -611,16 +609,16 @@ flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc
             (Run.fromWriteBuffer
               hfs hbio refCtx salt
               runParams runPaths
-              (tc.tableWriteBuffer)
-              (tc.tableWriteBufferBlobs))
+              tc.tableWriteBuffer
+              tc.tableWriteBufferBlobs)
             releaseRef
-    delayedCommit reg (releaseRef (tc.tableWriteBufferBlobs))
+    delayedCommit reg (releaseRef tc.tableWriteBufferBlobs)
     wbblobs' <- withRollback reg (WBB.new hfs refCtx (Paths.tableBlobPath root uniq))
                                  releaseRef
     levels' <- addRunToLevels tr conf resolve hfs hbio refCtx root salt uc r reg
-                 (tc.tableLevels)
-                 (tc.tableUnionLevel)
-    tableCache' <- rebuildCache reg (tc.tableCache) levels'
+                 tc.tableLevels
+                 tc.tableUnionLevel
+    tableCache' <- rebuildCache reg tc.tableCache levels'
     pure $! TableContent {
         tableWriteBuffer = WB.empty
       , tableWriteBufferBlobs = wbblobs'

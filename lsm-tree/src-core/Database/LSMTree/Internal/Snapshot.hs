@@ -1,6 +1,4 @@
 {-# OPTIONS_HADDOCK not-home #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NoFieldSelectors      #-}
 {-# LANGUAGE OverloadedRecordDot   #-}
 
 module Database.LSMTree.Internal.Snapshot (
@@ -532,7 +530,7 @@ openWriteBuffer reg resolve hfs hbio refCtx uc activeDir snapWriteBufferPaths = 
   let kOpsPath = ForKOps (writeBufferKOpsPath snapWriteBufferPaths)
   writeBuffer <-
     withRef writeBufferBlobs $ \wbb ->
-      WBR.readWriteBuffer resolve hfs hbio kOpsPath (wbb.blobFile)
+      WBR.readWriteBuffer resolve hfs hbio kOpsPath wbb.blobFile
   pure (writeBuffer, writeBufferBlobs)
 
 {-------------------------------------------------------------------------------

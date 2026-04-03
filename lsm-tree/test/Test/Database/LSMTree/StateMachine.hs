@@ -3,8 +3,6 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NoFieldSelectors      #-}
 {-# LANGUAGE OverloadedRecordDot   #-}
 #if MIN_VERSION_GLASGOW_HASKELL(9,8,1,0)
 {-# LANGUAGE TypeAbstractions      #-}
@@ -2770,12 +2768,12 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
       where (i, iwb, d, m) = finalStats.numUpdates
 
     tagNumActions =
-        [ let n = length (finalStats.successActions) in
+        [ let n = length finalStats.successActions in
           ("Actions that succeeded total", [NumActions (showPowersOf 10 n)])
-        , let n = length (finalStats.failActions) in
+        , let n = length finalStats.failActions in
           ("Actions that failed total", [NumActions (showPowersOf 10 n)])
-        , let n = length (finalStats.successActions)
-                + length (finalStats.failActions) in
+        , let n = length finalStats.successActions
+                + length finalStats.failActions in
           ("Actions total", [NumActions (showPowersOf 10 n)])
         ]
 
@@ -2789,12 +2787,12 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
 
     tagNumTables =
         [ ("Number of tables", [NumTables (showPowersOf 2 n)])
-        | let n = Map.size (finalStats.numActionsPerTable)
+        | let n = Map.size finalStats.numActionsPerTable
         ]
 
     tagNumTableActions =
         [ ("Number of actions per table", [ NumTableActions (showPowersOf 2 n) ])
-        | n <- Map.elems (finalStats.numActionsPerTable)
+        | n <- Map.elems finalStats.numActionsPerTable
         ]
 
     tagTableSizes =
@@ -2810,7 +2808,7 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
     tagDupTableActionLog =
         [ ("Interleaved actions on table duplicates or unions",
            [DupTableActionLog (showPowersOf 2 n)])
-        | (_, alog) <- Map.toList (finalStats.dupTableActionLog)
+        | (_, alog) <- Map.toList finalStats.dupTableActionLog
         , let n = length alog
         ]
 
@@ -2821,14 +2819,14 @@ tagFinalState' (getModel -> ModelState finalState finalStats) = concat [
            [NumTables (showPowersOf 2 (Map.size nonTrivial))])
         ]
       where
-        (nonTrivial, trivial) = Map.partition (> 0) (finalStats.unionTables)
+        (nonTrivial, trivial) = Map.partition (> 0) finalStats.unionTables
 
     tagNumUnionTableActions =
         [ ("Number of actions per table with non-empty unions",
            [ NumTableActions (showPowersOf 2 n) ])
         | n <- Map.elems $ finalStats.numActionsPerTable
                              `Map.intersection`
-                           Map.filter (> 0) (finalStats.unionTables)
+                           Map.filter (> 0) finalStats.unionTables
         ]
 
 {-------------------------------------------------------------------------------
