@@ -445,7 +445,7 @@ data SessionEnv m h = SessionEnv {
 
 {-# INLINE sessionId #-}
 sessionId :: SessionEnv m h -> SessionId
-sessionId env = SessionId (getSessionRoot sessionRoot env)
+sessionId env = SessionId (getSessionRoot (sessionRoot env))
 
 -- | The session is closed.
 data SessionClosedError
@@ -960,7 +960,7 @@ tableSessionRoot env = sessionRoot (tableSessionEnv env)
 {-# INLINE tableSessionId #-}
  -- | Inherited from session for ease of access.
 tableSessionId :: TableEnv m h -> SessionId
-tableSessionId env = sessionId tableSessionEnv env
+tableSessionId env = sessionId (tableSessionEnv env)
 
 {-# INLINE tableSessionSalt #-}
  -- | Inherited from session for easenve of access.
@@ -988,7 +988,7 @@ tableSessionUniqCounter t =  sessionUniqCounter (tableSession t)
 -- closed it should become untracked (forgotten).
 tableSessionUntrackTable :: MonadMVar m => TableId -> TableEnv m h -> m ()
 tableSessionUntrackTable tableId tEnv =
-    modifyMVar_ sessionOpenTables (tableSessionEnv tEnv) $ pure . Map.delete tableId
+    modifyMVar_ (sessionOpenTables (tableSessionEnv tEnv)) $ pure . Map.delete tableId
 
 -- | The table is closed.
 data TableClosedError
@@ -1293,7 +1293,7 @@ updates resolve es t = do
               resolve
               hfs
               (tableHasBlockIO tEnv)
-              (tableSessionRefCtx tEnv)
+              (sessionRefCtx (tableSessionEnv tEnv))
               (tableSessionRoot tEnv)
               (tableSessionSalt tEnv)
               (tableSessionUniqCounter t)
@@ -1903,7 +1903,7 @@ listSnapshots sesh = do
 
 {-# SPECIALISE duplicate :: Table IO h -> IO (Table IO h) #-}
 -- | See 'Database.LSMTree.duplicate'.
-duplicate ::, refCounter =  refCounter
+duplicate ::
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
   => Table m h
   -> m (Table m h)
