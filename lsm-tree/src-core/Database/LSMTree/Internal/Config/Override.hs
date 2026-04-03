@@ -105,7 +105,7 @@ instance Override TableConfigOverride SnapshotMetaData where
 
 instance Override MergeBatchSize SnapshotMetaData where
   override mbs smd =
-    smd { snapMetaConfig = override mbs smd.snapMetaConfigtest/Test/Database/LSMTree/Internal/Lookup.hs }
+    smd { snapMetaConfig = override mbs smd.snapMetaConfig }
 
 instance Override MergeBatchSize TableConfig where
   override confMergeBatchSize' tc =

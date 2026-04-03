@@ -574,9 +574,8 @@ snapshotRun ::
   -> Ref (Run m h)
   -> m SnapshotRun
 snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
-    let DeRef r = run
     rn <- uniqueToRunNumber <$> incrUniqCounter snapUc
-    let sourcePaths = r.fsPaths
+    let sourcePaths = Run.runFsPaths run
     let targetPaths = sourcePaths { runDir = targetDir , runNumber = rn}
     hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
     pure SnapshotRun {
