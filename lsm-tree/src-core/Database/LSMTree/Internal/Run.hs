@@ -103,9 +103,9 @@ instance Show (Run m h) where
   showsPrec _ run = showString "Run { fsPaths = " . showsPrec 0 run.fsPaths .  showString " }"
 
 instance NFData h => NFData (Run m h) where
-  rnf (Run numEntries refCounter fsPaths bloomFilter index kOpsFile blobFile dataCaching hasFS hasBlockIO) = 
+  rnf (Run numEntries refCounter fsPaths bloomFilter index kOpsFile blobFile dataCaching hasFS hasBlockIO) =
     rnf numEntries `seq` rwhnf refCounter `seq` rnf fsPaths `seq`
-    rnf bloomFilter `seq` rnf index `seq` rnf kOpsFile `seq` 
+    rnf bloomFilter `seq` rnf index `seq` rnf kOpsFile `seq`
     rnf blobFile `seq` rnf dataCaching `seq` rwhnf hasFS `seq` rwhnf hasBlockIO
 
 
