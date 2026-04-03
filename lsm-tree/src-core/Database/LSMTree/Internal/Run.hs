@@ -12,7 +12,7 @@
 module Database.LSMTree.Internal.Run (
     -- * Run
     Run (Run, index, hasFS, hasBlockIO, dataCaching,
-         blobFile, bloomFilter, kOpsFile, fsPaths, numEntries, refCounter)
+         blobFile, bloomFilter, kOpsFile)
   , RunFsPaths
   , size
   , sizeInPages
@@ -103,12 +103,10 @@ instance Show (Run m h) where
   showsPrec _ run = showString "Run { fsPaths = " . showsPrec 0 run.fsPaths .  showString " }"
 
 instance NFData h => NFData (Run m h) where
-  rnf r =
-      rnf r.numEntries `seq` rwhnf r.refCounter `seq` rnf r.fsPaths `seq`
-      rnf r.bloomFilter `seq` rnf r.index       `seq` rnf r.kOpsFile `seq`
-      rnf r.blobFile     `seq` rnf r.dataCaching `seq` rwhnf r.hasFS `seq` rwhnf r.hasBlockIO
-
-
+  rnf (Run numEntries refCounter fsPaths bloomFilter index kOpsFile blobFile dataCaching hasFS hasBlockIO) = 
+    rnf numEntries `seq` rwhnf refCounter `seq` rnf fsPaths `seq`
+    rnf bloomFilter `seq` rnf index `seq` rnf kOpsFile `seq` 
+    rnf blobFile `seq` rnf dataCaching `seq` rwhnf hasFS `seq` rwhnf hasBlockIO
 
 
 instance RefCounted m (Run m h) where
@@ -118,7 +116,7 @@ size :: Ref (Run m h) -> NumEntries
 size (DeRef run) = run.numEntries
 
 sizeInPages :: Ref (Run m h) -> NumPages
-sizeInPages (DeRef run) = Index.sizeInPages (run.index)
+sizeInPages (DeRef run) = Index.sizeInPages run.index
 
 runFsPaths :: Ref (Run m h) -> RunFsPaths
 runFsPaths (DeRef r) = r.fsPaths
@@ -128,7 +126,7 @@ runFsPathsNumber = Paths.runNumber . runFsPaths
 
 -- | See 'openFromDisk'
 runIndexType :: Ref (Run m h) -> IndexType
-runIndexType (DeRef r) = Index.indexToIndexType (r.index)
+runIndexType (DeRef r) = Index.indexToIndexType r.index
 
 -- | See 'openFromDisk'
 runDataCaching :: Ref (Run m h) -> RunDataCaching
@@ -235,9 +233,9 @@ fromBuilder refCtx builder = do
     newRef refCtx
            (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
            (\refCounter -> Run {
-               numEntries  =  runNumEntries
-              , refCounter =  refCounter
-              , fsPaths    =  runRunFsPaths
+                numEntries  =  runNumEntries
+              , refCounter  =  refCounter
+              , fsPaths     =  runRunFsPaths
               , bloomFilter = runFilter
               , index       = runIndex
               , kOpsFile    = runKOpsFile
@@ -364,7 +362,6 @@ openFromDisk fs hbio refCtx runRunDataCaching indexType expectedSalt runRunFsPat
       , dataCaching = runRunDataCaching
       , hasFS       = fs
       , hasBlockIO  = hbio
-
       }
   where
     -- Note: all file data for this path is evicted from the page cache /if/ the
