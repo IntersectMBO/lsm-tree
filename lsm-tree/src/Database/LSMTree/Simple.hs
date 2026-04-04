@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {- |
 Module      : Database.LSMTree.Simple
 Copyright   : (c) 2023-2025, Cardano Development Foundation

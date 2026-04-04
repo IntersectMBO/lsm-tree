@@ -1,5 +1,5 @@
 {-# OPTIONS_HADDOCK not-home #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Database.LSMTree.Internal.Snapshot (
     -- * Snapshot metadata

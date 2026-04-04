@@ -1,7 +1,7 @@
-{-# LANGUAGE CPP                   #-}
-{-# LANGUAGE MagicHash             #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
-{-# LANGUAGE UnboxedTuples         #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE MagicHash           #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE UnboxedTuples       #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- TODO: establish that this implementation matches up with the ScheduledMerges

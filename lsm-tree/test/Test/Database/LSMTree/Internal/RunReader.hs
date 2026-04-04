@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 module Test.Database.LSMTree.Internal.RunReader (
     -- * Main test tree
     tests,
