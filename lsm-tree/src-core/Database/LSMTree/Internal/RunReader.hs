@@ -105,8 +105,7 @@ new :: forall m h.
   -> Ref (Run.Run m h)
   -> m  (RunReader m h)
 new !offsetKey readerRun@(DeRef run) = do
-    let blobFile             = run.blobFile
-        runDataCaching = run.dataCaching
+    let runDataCaching = run.dataCaching
         hasFS          = run.hasFS
         hasBlockIO     = run.hasBlockIO
         index          = run.index
