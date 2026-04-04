@@ -1,5 +1,5 @@
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 {-# OPTIONS_HADDOCK not-home #-}
 

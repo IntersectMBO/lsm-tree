@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 

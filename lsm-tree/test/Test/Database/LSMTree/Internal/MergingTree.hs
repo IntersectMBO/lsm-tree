@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Database.LSMTree.Internal.MergingTree (tests) where

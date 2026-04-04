@@ -1,5 +1,5 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Main ( main ) where
 

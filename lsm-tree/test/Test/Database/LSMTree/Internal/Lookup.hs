@@ -7,10 +7,10 @@
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE OverloadedRecordDot        #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Database.LSMTree.Internal.Lookup (
@@ -85,7 +85,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Lookup" [
           testProperty "prop_bloomQueriesModel" $
             prop_bloomQueriesModel
         , testProperty "prop_indexSearchesModel" $
-            prop_indexSearchesModel 
+            prop_indexSearchesModel
         , testProperty "prop_prepLookupsModel" $
             prop_prepLookupsModel
         , testProperty "input distribution" $ \(dats :: SmallList (InMemLookupData SerialisedKey SerialisedValue BlobSpan)) ->
@@ -143,7 +143,7 @@ prop_bloomQueriesModel dats =
     runDatas = fmap (.runData) dats.getSmallList
     runs = fmap mkTestRun runDatas
     blooms = fmap snd3 runs
-    lookupss = concatMap (.lookups) dats.getSmallList 
+    lookupss = concatMap (.lookups) dats.getSmallList
     real  = map (\(RunIxKeyIx rix kix) -> (rix,kix)) $ VP.toList $
             bloomQueries testSalt (V.fromList blooms) (V.fromList lookupss)
     model = bloomQueriesModel (fmap Map.keysSet runDatas) lookupss
@@ -176,7 +176,7 @@ prop_indexSearchesModel dats =
     rkixsGen xs = listOf (elements xs)
 
     runs = fmap (mkTestRun . (.runData)) dats.getSmallList
-    lookupss = concatMap (.lookups) dats.getSmallList 
+    lookupss = concatMap (.lookups) dats.getSmallList
     real rkixs = runST $ withUnmanagedArena $ \arena -> do
       let rs = V.fromList (fmap runWithHandle runs)
           ks = V.fromList lookupss

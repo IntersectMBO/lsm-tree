@@ -1,5 +1,5 @@
-{-# LANGUAGE OverloadedRecordDot   #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings   #-}
 
 module Test.Database.LSMTree.Internal.Run (
     -- * Main test tree

@@ -1,9 +1,9 @@
 {-# LANGUAGE CPP                   #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
 #if MIN_VERSION_GLASGOW_HASKELL(9,8,1,0)
 {-# LANGUAGE TypeAbstractions      #-}
 #endif
@@ -1591,7 +1591,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
                   Class.supplyUnionCredits table (portion `portionOf` debt))
               (\_ -> pure ()) -- TODO(err)
       where
-        session = env.envSession 
+        session = env.envSession
 
     lookUp' :: Var m h x -> x
     lookUp' = realLookupVar lookUp
@@ -1702,7 +1702,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
                   Class.supplyUnionCredits table (portion `portionOf` debt))
               (\_ -> pure ()) -- TODO(err)
       where
-        session = env.envSession 
+        session = env.envSession
 
     lookUp' :: Var m h x -> x
     lookUp' = realLookupVar lookUp
@@ -1766,10 +1766,10 @@ runRealWithInjectedErrors s env merrs k rollback =
           else
             pure $ Left $ Model.ErrDiskFault ("dummy: " <> s)
   where
-    errsVar = env.envErrors 
-    logVar = env.envErrorsLog 
-    faultsVar = env.envInjectFaultResults 
-    handlers = env.envHandlers 
+    errsVar = env.envErrors
+    logVar = env.envErrorsLog
+    faultsVar = env.envInjectFaultResults
+    handlers = env.envHandlers
 
 catchErr ::
      forall m a e. MonadCatch m
