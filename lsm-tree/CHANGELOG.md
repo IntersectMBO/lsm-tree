@@ -35,6 +35,8 @@
 
 * Update to `fs-sim ^>=0.5`. See PR
   [#845](https://github.com/IntersectMBO/lsm-tree/pull/845).
+* Optimise internal structure of tables containing a completed union.
+  See [PR #838](https://github.com/IntersectMBO/lsm-tree/pull/838).
 
 ### Full API
 

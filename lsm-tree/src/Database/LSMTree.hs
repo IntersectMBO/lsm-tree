@@ -2052,6 +2052,13 @@ _withInternalTables (Table (table :: Internal.Table m h) :| tables) action =
 Get an /upper bound/ for the amount of remaining union debt.
 This includes the union debt of any table that was part of the union's input.
 
+The exact amount of debt returned for a given table is an implementation detail
+and not guaranteed to be stable across versions of @lsm-tree@.
+Within the same version, the union debt of a table can never increase. However,
+it can get decreased by operations on /another/ table if these tables share part
+of their internal structure (e.g. due to one being a union input or duplicate of
+the other).
+
 >>> :{
 runExample $ \session table1 -> do
   LSMT.insert table1 0 "Hello" Nothing
@@ -2061,7 +2068,7 @@ runExample $ \session table1 -> do
     bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
       putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
 :}
-UnionDebt: 4
+UnionDebt: 5
 
 The worst-case disk I\/O complexity of this operation is \(O(0)\).
 
@@ -2106,9 +2113,9 @@ runExample $ \session table1 -> do
       putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
       putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 4
 :}
-UnionDebt: 4
+UnionDebt: 5
 Leftovers: 0
-UnionDebt: 2
+UnionDebt: 3
 Leftovers: 3
 
 __NOTE:__

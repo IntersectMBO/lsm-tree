@@ -30,7 +30,7 @@ module Database.LSMTree.Internal.MergeSchedule (
   , releaseUnionCache
     -- * Flushes and scheduled merges
   , updatesWithInterleavedFlushes
-  , flushWriteBuffer
+  , migrateUnionLevel
     -- * Exported for cabal-docspec
   , maxRunSize
     -- * Credits
@@ -67,6 +67,7 @@ import           Database.LSMTree.Internal.MergingRun (MergeCredits (..),
                      MergeDebt (..), MergingRun, RunParams (..))
 import qualified Database.LSMTree.Internal.MergingRun as MR
 import           Database.LSMTree.Internal.MergingTree (MergingTree)
+import qualified Database.LSMTree.Internal.MergingTree as MT
 import qualified Database.LSMTree.Internal.MergingTree.Lookup as MT
 import           Database.LSMTree.Internal.Paths (ActiveDir, RunFsPaths (..),
                      SessionRoot)
@@ -117,6 +118,9 @@ data MergeTrace =
       RunNumber
     -- | This is traced at the latest point the merge could complete.
   | TraceExpectCompletedMerge
+      RunNumber
+  | TraceMigrateUnionLevel
+      NumEntries -- ^ Size of run
       RunNumber
   deriving stock (Show, Eq)
 
@@ -398,6 +402,71 @@ releaseUnionLevel _   NoUnion            = pure ()
 releaseUnionLevel reg (Union tree cache) = delayedCommit reg (releaseRef tree)
                                         >> releaseUnionCache reg cache
 
+{-# SPECIALISE migrateUnionLevel ::
+     Tracer IO (AtLevel MergeTrace)
+  -> TableConfig
+  -> ActionRegistry IO
+  -> TableContent IO h
+  -> IO (TableContent IO h) #-}
+migrateUnionLevel ::
+     forall m h.
+     (MonadMask m, MonadMVar m, MonadST m)
+  => Tracer m (AtLevel MergeTrace)
+  -> TableConfig
+  -> ActionRegistry m
+  -> TableContent m h
+  -> m (TableContent m h)
+migrateUnionLevel tr conf reg tc = do
+    case tableUnionLevel tc of
+      NoUnion ->
+        -- No union, nothing to do.
+        pure tc
+      Union mt unionCache ->
+        withRollbackMaybe reg (MT.getCompleted mt) releaseRef >>= \case
+          Nothing ->
+            -- Still in progress, nothing to do.
+            pure tc
+          Just r -> do
+            tableLevels' <- migrate r (tableLevels tc)
+            -- We need to rebuild the cache, since we changed the levels.
+            tableCache' <- rebuildCache reg (tableCache tc) tableLevels'
+            -- We migrated the union and return 'NoUnion' now, so we need to
+            -- drop the old tree and union cache (we duplicated what we needed).
+            delayedCommit reg (releaseRef mt)
+            releaseUnionCache reg unionCache
+            pure $! tc {
+                tableLevels = tableLevels'
+              , tableCache = tableCache'
+              , tableUnionLevel = NoUnion
+              }
+  where
+    migrate :: Ref (Run m h) -> Levels m h -> m (Levels m h)
+    migrate r ls = do
+        -- At which level does the migrated run belong?
+        let levelNo = maximum
+              [ 2                -- First level is tiering, don't migrate there.
+              , V.length ls + 1  -- Run must come after existing levels.
+              , runSizeToLevelNumber LevelLevelling (Run.size r)
+                                 -- The level must be large enough for the run.
+              ]
+        traceWith tr $ AtLevel (LevelNo levelNo) $
+          TraceMigrateUnionLevel (Run.size r) (Run.runFsPathsNumber r)
+        let emptyLevels = V.replicate (levelNo - 1 - V.length ls) EmptyLevel
+        migratedLevel <- do
+          ir <- withRollback reg (newIncomingSingleRun r) releaseIncomingRun
+          delayedCommit reg (releaseRef r)
+          pure (Level ir V.empty)
+        let ls' = tableLevels tc <> emptyLevels <> V.singleton migratedLevel
+        assert (length ls' == levelNo) $ pure ()
+        pure ls'
+
+    -- We could calculate the inverse of maxRunSize directly, but this version
+    -- is more obviously correct and the performance difference doesn't matter.
+    runSizeToLevelNumber :: MergePolicyForLevel -> NumEntries -> Int
+    runSizeToLevelNumber policy runSize =
+        -- the list is guaranteed to be non-empty
+        head [ln | ln <- [0 ..], runSize <= maxRunSize' conf policy (LevelNo ln)]
+
 {-------------------------------------------------------------------------------
   Union cache
 -------------------------------------------------------------------------------}
@@ -517,7 +586,13 @@ updatesWithInterleavedFlushes tr conf resolve hfs hbio refCtx root salt uc es re
       pure $! tc'
     -- If the write buffer did reach capacity, then we flush.
     else do
-      tc'' <- flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc'
+      -- But first try migrating the union level, in case the flush triggers a
+      -- new last level merge that the union can become part of.
+      -- We only do this after checking that the writebuffer is full, so we
+      -- don't call 'migrateUnionLevel' for every single call to update.
+      tc'' <-
+        migrateUnionLevel tr conf reg tc'
+          >>= flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg
       -- In the fortunate case where we have already performed all the updates,
       -- return,
       if V.null es' then
@@ -633,7 +708,6 @@ flushWriteBuffer tr conf resolve hfs hbio refCtx root salt uc reg tc
       , tableWriteBufferBlobs = wbblobs'
       , tableLevels = levels'
       , tableCache = tableCache'
-        -- TODO: move into regular levels if merge completed and size fits
       , tableUnionLevel = tableUnionLevel tc
       }
 
