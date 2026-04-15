@@ -1801,6 +1801,19 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
                 mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
                 isStructurallyEmpty mt >>= \case
                   True ->
+                    -- TODO: this is problematic for two reasons:
+                    -- 1. the union cache doesn't get released.
+                    -- 2. since we now don't have a union level any more, the
+                    --    last regular level suddenly is a last level,
+                    --    contradicting its merge type and policy.
+                    --    mergePolicyForLevel etc. only check Union vs. NoUnion,
+                    --    not isStructurallyEmpty.
+                    --
+                    -- However, this doesn't cause errors since structurally
+                    -- empty unions don't get created in the first place. This
+                    -- is clearer in the prototype, where the concept of being
+                    -- structurally empty doesn't exist. We should probably
+                    -- follow the prototype more closely.
                     pure NoUnion
                   False -> do
                     traverse_ (delayedCommit reg . releaseRef) snapTree
@@ -2235,6 +2248,18 @@ supplyUnionCredits resolve t credits = do
             Union mt cache -> do
               unionLevel' <- MT.isStructurallyEmpty mt >>= \case
                 True  ->
+                  -- TODO: this is problematic for two reasons:
+                  -- 1. the union cache doesn't get released.
+                  -- 2. since we now don't have a union level any more, the last
+                  --    regular level suddenly is a last level, contradicting
+                  --    its merge type and policy (mergePolicyForLevel etc. only
+                  --    check Union vs. NoUnion, not isStructurallyEmpty).
+                  --
+                  -- However, this doesn't cause errors since structurally empty
+                  -- unions don't get created in the first place. This is
+                  -- clearer in the prototype, where the concept of being
+                  -- structurally empty doesn't exist. We should probably follow
+                  -- the prototype more closely.
                   pure NoUnion
                 False -> do
                   cache' <- mkUnionCache reg mt
