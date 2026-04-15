@@ -117,6 +117,7 @@ import qualified Data.Text as Text
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager)
+import           Database.LSMTree.Internal.Assertions (assertM)
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
@@ -1172,11 +1173,10 @@ lookups resolve ks t = do
         case tableUnionLevel tc of
           NoUnion -> lookupsRegular tEnv tc
           Union tree unionCache -> do
-            isStructurallyEmpty tree >>= \case
-              True  -> lookupsRegular tEnv tc
-              False -> if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
-                         then lookupsUnion tEnv unionCache
-                         else lookupsRegularAndUnion tEnv tc unionCache
+            assertM $ not <$> isStructurallyEmpty tree
+            if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
+              then lookupsUnion tEnv unionCache
+              else lookupsRegularAndUnion tEnv tc unionCache
   where
     lookupsRegular tEnv tc = do
         let !cache = tableCache tc
@@ -1689,6 +1689,7 @@ saveSnapshot snap label t = do
         mTreeOpt <- case tableUnionLevel content of
           NoUnion -> pure Nothing
           Union mTreeRef _cache -> do
+            assertM $ not <$> isStructurallyEmpty mTreeRef
             mTree <- toSnapMergingTree mTreeRef
             Just <$> traverse (snapshotRun hfs hbio snapUc reg snapDir) mTree
 
@@ -1799,26 +1800,10 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) mTree
                 mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
-                isStructurallyEmpty mt >>= \case
-                  True ->
-                    -- TODO: this is problematic for two reasons:
-                    -- 1. the union cache doesn't get released.
-                    -- 2. since we now don't have a union level any more, the
-                    --    last regular level suddenly is a last level,
-                    --    contradicting its merge type and policy.
-                    --    mergePolicyForLevel etc. only check Union vs. NoUnion,
-                    --    not isStructurallyEmpty.
-                    --
-                    -- However, this doesn't cause errors since structurally
-                    -- empty unions don't get created in the first place. This
-                    -- is clearer in the prototype, where the concept of being
-                    -- structurally empty doesn't exist. We should probably
-                    -- follow the prototype more closely.
-                    pure NoUnion
-                  False -> do
-                    traverse_ (delayedCommit reg . releaseRef) snapTree
-                    cache <- mkUnionCache reg mt
-                    pure (Union mt cache)
+                assertM $ not <$> isStructurallyEmpty mt
+                traverse_ (delayedCommit reg . releaseRef) snapTree
+                cache <- mkUnionCache reg mt
+                pure (Union mt cache)
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels hfs hbio (sessionRefCtx seshEnv) salt uc conf resolve reg activeDir snapLevels'
@@ -2076,17 +2061,19 @@ tableContentToMergingTree uc seshEnv conf
                             tableLevels,
                             tableUnionLevel
                           } =
-    bracket (writeBufferToNewRun uc seshEnv conf tc)
-            (mapM_ releaseRef) $ \mwbr ->
-      let runs :: [PreExistingRun m h]
-          runs = maybeToList (fmap PreExistingRun mwbr)
-              ++ concatMap levelToPreExistingRuns (V.toList tableLevels)
-          -- any pre-existing union in the input table:
-          unionmt = case tableUnionLevel of
-                    NoUnion    -> Nothing
-                    Union mt _ -> Just mt  -- we could reuse the cache, but it
-                                           -- would complicate things
-       in newPendingLevelMerge (sessionRefCtx seshEnv) runs unionmt
+    bracket
+      (writeBufferToNewRun uc seshEnv conf tc)
+      (mapM_ releaseRef) $ \mwbr -> do
+        let runs :: [PreExistingRun m h]
+            runs = maybeToList (fmap PreExistingRun mwbr)
+                ++ concatMap levelToPreExistingRuns (V.toList tableLevels)
+            -- any pre-existing union in the input table:
+        unionmt <- case tableUnionLevel of
+          NoUnion    -> pure Nothing
+          Union mt _ -> do
+            assertM $ not <$> isStructurallyEmpty mt
+            pure (Just mt)  -- we could reuse the cache, but it would complicate things
+        newPendingLevelMerge (sessionRefCtx seshEnv) runs unionmt
   where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
     levelToPreExistingRuns EmptyLevel =
@@ -2190,6 +2177,7 @@ remainingUnionDebt t = do
           NoUnion ->
             pure (UnionDebt 0)
           Union mt _ -> do
+            assertM $ not <$> isStructurallyEmpty mt
             (MergeDebt (MergeCredits c), _) <- MT.remainingMergeDebt mt
             pure (UnionDebt c)
 
@@ -2217,6 +2205,7 @@ supplyUnionCredits resolve t credits = do
           NoUnion ->
             pure (max 0 credits)  -- all leftovers (but never negative)
           Union mt _ -> do
+            assertM $ not <$> isStructurallyEmpty mt
             let conf = tableConfig t
             let AllocNumEntries x = confWriteBufferAlloc conf
             -- We simply use the write buffer capacity as merge credit threshold, as
@@ -2246,24 +2235,10 @@ supplyUnionCredits resolve t credits = do
           case tableUnionLevel tc of
             NoUnion -> pure tc
             Union mt cache -> do
-              unionLevel' <- MT.isStructurallyEmpty mt >>= \case
-                True  ->
-                  -- TODO: this is problematic for two reasons:
-                  -- 1. the union cache doesn't get released.
-                  -- 2. since we now don't have a union level any more, the last
-                  --    regular level suddenly is a last level, contradicting
-                  --    its merge type and policy (mergePolicyForLevel etc. only
-                  --    check Union vs. NoUnion, not isStructurallyEmpty).
-                  --
-                  -- However, this doesn't cause errors since structurally empty
-                  -- unions don't get created in the first place. This is
-                  -- clearer in the prototype, where the concept of being
-                  -- structurally empty doesn't exist. We should probably follow
-                  -- the prototype more closely.
-                  pure NoUnion
-                False -> do
-                  cache' <- mkUnionCache reg mt
-                  releaseUnionCache reg cache
-                  pure (Union mt cache')
+              assertM $ not <$> isStructurallyEmpty mt
+              unionLevel' <- do
+                cache' <- mkUnionCache reg mt
+                releaseUnionCache reg cache
+                pure (Union mt cache')
               pure tc { tableUnionLevel = unionLevel' }
       pure leftovers

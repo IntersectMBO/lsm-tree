@@ -52,6 +52,10 @@ tests = testGroup "Test.Database.LSMTree.Internal.MergingTree"
         ioProperty $
           withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_supplyCredits hfs hbio threshold credits mtd
+    , testProperty "prop_cantBecomeStructurallyEmpty" $ \threshold ratio mtd ->
+        ioProperty $
+          withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
+            prop_cantBecomeStructurallyEmpty hfs hbio threshold ratio mtd
     ]
 
 runParams :: RunBuilder.RunParams
@@ -268,6 +272,31 @@ prop_supplyCredits hfs hbio threshold credits mtd = withRefCtx $ \refCtx -> do
       | initial == 0 = label "trivial"
       | final   == 0 = label "completed"
       | otherwise    = label "incomplete"
+
+-- non-structurally-empty stays non-structurally-empty
+prop_cantBecomeStructurallyEmpty ::
+     forall h.
+     FS.HasFS IO h
+  -> FS.HasBlockIO IO h
+  -> MR.CreditThreshold
+  -> Double  -- ^ 0 to 1, how much of the debt to pay off
+  -> MergingTreeData SerialisedKey SerialisedValue SerialisedBlob
+  -> IO Property
+prop_cantBecomeStructurallyEmpty hfs hbio threshold supplyRatio mtd = withRefCtx $ \refCtx -> do
+    FS.createDirectory hfs setupPath
+    FS.createDirectory hfs (FS.mkFsPath ["active"])
+    counter <- newUniqCounter 0
+    withMergingTree hfs hbio refCtx resolveVal testSalt runParams setupPath counter mtd $ \tree -> do
+      isEmptyBefore <- isStructurallyEmpty tree
+      (MR.MergeDebt (MR.MergeCredits initialDebt), _) <- remainingMergeDebt tree
+      let c = MR.MergeCredits (round (supplyRatio * fromIntegral initialDebt))
+      _ <- supplyCredits hfs hbio refCtx resolveVal testSalt runParams threshold root counter tree c
+      isEmptyAfter <- isStructurallyEmpty tree
+      pure $ property $ not isEmptyBefore ==> not isEmptyAfter
+  where
+    root = Paths.SessionRoot (FS.mkFsPath [])
+    setupPath = FS.mkFsPath ["setup"]  -- separate dir, so file paths in errors
+                                       -- are identifiable as created in setup
 
 instance Arbitrary MR.MergeCredits where
   arbitrary = MR.MergeCredits . getPositive <$> arbitrary
