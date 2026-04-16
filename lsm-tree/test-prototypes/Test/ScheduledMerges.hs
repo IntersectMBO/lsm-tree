@@ -190,7 +190,7 @@ prop_union_complete conf nestedUnionData =
         rep <- dumpRepresentation t
         debt@(UnionDebt x) <- LSM.remainingUnionDebt t
 
-        leftovers <- LSM.supplyUnionCredits t (UnionCredits x)
+        leftovers <- LSM.supplyUnionCredits tr t (UnionCredits x)
 
         rep' <- dumpRepresentation t
         debt' <- LSM.remainingUnionDebt t
@@ -201,10 +201,10 @@ prop_union_complete conf nestedUnionData =
               -- (i.e. they have runs or at least a non-empty write buffer).
               -- Therefore there must be a merging tree.
               debt =/= UnionDebt 0
-              .&&. hasUnionWith (not . isCompleted) rep
+              .&&. hasUnionLevelWith (not . isCompleted) rep
           , QC.counterexample "after" $
               debt' === UnionDebt 0
-              .&&. hasUnionWith isCompleted rep'
+              .&&. hasNoUnionLevel rep'
           , QC.counterexample "leftovers" $
               leftovers >= 0
           ]
@@ -631,10 +631,16 @@ expectShape lsm expectedWb expectedLevels = do
         , "actual shape:   " <> show shape
         ]
 
-hasUnionWith :: (MTree Int -> Bool) -> Representation -> Property
-hasUnionWith p rep = do
+hasNoUnionLevel :: Representation -> Property
+hasNoUnionLevel rep = do
     let (_, _, shape) = representationShape rep
-    QC.counterexample "expected suitable Union" $
+    QC.counterexample "expected no union level" $
+      Nothing === shape
+
+hasUnionLevelWith :: (MTree Int -> Bool) -> Representation -> Property
+hasUnionLevelWith p rep = do
+    let (_, _, shape) = representationShape rep
+    QC.counterexample "expected suitable union level" $
       QC.counterexample (show shape) $
         case shape of
           Nothing -> False

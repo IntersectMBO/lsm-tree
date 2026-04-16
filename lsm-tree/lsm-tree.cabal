@@ -1099,6 +1099,7 @@ test-suite prototypes-test
     Test.FormatPage
     Test.ScheduledMerges
     Test.ScheduledMerges.RunSizes
+    Test.ScheduledMergesDL
     Test.ScheduledMergesQLS
 
   build-depends:

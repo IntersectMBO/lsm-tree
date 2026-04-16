@@ -5,6 +5,7 @@ import           Test.Tasty
 import qualified Test.FormatPage
 import qualified Test.ScheduledMerges
 import qualified Test.ScheduledMerges.RunSizes
+import qualified Test.ScheduledMergesDL
 import qualified Test.ScheduledMergesQLS
 
 main :: IO ()
@@ -13,4 +14,5 @@ main = defaultMain $ testGroup "prototypes" [
     , Test.ScheduledMerges.tests
     , Test.ScheduledMerges.RunSizes.tests
     , Test.ScheduledMergesQLS.tests
+    , Test.ScheduledMergesDL.tests
     ]
