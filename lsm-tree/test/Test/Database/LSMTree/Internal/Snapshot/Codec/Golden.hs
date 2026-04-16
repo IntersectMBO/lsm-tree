@@ -7,9 +7,11 @@ module Test.Database.LSMTree.Internal.Snapshot.Codec.Golden (
   , Annotation
   ) where
 
+import           Codec.CBOR.Read (deserialiseFromBytes)
 import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Monad (when)
-import qualified Data.ByteString.Lazy as BSL (writeFile)
+import           Control.Monad.Class.MonadThrow (Exception (displayException))
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -38,14 +40,22 @@ import           Test.QuickCheck (Property, counterexample, ioProperty, once,
 import qualified Test.Tasty as Tasty
 import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Tasty.Golden as Au
+import           Test.Tasty.HUnit (Assertion, assertEqual, assertFailure,
+                     testCase)
 import           Test.Tasty.QuickCheck (testProperty)
 
 tests :: TestTree
 tests =
-    handleOutputFiles $
-    testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" $
-         concat (forallSnapshotTypes snapshotCodecGoldenTest)
-      ++ [testProperty "prop_noUnexpectedOrMissingGoldenFiles" prop_noUnexpectedOrMissingGoldenFiles]
+    testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec.Golden" [
+        handleOutputFiles $
+        testGroup "Generate golden files" $
+            concat (forallSnapshotTypes snapshotCodecGoldenTest) ++
+          [ testProperty "prop_noUnexpectedOrMissingGoldenFiles" prop_noUnexpectedOrMissingGoldenFiles
+          ]
+      , testGroup "Backwards compatibility" [
+            testCase "test_compatTableConfigV0" test_compatTableConfigV0
+          ]
+      ]
 
 {-------------------------------------------------------------------------------
   Configuration
@@ -74,12 +84,12 @@ snapshotCodecGoldenTest ::
   -> [TestTree]
 snapshotCodecGoldenTest proxy = [
       go annotation datum
-    | (annotation, datum) <- enumGoldenAnnotated' proxy
+    | (annotation, datum) <- enumGoldenAnnotated' proxy v
     ]
   where
+    v = currentSnapshotVersion
     go ann datum =
-      let v = currentSnapshotVersion
-          outputFilePath = goldenDataFilePath </> filePathOutput proxy ann v
+      let outputFilePath = goldenDataFilePath </> filePathOutput proxy ann v
           goldenFilePath = goldenDataFilePath </> filePathGolden proxy ann v
 
           -- IO actions
@@ -99,10 +109,11 @@ snapshotCodecGoldenTest proxy = [
 -- | Check that are no missing or unexpected files in the output directory
 prop_noUnexpectedOrMissingGoldenFiles :: Property
 prop_noUnexpectedOrMissingGoldenFiles = once $ ioProperty $ do
-    let expectedFiles = Set.fromList $ concat $ forallSnapshotTypes $ \p -> concat [
-            filePathsGolden p v
-          | v <- supportedVersions p
-          ]
+    let expectedFiles = Set.fromList $ concat $ forallSnapshotTypes $ \p ->
+          concat [
+              filePathsGolden p v
+            | v <- allCompatibleSnapshotVersions
+            ]
 
     let hfs = ioHasFS goldenDataMountPoint
     actualDirectoryEntries <- FS.listDirectory hfs (FS.mkFsPath [])
@@ -120,6 +131,43 @@ prop_noUnexpectedOrMissingGoldenFiles = once $ ioProperty $ do
             (Set.null unexpectedFiles)
 
     pure $ propMissing .&&. propUnexpected
+
+{-------------------------------------------------------------------------------
+  Backwards compatibility tests
+-------------------------------------------------------------------------------}
+
+test_compatTableConfigV0 :: Assertion
+test_compatTableConfigV0 =
+    assertGoldenFileDecodesTo (Proxy @TableConfig) "A" V0 $
+      TableConfig {
+          confMergePolicy = singGolden V0
+        , confMergeSchedule = singGolden V0
+        , confSizeRatio = singGolden V0
+        , confWriteBufferAlloc = singGolden V0
+        , confBloomFilterAlloc = singGolden V0
+        , confFencePointerIndex = singGolden V0
+        , confDiskCachePolicy = singGolden V0
+          -- MergeBatchSize not included in V0, decoder uses WriteBufferAlloc
+        , confMergeBatchSize = MergeBatchSize magicNumber2
+        }
+
+-- | For types that changed their snapshot format between versions, we should
+-- also test that we can in fact still decode the old format.
+assertGoldenFileDecodesTo ::
+     (DecodeVersioned a, Eq a, Show a, Typeable a)
+  => Proxy a
+  -> String
+  -> SnapshotVersion
+  -> a
+  -> Assertion
+assertGoldenFileDecodesTo proxy ann v expected = do
+    let fp = goldenDataFilePath </> filePathGolden proxy ann v
+    lbs <- BSL.readFile fp
+    case deserialiseFromBytes (decodeVersioned v) lbs of
+      Left err ->
+        assertFailure $ "Error decoding " ++ fp ++ ": " ++ displayException err
+      Right (_, decoded) ->
+        assertEqual "" expected decoded
 
 {-------------------------------------------------------------------------------
   Mapping
@@ -206,31 +254,32 @@ class EnumGolden a where
   --
   -- The default implementation is to return a singleton list containing
   -- 'singGolden'.
-  enumGolden :: [a]
-  enumGolden = [ singGolden ]
+  enumGolden :: SnapshotVersion -> [a]
+  enumGolden v = [ singGolden v ]
 
   -- | Enumerated values with an annotation for naming purposes. The enumeration
   -- should be /shallow/, and the annotations should be unique.
   --
   -- The default implementation is to annotate 'enumGolden' with capital letters
   -- starting with @\'A\'@.
-  enumGoldenAnnotated :: [(Annotation, a)]
-  enumGoldenAnnotated = zip [[c] | c <- ['A' .. 'Z']] enumGolden
+  enumGoldenAnnotated :: SnapshotVersion -> [(Annotation, a)]
+  enumGoldenAnnotated v = zip [[c] | c <- ['A' .. 'Z']] (enumGolden v)
 
   -- | A singleton enumerated value. This is mainly useful for superclass
   -- instances.
   --
   -- The default implementation is to take the 'head' of 'enumGoldenAnnotated'.
-  singGolden :: a
-  singGolden = snd $ head enumGoldenAnnotated
-
-  supportedVersions :: Proxy a -> [SnapshotVersion]
-  supportedVersions _ = allCompatibleSnapshotVersions
+  singGolden :: SnapshotVersion -> a
+  singGolden v = snd $ head (enumGoldenAnnotated v)
 
 type Annotation = String
 
-enumGoldenAnnotated' :: EnumGolden a => Proxy a -> [(Annotation, a)]
-enumGoldenAnnotated' _ = enumGoldenAnnotated
+enumGoldenAnnotated' ::
+     EnumGolden a
+  => Proxy a
+  -> SnapshotVersion
+  -> [(Annotation, a)]
+enumGoldenAnnotated' _ v = enumGoldenAnnotated v
 
 {-------------------------------------------------------------------------------
   Enumeration class: names and file paths
@@ -250,7 +299,7 @@ filePathsGolden ::
   -> [String]
 filePathsGolden p v = [
       filePathGolden p annotation v
-    | (annotation, _) <- enumGoldenAnnotated' p
+    | (annotation, _) <- enumGoldenAnnotated' p v
     ]
 
 filePathOutput :: Typeable a => Proxy a -> String -> SnapshotVersion -> String
@@ -264,13 +313,14 @@ filePathGolden p ann v = nameGolden p ann v ++ ".snapshot.golden"
 -------------------------------------------------------------------------------}
 
 instance EnumGolden SnapshotMetaData where
-  singGolden = SnapshotMetaData singGolden singGolden singGolden singGolden singGolden
+  singGolden v = SnapshotMetaData (singGolden v) (singGolden v) (singGolden v)
+                                  (singGolden v) (singGolden v)
     where
       _coveredAllCases = \case
         SnapshotMetaData{} -> ()
 
 instance EnumGolden SnapshotLabel where
-  enumGolden = [
+  enumGolden _v = [
         SnapshotLabel "UserProvidedLabel"
       , SnapshotLabel ""
       ]
@@ -279,47 +329,48 @@ instance EnumGolden SnapshotLabel where
         SnapshotLabel{} -> ()
 
 instance EnumGolden TableConfig where
-  singGolden = TableConfig singGolden singGolden singGolden singGolden
-                           singGolden singGolden singGolden singGolden
+  singGolden v = TableConfig (singGolden v) (singGolden v) (singGolden v)
+                             (singGolden v) (singGolden v) (singGolden v)
+                             (singGolden v) (singGolden v)
     where
       _coveredAllCases = \case
         TableConfig{} -> ()
 
 instance EnumGolden MergePolicy where
-  singGolden = LazyLevelling
+  singGolden _v = LazyLevelling
     where
       _coveredAllCases = \case
         LazyLevelling{} -> ()
 
 
 instance EnumGolden SizeRatio where
-  singGolden = Four
+  singGolden _v = Four
     where
       _coveredAllCases = \case
         Four{} -> ()
 
 instance EnumGolden WriteBufferAlloc where
-  singGolden = AllocNumEntries magicNumber2
+  singGolden _v = AllocNumEntries magicNumber2
     where
       _coveredAllCases = \case
         AllocNumEntries{} -> ()
 
 instance EnumGolden BloomFilterAlloc where
-  enumGolden = [ AllocFixed magicNumber3, AllocRequestFPR pi ]
+  enumGolden _v = [ AllocFixed magicNumber3, AllocRequestFPR pi ]
     where
       _coveredAllCases = \case
         AllocFixed{} -> ()
         AllocRequestFPR{} -> ()
 
 instance EnumGolden FencePointerIndexType where
-  enumGolden = [ CompactIndex, OrdinaryIndex ]
+  enumGolden _v = [ CompactIndex, OrdinaryIndex ]
     where
       _coveredAllCases = \case
         CompactIndex{} -> ()
         OrdinaryIndex{} -> ()
 
 instance EnumGolden DiskCachePolicy where
-  enumGolden = [ DiskCacheAll, DiskCacheLevelOneTo magicNumber3, DiskCacheNone ]
+  enumGolden _v = [ DiskCacheAll, DiskCacheLevelOneTo magicNumber3, DiskCacheNone ]
     where
       _coveredAllCases = \case
         DiskCacheAll{} -> ()
@@ -327,32 +378,34 @@ instance EnumGolden DiskCachePolicy where
         DiskCacheNone{} -> ()
 
 instance EnumGolden MergeSchedule where
-  enumGolden = [ OneShot, Incremental ]
+  enumGolden _v = [ OneShot, Incremental ]
     where
       _coveredAllCases = \case
         OneShot{} -> ()
         Incremental{} -> ()
 
 instance EnumGolden MergeBatchSize where
-  enumGolden = map MergeBatchSize [ 1, 1000 ]
-  supportedVersions _ = [V1]
+  enumGolden v
+    | v >= V1   = map MergeBatchSize [ 1, 1000 ]
+    | otherwise = []
 
 instance EnumGolden (SnapLevels SnapshotRun) where
-  singGolden = SnapLevels singGolden
+  singGolden v = SnapLevels (singGolden v)
     where
       _coveredAllCases = \case
         SnapLevels{} -> ()
 
 instance EnumGolden (SnapLevel SnapshotRun) where
-  singGolden = SnapLevel singGolden singGolden
+  singGolden v = SnapLevel (singGolden v) (singGolden v)
     where
       _coveredAllCases = \case
         SnapLevel{} -> ()
 
 instance EnumGolden (SnapIncomingRun SnapshotRun) where
-  enumGolden = [
-        SnapIncomingMergingRun singGolden singGolden singGolden singGolden
-      , SnapIncomingSingleRun singGolden
+  enumGolden v = [
+        SnapIncomingMergingRun (singGolden v) (singGolden v) (singGolden v)
+                               (singGolden v)
+      , SnapIncomingSingleRun (singGolden v)
       ]
     where
       _coveredAllCases = \case
@@ -360,30 +413,30 @@ instance EnumGolden (SnapIncomingRun SnapshotRun) where
         SnapIncomingSingleRun{} -> ()
 
 instance EnumGolden MergePolicyForLevel where
-  enumGolden = [ LevelTiering, LevelLevelling ]
+  enumGolden _v = [ LevelTiering, LevelLevelling ]
     where
       _coveredAllCases = \case
         LevelTiering -> ()
         LevelLevelling -> ()
 
 instance EnumGolden LevelMergeType where
-  enumGolden = [ MergeMidLevel, MergeLastLevel ]
+  enumGolden _v = [ MergeMidLevel, MergeLastLevel ]
     where
       _coveredAllCases = \case
         MergeMidLevel{} -> ()
         MergeLastLevel{} -> ()
 
 instance EnumGolden (SnapMergingTree SnapshotRun) where
-  singGolden = SnapMergingTree singGolden
+  singGolden v = SnapMergingTree (singGolden v)
     where
       _coveredAllCases = \case
         SnapMergingTree{} -> ()
 
 instance EnumGolden (SnapMergingTreeState SnapshotRun) where
-  enumGolden = [
-        SnapCompletedTreeMerge singGolden
-      , SnapPendingTreeMerge singGolden
-      , SnapOngoingTreeMerge singGolden
+  enumGolden v = [
+        SnapCompletedTreeMerge (singGolden v)
+      , SnapPendingTreeMerge (singGolden v)
+      , SnapOngoingTreeMerge (singGolden v)
       ]
     where
       _coveredAllCases = \case
@@ -392,9 +445,9 @@ instance EnumGolden (SnapMergingTreeState SnapshotRun) where
         SnapOngoingTreeMerge{} -> ()
 
 instance EnumGolden (SnapPendingMerge SnapshotRun) where
-  enumGolden = [
-        SnapPendingLevelMerge singGolden singGolden
-      , SnapPendingUnionMerge singGolden
+  enumGolden v = [
+        SnapPendingLevelMerge (singGolden v) (singGolden v)
+      , SnapPendingUnionMerge (singGolden v)
       ]
     where
       _coveredAllCases = \case
@@ -402,9 +455,9 @@ instance EnumGolden (SnapPendingMerge SnapshotRun) where
         SnapPendingUnionMerge{} -> ()
 
 instance EnumGolden (SnapPreExistingRun SnapshotRun) where
-  enumGolden = [
-        SnapPreExistingRun singGolden
-      , SnapPreExistingMergingRun singGolden
+  enumGolden v = [
+        SnapPreExistingRun (singGolden v)
+      , SnapPreExistingMergingRun (singGolden v)
       ]
     where
       _coveredAllCases = \case
@@ -412,43 +465,44 @@ instance EnumGolden (SnapPreExistingRun SnapshotRun) where
         SnapPreExistingMergingRun{} -> ()
 
 instance EnumGolden TreeMergeType where
-  enumGolden = [ MergeLevel, MergeUnion ]
+  enumGolden _v = [ MergeLevel, MergeUnion ]
     where
       _coveredAllCases = \case
         MergeLevel{} -> ()
         MergeUnion{} -> ()
 
 instance EnumGolden a => EnumGolden (Maybe a) where
-  enumGolden = [ Just singGolden, Nothing ]
+  enumGolden v = [ Just (singGolden v), Nothing ]
     where
       _coveredAllCases = \case
         Just{} -> ()
         Nothing{} -> ()
 
 instance EnumGolden a => EnumGolden (V.Vector a) where
-  enumGolden = [
-      V.fromList [ singGolden, singGolden ]
+  enumGolden v = [
+      V.fromList [ singGolden v, singGolden v ]
     , mempty
-    , V.fromList [ singGolden ]
+    , V.fromList [ singGolden v ]
     ]
 
 instance EnumGolden a => EnumGolden [a] where
-  enumGolden = [
-      [singGolden, singGolden]
+  enumGolden v = [
+      [ singGolden v, singGolden v ]
     , []
-    , [singGolden]
+    , [ singGolden v]
     ]
 
 instance EnumGolden RunParams where
-  singGolden = RunParams singGolden singGolden singGolden
+  singGolden v = RunParams (singGolden v) (singGolden v) (singGolden v)
     where
       _coveredAllCases = \case
         RunParams{} -> ()
 
 instance EnumGolden t => EnumGolden (SnapMergingRun t SnapshotRun) where
-  enumGolden = [
-        SnapCompletedMerge singGolden singGolden
-      , SnapOngoingMerge singGolden singGolden singGolden singGolden
+  enumGolden v = [
+        SnapCompletedMerge (singGolden v) (singGolden v)
+      , SnapOngoingMerge (singGolden v) (singGolden v) (singGolden v)
+                         (singGolden v)
       ]
     where
       _coveredAllCases = \case
@@ -456,7 +510,7 @@ instance EnumGolden t => EnumGolden (SnapMergingRun t SnapshotRun) where
         SnapOngoingMerge{} -> ()
 
 instance EnumGolden RunBloomFilterAlloc where
-  enumGolden = [
+  enumGolden _v = [
         RunAllocFixed magicNumber3
       , RunAllocRequestFPR pi
       ]
@@ -466,13 +520,13 @@ instance EnumGolden RunBloomFilterAlloc where
         RunAllocRequestFPR{} -> ()
 
 instance EnumGolden RunNumber where
-  singGolden = RunNumber magicNumber3
+  singGolden _v = RunNumber magicNumber3
     where
       _coveredAllCases = \case
         RunNumber{} -> ()
 
 instance EnumGolden IndexType where
-  enumGolden = [
+  enumGolden _v = [
         Compact
       , Ordinary
       ]
@@ -482,7 +536,7 @@ instance EnumGolden IndexType where
         Ordinary{} -> ()
 
 instance EnumGolden RunDataCaching where
-  enumGolden = [
+  enumGolden _v = [
         CacheRunData
       , NoCacheRunData
       ]
@@ -492,31 +546,31 @@ instance EnumGolden RunDataCaching where
         NoCacheRunData{} -> ()
 
 instance EnumGolden SnapshotRun where
-  singGolden = SnapshotRun singGolden singGolden singGolden
+  singGolden v = SnapshotRun (singGolden v) (singGolden v) (singGolden v)
     where
       _coveredAllCases = \case
         SnapshotRun{} -> ()
 
 instance EnumGolden MergeDebt where
-  singGolden = MergeDebt magicNumber2
+  singGolden _v = MergeDebt magicNumber2
     where
       _coveredAllCases = \case
         MergeDebt{} -> ()
 
 instance EnumGolden MergeCredits where
-  singGolden = MergeCredits magicNumber2
+  singGolden _v = MergeCredits magicNumber2
     where
       _coveredAllCases = \case
         MergeCredits{} -> ()
 
 instance EnumGolden NominalDebt where
-  singGolden = NominalDebt magicNumber2
+  singGolden _v = NominalDebt magicNumber2
     where
       _coveredAllCases = \case
         NominalDebt{} -> ()
 
 instance EnumGolden NominalCredits where
-  singGolden = NominalCredits magicNumber1
+  singGolden _v = NominalCredits magicNumber1
     where
       _coveredAllCases = \case
         NominalCredits{} -> ()
