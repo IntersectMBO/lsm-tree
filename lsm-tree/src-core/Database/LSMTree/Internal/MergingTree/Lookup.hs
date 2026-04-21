@@ -118,10 +118,10 @@ buildLookupTree reg (DeRef mt) =
           Just MR.MergeLevel -> LookupBatch rs  -- combine runs
           Just MR.MergeUnion -> mkLookupNode MR.MergeUnion  -- separate
                                   (LookupBatch . V.singleton <$!> rs)
-      MT.PendingTreeMerge (MT.PendingLevelMerge prs Nothing) -> do
+      MT.PendingTreeMerge (MT.PendingLevelMerge pr prs) -> do
         LookupBatch . V.concatMap id <$!>  -- combine runs
-          V.mapMStrict duplicatePreExistingRun prs
-      MT.PendingTreeMerge (MT.PendingLevelMerge prs (Just tree)) -> do
+          V.mapMStrict duplicatePreExistingRun (V.cons pr prs)
+      MT.PendingTreeMerge (MT.PendingLevelMergeWithUnion prs tree) -> do
         !child <- buildLookupTree reg tree
         if V.null prs
           then pure child
@@ -130,8 +130,9 @@ buildLookupTree reg (DeRef mt) =
               LookupBatch . V.concatMap id <$!>  -- combine runs
                 V.mapMStrict duplicatePreExistingRun prs
             pure $ mkLookupNode MR.MergeLevel $ V.fromList [preExisting, child]
-      MT.PendingTreeMerge (MT.PendingUnionMerge trees) ->
-        mkLookupNode MR.MergeUnion <$!> V.mapMStrict (buildLookupTree reg) trees
+      MT.PendingTreeMerge (MT.PendingUnionMerge tree trees) ->
+        mkLookupNode MR.MergeUnion <$!>
+          V.mapMStrict (buildLookupTree reg) (V.cons tree trees)
   where
     dupRun r = withRollback reg (dupRef r) releaseRef
 

@@ -17,7 +17,6 @@ module Database.LSMTree.Internal.MergingTree (
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
-  , pendingMergeInvariant
   ) where
 
 import           Control.ActionRegistry
@@ -29,7 +28,7 @@ import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow (MonadMask)
 import           Control.Monad.Primitive
 import           Control.RefCount
-import           Data.Foldable (toList, traverse_)
+import           Data.Foldable (traverse_)
 #if !MIN_VERSION_base(4,20,0)
 import           Data.List (foldl')
                  -- foldl' is included in the Prelude from base 4.20 onwards
@@ -112,41 +111,40 @@ data MergingTreeState m h =
       !(PendingMerge m h)
 
 -- | A merge that is waiting for its inputs to complete.
---
--- INVARIANT: some of the constructor's fields must be non-empty (see
--- 'pendingMergeInvariant').
 data PendingMerge m h =
     -- | The collection of inputs is the entire contents of a table,
     -- i.e. its (merging) runs and finally a union merge (if that table
     -- already contained a union).
     PendingLevelMerge
+      !(PreExistingRun m h)
       !(Vector (PreExistingRun m h))
-      !(Maybe (Ref (MergingTree m h)))
+
+  | PendingLevelMergeWithUnion
+      !(Vector (PreExistingRun m h))
+      !(Ref (MergingTree m h))
 
     -- | Each input is the entire content of a table (as a merging tree).
   | PendingUnionMerge
+      !(Ref (MergingTree m h))
       !(Vector (Ref (MergingTree m h)))
-
-pendingMergeInvariant :: PendingMerge m h -> Bool
-pendingMergeInvariant (PendingLevelMerge prs t) =
-    not (V.null prs && null t)
-pendingMergeInvariant (PendingUnionMerge ts) =
-    not (V.null ts)
 
 mkPendingLevelMerge ::
      Vector (PreExistingRun m h)
   -> Maybe (Ref (MergingTree m h))
   -> Maybe (PendingMerge m h)
-mkPendingLevelMerge rs t
-  | V.null rs && null t = Nothing
-  | otherwise           = Just (PendingLevelMerge rs t)
+mkPendingLevelMerge prs (Just t) = Just (PendingLevelMergeWithUnion prs t)
+mkPendingLevelMerge prs Nothing =
+    case V.uncons prs of
+      Just (r, rs) -> Just (PendingLevelMerge r rs)
+      Nothing      -> Nothing
 
 mkPendingUnionMerge ::
      Vector (Ref (MergingTree m h))
   -> Maybe (PendingMerge m h)
-mkPendingUnionMerge ts
-  | V.null ts = Nothing
-  | otherwise = Just (PendingUnionMerge ts)
+mkPendingUnionMerge mts =
+    case V.uncons mts of
+      Nothing      -> Nothing
+      Just (t, ts) -> Just (PendingUnionMerge t ts)
 
 pendingContent ::
      PendingMerge m h
@@ -155,8 +153,12 @@ pendingContent ::
      , Vector (Ref (MergingTree m h))
      )
 pendingContent = \case
-    PendingLevelMerge prs t -> (MR.MergeLevel, prs, maybe V.empty V.singleton t)
-    PendingUnionMerge    ts -> (MR.MergeUnion, V.empty, ts)
+    PendingLevelMerge pr prs ->
+      (MR.MergeLevel, V.cons pr prs, V.empty)
+    PendingLevelMergeWithUnion prs t ->
+      (MR.MergeLevel, prs, V.singleton t)
+    PendingUnionMerge t ts ->
+      (MR.MergeUnion, V.empty, V.cons t ts)
 
 {-# COMPLETE PendingMerge #-}
 pattern PendingMerge ::
@@ -311,11 +313,9 @@ finalise mergeState = releaseMTS =<< readMVar mergeState
   where
     releaseMTS (CompletedTreeMerge r) = releaseRef r
     releaseMTS (OngoingTreeMerge  mr) = releaseRef mr
-    releaseMTS (PendingTreeMerge ptm) =
-      case ptm of
-        PendingUnionMerge mts        -> traverse_ releaseRef mts
-        PendingLevelMerge prs mmt    -> traverse_ releasePER prs
-                                     >> traverse_ releaseRef mmt
+    releaseMTS (PendingTreeMerge (PendingMerge _ prs mts)) = do
+        traverse_ releasePER prs
+        traverse_ releaseRef mts
 
     releasePER (PreExistingRun         r) = releaseRef r
     releasePER (PreExistingMergingRun mr) = releaseRef mr
@@ -450,11 +450,13 @@ supplyCredits hfs hbio refCtx resolve salt runParams threshold root uc = \mt0 c0
     supplyPending =
         MR.supplyChecked remainingMergeDebtPendingMerge $ \pm credits -> do
           case pm of
-            PendingLevelMerge prs mt ->
+            PendingLevelMerge pr prs ->
+              leftToRight supplyPreExisting (pr : V.toList prs) credits
+            PendingLevelMergeWithUnion prs mt ->
               leftToRight supplyPreExisting (V.toList prs) credits
-                >>= leftToRight (flip supplyTree) (toList mt)
-            PendingUnionMerge mts ->
-              splitEqually (flip supplyTree) (V.toList mts) credits
+                >>= leftToRight (flip supplyTree) [mt]
+            PendingUnionMerge mt mts ->
+              splitEqually (flip supplyTree) (mt : V.toList mts) credits
 
     supplyPreExisting c = \case
         PreExistingRun _r        -> pure c  -- no work to do, all leftovers
