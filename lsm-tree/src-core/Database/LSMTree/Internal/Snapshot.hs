@@ -38,13 +38,14 @@ import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (void)
+import           Control.Monad (join, void)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
                      bracketOnError)
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
+import           Data.Maybe (catMaybes)
 import           Data.String (IsString)
 import           Data.Text (Text)
 import qualified Data.Vector as V
@@ -204,6 +205,8 @@ instance NFData r => NFData (SnapMergingTreeState r) where
   rnf (SnapPendingTreeMerge a)   = rnf a
   rnf (SnapOngoingTreeMerge a)   = rnf a
 
+-- | While 'PendingMerge' has an invariant not to be empty, the fields of
+-- 'SnapPendingMerge' can all be empty for backwards compatibility.
 data SnapPendingMerge r =
     SnapPendingLevelMerge
       ![SnapPreExistingRun r]
@@ -239,7 +242,7 @@ instance NFData r => NFData (SnapPreExistingRun r) where
   -> ActiveDir
   -> ActionRegistry IO
   -> SnapMergingTree (Ref (Run IO h))
-  -> IO (Ref (MT.MergingTree IO h))
+  -> IO (Maybe (Ref (MT.MergingTree IO h)))
   #-}
 -- | Converts a snapshot of a merging tree of runs to a real merging tree.
 --
@@ -255,7 +258,7 @@ fromSnapMergingTree ::
   -> ActiveDir
   -> ActionRegistry m
   -> SnapMergingTree (Ref (Run m h))
-  -> m (Ref (MT.MergingTree m h))
+  -> m (Maybe (Ref (MT.MergingTree m h)))
 fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
     go
   where
@@ -267,18 +270,19 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
     --   happy path.
     go :: ActionRegistry m
        -> SnapMergingTree (Ref (Run m h))
-       -> m (Ref (MT.MergingTree m h))
+       -> m (Maybe (Ref (MT.MergingTree m h)))
 
     go reg (SnapMergingTree (SnapCompletedTreeMerge run)) =
-      withRollback reg
-        (MT.newCompletedMerge refCtx run)
-        releaseRef
+      Just <$>
+        withRollback reg
+          (MT.newCompletedMerge refCtx run)
+          releaseRef
 
     go reg (SnapMergingTree (SnapPendingTreeMerge
                               (SnapPendingLevelMerge prs mmt))) = do
       prs' <- traverse (fromSnapPreExistingRun reg) prs
-      mmt' <- traverse (go reg) mmt
-      mt   <- withRollback reg
+      mmt' <- join @Maybe <$> traverse (go reg) mmt
+      mt   <- withRollbackMaybe reg
                 (MT.newPendingLevelMerge refCtx prs' mmt')
                 releaseRef
       traverse_ (delayedCommit reg . releasePER) prs'
@@ -287,8 +291,8 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
 
     go reg (SnapMergingTree (SnapPendingTreeMerge
                               (SnapPendingUnionMerge mts))) = do
-      mts' <- traverse (go reg) mts
-      mt   <- withRollback reg
+      mts' <- catMaybes <$> traverse (go reg) mts
+      mt   <- withRollbackMaybe reg
                 (MT.newPendingUnionMerge refCtx mts')
                 releaseRef
       traverse_ (delayedCommit reg . releaseRef) mts'
@@ -302,7 +306,7 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
               (MT.newOngoingMerge refCtx mr)
               releaseRef
       delayedCommit reg (releaseRef mr)
-      pure mt
+      pure (Just mt)
 
     -- Returns fresh refs, which must be released locally.
     fromSnapPreExistingRun :: ActionRegistry m

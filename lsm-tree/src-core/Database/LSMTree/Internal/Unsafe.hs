@@ -117,7 +117,6 @@ import qualified Data.Text as Text
 import           Data.Typeable
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Arena (ArenaManager, newArenaManager)
-import           Database.LSMTree.Internal.Assertions (assertM)
 import           Database.LSMTree.Internal.BlobRef (WeakBlobRef (..))
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.Config
@@ -1172,8 +1171,7 @@ lookups resolve ks t = do
       RW.withReadAccess (tableContent tEnv) $ \tc -> do
         case tableUnionLevel tc of
           NoUnion -> lookupsRegular tEnv tc
-          Union tree unionCache -> do
-            assertM $ not <$> isStructurallyEmpty tree
+          Union _ unionCache -> do
             if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
               then lookupsUnion tEnv unionCache
               else lookupsRegularAndUnion tEnv tc unionCache
@@ -1689,7 +1687,6 @@ saveSnapshot snap label t = do
         mTreeOpt <- case tableUnionLevel content of
           NoUnion -> pure Nothing
           Union mTreeRef _cache -> do
-            assertM $ not <$> isStructurallyEmpty mTreeRef
             mTree <- toSnapMergingTree mTreeRef
             Just <$> traverse (snapshotRun hfs hbio snapUc reg snapDir) mTree
 
@@ -1799,11 +1796,10 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
               Nothing -> pure NoUnion
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) mTree
-                mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
-                assertM $ not <$> isStructurallyEmpty mt
-                traverse_ (delayedCommit reg . releaseRef) snapTree
-                cache <- mkUnionCache reg mt
-                pure (Union mt cache)
+                traverse_ (delayedCommit reg . releaseRef) snapTree  -- only temporary, to be released at the end
+                fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree >>= \case
+                  Nothing -> pure NoUnion
+                  Just mt -> Union mt <$> mkUnionCache reg mt
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels hfs hbio (sessionRefCtx seshEnv) salt uc conf resolve reg activeDir snapLevels'
@@ -2009,28 +2005,31 @@ unionsInOpenSession ::
   -> NonEmpty (Table m h)
   -> m (Table m h)
 unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
-    mts <- forM (NE.toList ts) $ \t ->
+    mmts <- forM (NE.toList ts) $ \t ->
       withKeepTableOpen t $ \tEnv ->
         RW.withReadAccess (tableContent tEnv) $ \tc ->
           -- tableContentToMergingTree duplicates all runs and merges
           -- so the ones from the tableContent here do not escape
           -- the read access.
-          withRollback reg
+          withRollbackMaybe reg
             (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
             releaseRef
-    mt <- withRollback reg (newPendingUnionMerge (sessionRefCtx seshEnv) mts) releaseRef
+    let mts = catMaybes mmts
+    mmt <-
+      withRollbackMaybe reg
+        (newPendingUnionMerge (sessionRefCtx seshEnv) mts)
+        releaseRef
 
     -- The mts here is a temporary value, since newPendingUnionMerge
     -- will make its own references, so release mts at the end of
     -- the action registry bracket
     forM_ mts (delayedCommit reg . releaseRef)
 
-    content <- MT.isStructurallyEmpty mt >>= \case
-      True -> do
+    content <- case mmt of
+      Nothing -> do
         -- no need to have an empty merging tree
-        delayedCommit reg (releaseRef mt)
-        newEmptyTableContent ((sessionUniqCounter sesh)) seshEnv reg
-      False -> do
+        newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
+      Just mt -> do
         empty <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
         cache <- mkUnionCache reg mt
         pure empty { tableUnionLevel = Union mt cache }
@@ -2047,7 +2046,7 @@ unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
   -> SessionEnv IO h
   -> TableConfig
   -> TableContent IO h
-  -> IO (Ref (MergingTree IO h)) #-}
+  -> IO (Maybe (Ref (MergingTree IO h))) #-}
 tableContentToMergingTree ::
      forall m h.
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
@@ -2055,7 +2054,7 @@ tableContentToMergingTree ::
   -> SessionEnv m h
   -> TableConfig
   -> TableContent m h
-  -> m (Ref (MergingTree m h))
+  -> m (Maybe (Ref (MergingTree m h)))
 tableContentToMergingTree uc seshEnv conf
                           tc@TableContent {
                             tableLevels,
@@ -2070,9 +2069,7 @@ tableContentToMergingTree uc seshEnv conf
             -- any pre-existing union in the input table:
         unionmt <- case tableUnionLevel of
           NoUnion    -> pure Nothing
-          Union mt _ -> do
-            assertM $ not <$> isStructurallyEmpty mt
-            pure (Just mt)  -- we could reuse the cache, but it would complicate things
+          Union mt _ -> pure (Just mt)  -- we could reuse the cache, but it would complicate things
         newPendingLevelMerge (sessionRefCtx seshEnv) runs unionmt
   where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
@@ -2177,7 +2174,6 @@ remainingUnionDebt t = do
           NoUnion ->
             pure (UnionDebt 0)
           Union mt _ -> do
-            assertM $ not <$> isStructurallyEmpty mt
             (MergeDebt (MergeCredits c), _) <- MT.remainingMergeDebt mt
             pure (UnionDebt c)
 
@@ -2205,7 +2201,6 @@ supplyUnionCredits resolve t credits = do
           NoUnion ->
             pure (max 0 credits)  -- all leftovers (but never negative)
           Union mt _ -> do
-            assertM $ not <$> isStructurallyEmpty mt
             let conf = tableConfig t
             let AllocNumEntries x = confWriteBufferAlloc conf
             -- We simply use the write buffer capacity as merge credit threshold, as
@@ -2235,7 +2230,6 @@ supplyUnionCredits resolve t credits = do
           case tableUnionLevel tc of
             NoUnion -> pure tc
             Union mt cache -> do
-              assertM $ not <$> isStructurallyEmpty mt
               unionLevel' <- do
                 cache' <- mkUnionCache reg mt
                 releaseUnionCache reg cache

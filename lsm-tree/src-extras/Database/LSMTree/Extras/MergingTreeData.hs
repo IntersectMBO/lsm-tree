@@ -20,6 +20,7 @@ module Database.LSMTree.Extras.MergingTreeData (
 import           Control.Exception (assert, bracket)
 import           Control.RefCount
 import           Data.Foldable (for_, toList)
+import           Data.Maybe (fromJust)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.MergingRunData
@@ -87,10 +88,10 @@ unsafeCreateMergingTree hfs hbio refCtx resolve salt runParams path counter = go
       PendingLevelMergeData prds mtd ->
         withPreExistingRuns prds $ \prs ->
           withMaybeTree mtd $ \mt ->
-            MT.newPendingLevelMerge refCtx prs mt
+            fromJust <$> MT.newPendingLevelMerge refCtx prs mt
       PendingUnionMergeData mtds ->
         withTrees mtds $ \mts ->
-          MT.newPendingUnionMerge refCtx mts
+          fromJust <$> MT.newPendingUnionMerge refCtx mts
 
     withTrees []         act = act []
     withTrees (mtd:rest) act =

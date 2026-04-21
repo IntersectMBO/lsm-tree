@@ -43,8 +43,7 @@ import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.MergingTree"
-    [ testProperty "prop_isStructurallyEmpty" prop_isStructurallyEmpty
-    , testProperty "prop_lookupTree" $ \keys mtd ->
+    [ testProperty "prop_lookupTree" $ \keys mtd ->
         ioProperty $
           withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_lookupTree hfs hbio keys mtd
@@ -52,10 +51,6 @@ tests = testGroup "Test.Database.LSMTree.Internal.MergingTree"
         ioProperty $
           withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_supplyCredits hfs hbio threshold credits mtd
-    , testProperty "prop_cantBecomeStructurallyEmpty" $ \threshold ratio mtd ->
-        ioProperty $
-          withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
-            prop_cantBecomeStructurallyEmpty hfs hbio threshold ratio mtd
     ]
 
 runParams :: RunBuilder.RunParams
@@ -68,57 +63,6 @@ runParams =
 
 testSalt :: Bloom.Salt
 testSalt = 4
-
--- | Check that the merging tree constructor functions preserve the property
--- that if the inputs are obviously empty, the output is also obviously empty.
---
-prop_isStructurallyEmpty :: EmptyMergingTree -> Property
-prop_isStructurallyEmpty emt =
-    ioProperty $ withRefCtx $ \refCtx ->
-      bracket (mkEmptyMergingTree refCtx emt)
-              releaseRef
-              isStructurallyEmpty
-
--- | An expression to specify the shape of an empty 'MergingTree'
---
-data EmptyMergingTree = ObviouslyEmptyLevelMerge
-                      | ObviouslyEmptyUnionMerge
-                      | NonObviouslyEmptyLevelMerge EmptyMergingTree
-                      | NonObviouslyEmptyUnionMerge [EmptyMergingTree]
-  deriving stock (Eq, Show)
-
-instance Arbitrary EmptyMergingTree where
-    arbitrary =
-      sized $ \sz ->
-        frequency $
-        take (1 + sz)
-        [ (1, pure ObviouslyEmptyLevelMerge)
-        , (1, pure ObviouslyEmptyUnionMerge)
-        , (2, NonObviouslyEmptyLevelMerge <$> resize (sz `div` 2) arbitrary)
-        , (2, NonObviouslyEmptyUnionMerge <$> resize (sz `div` 2) arbitrary)
-        ]
-    shrink ObviouslyEmptyLevelMerge         = []
-    shrink ObviouslyEmptyUnionMerge         = [ObviouslyEmptyLevelMerge]
-    shrink (NonObviouslyEmptyLevelMerge mt) = ObviouslyEmptyLevelMerge
-                                            : [ NonObviouslyEmptyLevelMerge mt'
-                                              | mt' <- shrink mt ]
-    shrink (NonObviouslyEmptyUnionMerge mt) = ObviouslyEmptyUnionMerge
-                                            : [ NonObviouslyEmptyUnionMerge mt'
-                                              | mt' <- shrink mt ]
-
-mkEmptyMergingTree :: RefCtx -> EmptyMergingTree -> IO (Ref (MergingTree IO h))
-mkEmptyMergingTree refCtx ObviouslyEmptyLevelMerge = newPendingLevelMerge refCtx [] Nothing
-mkEmptyMergingTree refCtx ObviouslyEmptyUnionMerge = newPendingUnionMerge refCtx []
-mkEmptyMergingTree refCtx (NonObviouslyEmptyLevelMerge emt) = do
-    mt  <- mkEmptyMergingTree refCtx emt
-    mt' <- newPendingLevelMerge refCtx [] (Just mt)
-    releaseRef mt
-    pure mt'
-mkEmptyMergingTree refCtx (NonObviouslyEmptyUnionMerge emts) = do
-    mts <- mapM (mkEmptyMergingTree refCtx) emts
-    mt' <- newPendingUnionMerge refCtx mts
-    mapM_ releaseRef mts
-    pure mt'
 
 {-------------------------------------------------------------------------------
   Lookup
@@ -160,17 +104,12 @@ prop_lookupTree hfs hbio keys mtd = withRefCtx $ \refCtx -> do
       Entry.Upsert v           -> Just (v, Nothing)
       Entry.Delete             -> Nothing
 
-    lookupsIO reg mgr tree =
-        isStructurallyEmpty tree >>= \case
-          True ->
-            -- if the tree was empty, then the model should also have no results
-            pure $ V.map (const Nothing) keys
-          False -> do
-            batches <- buildLookupTree reg tree
-            results <- mapMStrict (performLookups mgr) batches
-            acc <- foldLookupTree resolveVal results
-            traverse_ (traverse_ (delayedCommit reg . releaseRef)) batches
-            pure acc
+    lookupsIO reg mgr tree = do
+        batches <- buildLookupTree reg tree
+        results <- mapMStrict (performLookups mgr) batches
+        acc <- foldLookupTree resolveVal results
+        traverse_ (traverse_ (delayedCommit reg . releaseRef)) batches
+        pure acc
 
     performLookups mgr runs =
         Async.async $
@@ -272,31 +211,6 @@ prop_supplyCredits hfs hbio threshold credits mtd = withRefCtx $ \refCtx -> do
       | initial == 0 = label "trivial"
       | final   == 0 = label "completed"
       | otherwise    = label "incomplete"
-
--- non-structurally-empty stays non-structurally-empty
-prop_cantBecomeStructurallyEmpty ::
-     forall h.
-     FS.HasFS IO h
-  -> FS.HasBlockIO IO h
-  -> MR.CreditThreshold
-  -> Double  -- ^ 0 to 1, how much of the debt to pay off
-  -> MergingTreeData SerialisedKey SerialisedValue SerialisedBlob
-  -> IO Property
-prop_cantBecomeStructurallyEmpty hfs hbio threshold supplyRatio mtd = withRefCtx $ \refCtx -> do
-    FS.createDirectory hfs setupPath
-    FS.createDirectory hfs (FS.mkFsPath ["active"])
-    counter <- newUniqCounter 0
-    withMergingTree hfs hbio refCtx resolveVal testSalt runParams setupPath counter mtd $ \tree -> do
-      isEmptyBefore <- isStructurallyEmpty tree
-      (MR.MergeDebt (MR.MergeCredits initialDebt), _) <- remainingMergeDebt tree
-      let c = MR.MergeCredits (round (supplyRatio * fromIntegral initialDebt))
-      _ <- supplyCredits hfs hbio refCtx resolveVal testSalt runParams threshold root counter tree c
-      isEmptyAfter <- isStructurallyEmpty tree
-      pure $ property $ not isEmptyBefore ==> not isEmptyAfter
-  where
-    root = Paths.SessionRoot (FS.mkFsPath [])
-    setupPath = FS.mkFsPath ["setup"]  -- separate dir, so file paths in errors
-                                       -- are identifiable as created in setup
 
 instance Arbitrary MR.MergeCredits where
   arbitrary = MR.MergeCredits . getPositive <$> arbitrary

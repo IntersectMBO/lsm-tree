@@ -4,7 +4,6 @@
 
 module Database.LSMTree.Internal.Assertions (
     assert,
-    assertM,
     isValidSlice,
     sameByteArray,
     fromIntegralChecked,
@@ -21,15 +20,6 @@ import           Control.Exception (assert)
 import           Data.Primitive.ByteArray (ByteArray (..), sizeofByteArray)
 import           GHC.Stack (HasCallStack)
 import           Text.Printf
-
-assertM :: Monad m => m Bool -> m ()
-assertM _p = do
-#ifdef NO_IGNORE_ASSERTS
-  b <- _p
-  assert b $ pure ()
-#else
-  pure ()
-#endif
 
 isValidSlice :: Int -> Int -> ByteArray -> Bool
 isValidSlice off len ba =
