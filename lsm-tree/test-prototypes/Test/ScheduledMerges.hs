@@ -6,6 +6,8 @@ import           Control.Monad.ST
 import           Control.Tracer (Tracer (Tracer))
 import qualified Control.Tracer as Tracer
 import           Data.Foldable (find, traverse_)
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromJust)
 import           Data.STRef
 import           Text.Printf (printf)
@@ -16,6 +18,7 @@ import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (arbitrary, shrink), Property,
                      (.&&.))
 import           Test.QuickCheck.Exception (isDiscard)
+import           Test.QuickCheck.Instances ()
 import           Test.Tasty
 import           Test.Tasty.HUnit (HasCallStack, testCase)
 import           Test.Tasty.QuickCheck (QuickCheckMaxSize (..),
@@ -320,8 +323,9 @@ instance Arbitrary SmallCredit where
 -- simplified non-ST version of MergingTree
 data T = TCompleted Run
        | TOngoing (M TreeMergeType)
-       | TPendingLevel [P] (Maybe T)  -- not both empty!
-       | TPendingUnion [T]  -- at least 2 children
+       | TPendingLevel (NonEmpty P)
+       | TPendingLevelWithUnion [P] T
+       | TPendingUnion (NonEmpty T)  -- at least 2 children
   deriving stock Show
 
 -- simplified non-ST version of PreExistingRun
@@ -350,7 +354,8 @@ invariantT t = runST $ do
 sizeT :: T -> Int
 sizeT (TCompleted _)        = 1
 sizeT (TOngoing _)          = 1
-sizeT (TPendingLevel ps mt) = sum (fmap sizeP ps) + maybe 0 sizeT mt
+sizeT (TPendingLevel ps)    = sum (fmap sizeP ps)
+sizeT (TPendingLevelWithUnion ps mt) = sum (fmap sizeP ps) + sizeT mt
 sizeT (TPendingUnion ts)    = sum (fmap sizeT ts)
 
 sizeP :: P -> Int
@@ -362,30 +367,31 @@ sizeP (PMergingRun _) = 1
 depthT :: T -> Int
 depthT (TCompleted _) = 0
 depthT (TOngoing _) = 0
-depthT (TPendingLevel ps mt) =
-    let depthPs = case ps of
-          [] -> 0
-          _  -> maximum (fmap depthP ps)
-        depthMt = maybe 0 depthT mt
-    in 1 + max depthPs depthMt
-depthT (TPendingUnion ts) = case ts of
-    [] -> 0
-    _  -> 1 + maximum (fmap depthT ts)
+depthT (TPendingLevel ps) =
+    1 + maximum (fmap depthP ps)
+depthT (TPendingLevelWithUnion ps t) =
+    1 + maximum (depthT t : fmap depthP ps)
+depthT (TPendingUnion ts) =
+    1 + maximum (fmap depthT ts)
 
 depthP :: P -> Int
 depthP (PRun _)        = 0
 depthP (PMergingRun _) = 0
 
 fromT :: T -> ST s (MergingTree s)
-fromT t = do
-    state <- case t of
+fromT t0 = do
+    state <- case t0 of
       TCompleted r -> pure (CompletedTreeMerge r)
       TOngoing mr  -> OngoingTreeMerge <$> fromM mr
-      TPendingLevel ps mt ->
+      TPendingLevel ps -> do
         fmap PendingTreeMerge $
-          PendingLevelMerge <$> traverse fromP ps <*> traverse fromT mt
+          PendingLevelMerge <$> traverse fromP ps
+      TPendingLevelWithUnion ps t -> do
+        fmap PendingTreeMerge $
+          PendingLevelMergeWithUnion <$> traverse fromP ps <*> fromT t
       TPendingUnion ts -> do
-        fmap PendingTreeMerge $ PendingUnionMerge <$> traverse fromT ts
+        fmap PendingTreeMerge $
+          PendingUnionMerge <$> traverse fromT ts
     MergingTree <$> newSTRef state
 
 fromP :: P -> ST s (PreExistingRun s)
@@ -403,10 +409,12 @@ fromM m = do
 completeT :: T -> Run
 completeT (TCompleted r) = r
 completeT (TOngoing m)   = completeM m
-completeT (TPendingLevel is t) =
-    mergek MergeLevel (map completeP is <> maybe [] (pure . completeT) t)
+completeT (TPendingLevel is) =
+    mergek MergeLevel (map completeP (NE.toList is))
+completeT (TPendingLevelWithUnion is t) =
+    mergek MergeLevel (map completeP is ++ [completeT t])
 completeT (TPendingUnion ts) =
-    mergek MergeUnion (map completeT ts)
+    mergek MergeUnion (map completeT (NE.toList ts))
 
 completeP :: P -> Run
 completeP (PRun r)        = r
@@ -436,26 +444,28 @@ instance Arbitrary T where
           QC.frequency
             [ (1, do
                 -- pending level merge without child
-                preExisting <- QC.vector (n - 1)  -- 1 for constructor itself
-                pure (TPendingLevel preExisting Nothing))
+                pe <- arbitrary
+                pes <- QC.vector (n - 2)  -- 1 for constructor itself
+                pure (TPendingLevel (pe NE.:| pes)))
             , (1, do
                 -- pending level merge with child
                 numPreExisting <- QC.chooseInt (0, min 20 (n - 2))
-                preExisting <- QC.vector numPreExisting
+                pes <- QC.vector numPreExisting
                 tree <- go (n - numPreExisting - 1)
-                pure (TPendingLevel preExisting (Just tree)))
+                pure (TPendingLevelWithUnion pes tree))
             , (2, do
                 -- pending union merge
-                ns <- QC.shuffle =<< arbitraryPartition2 n
-                TPendingUnion <$> traverse go ns)
+                ns <- arbitraryPartition2 n
+                shuffled <- NE.fromList <$> QC.shuffle (NE.toList ns)
+                TPendingUnion <$> traverse go shuffled)
             ]
 
       -- Split into at least two smaller positive numbers. The input needs to be
       -- greater than or equal to 2.
-      arbitraryPartition2 :: Int -> QC.Gen [Int]
+      arbitraryPartition2 :: Int -> QC.Gen (NonEmpty Int)
       arbitraryPartition2 n = assert (n >= 2) $ do
           first <- QC.chooseInt (1, n-1)
-          (first :) <$> arbitraryPartition (n - first)
+          (first NE.:|) <$> arbitraryPartition (n - first)
 
       -- Split into smaller positive numbers.
       arbitraryPartition :: Int -> QC.Gen [Int]
@@ -475,19 +485,22 @@ instance Arbitrary T where
    <> [ TOngoing m'
       | m' <- shrink m
       ]
-  shrink tree@(TPendingLevel ps t) =
+  shrink tree@(TPendingLevel ps) =
       [ TCompleted (completeT tree) ]
-   <> [ t' | Just t' <- [t] ]
-   <> [ TPendingLevel (ps ++ [PRun r]) Nothing  -- move into regular levels
-      | Just (TCompleted r) <- [t]
+   <> (TPendingLevel <$> shrink ps)
+  shrink tree@(TPendingLevelWithUnion ps t) =
+      [ TCompleted (completeT tree) ]
+   <> [ TPendingLevel ps' | Just ps' <- [NE.nonEmpty ps] ]
+   <> [ t ]
+   <> [ TPendingLevel (NE.prependList ps (pure (PRun r)))  -- move into regular levels
+      | TCompleted r <- [t]
       ]
-   <> [ TPendingLevel ps' t'
+   <> [ TPendingLevelWithUnion ps' t'
       | (ps', t') <- shrink (ps, t)
-      , length ps' + length t' > 0
       ]
   shrink tree@(TPendingUnion ts) =
       [ TCompleted (completeT tree) ]
-   <> ts
+   <> NE.toList ts
    <> [ TPendingUnion ts'
       | ts' <- shrink ts
       , length ts' > 1

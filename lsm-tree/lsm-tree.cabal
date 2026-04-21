@@ -1114,6 +1114,7 @@ test-suite prototypes-test
     , primitive
     , QuickCheck
     , quickcheck-dynamic
+    , quickcheck-instances
     , quickcheck-lockstep  >=0.8
     , tasty
     , tasty-hunit
