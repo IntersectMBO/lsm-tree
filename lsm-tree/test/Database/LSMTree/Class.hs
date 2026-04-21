@@ -1,4 +1,5 @@
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 -- | An abstraction of the LSM API, instantiated by both the real
 -- implementation and a model (see "Database.LSMTree.Model.IO").
@@ -260,9 +261,9 @@ rCorruptSnapshot ::
    -> R.Table m k v b
    -> m ()
 rCorruptSnapshot choice name (RT.Table t) =
-   RU.withKeepSessionOpen (RU.tableSession t) $ \seshEnv ->
-      let hfs = RU.sessionHasFS seshEnv
-          root = RU.sessionRoot seshEnv
+   RU.withKeepSessionOpen t.tableSession $ \seshEnv ->
+      let hfs = seshEnv.sessionHasFS
+          root = seshEnv.sessionRoot
           namedSnapDir = RIP.getNamedSnapshotDir (RIP.namedSnapshotDir root name)
        in void $ flipRandomBitInRandomFileHardlinkSafe hfs choice namedSnapDir
 

@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Bench.Database.LSMTree.Internal.Lookup (benchmarks) where
 
@@ -91,9 +92,9 @@ benchSalt = 4
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
     withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, _refCtx, wbblobs, rs, ks) ->
-      env ( pure ( V.map (\(DeRef r) -> Run.runFilter   r) rs
-                 , V.map (\(DeRef r) -> Run.runIndex    r) rs
-                 , V.map (\(DeRef r) -> Run.runKOpsFile r) rs
+      env ( pure ( V.map (\(DeRef r) -> r.bloomFilter   ) rs
+                 , V.map (\(DeRef r) -> r.index    ) rs
+                 , V.map (\(DeRef r) -> r.kOpsFile ) rs
                  )
           ) $ \ ~(blooms, indexes, kopsFiles) ->
         bgroup name [
