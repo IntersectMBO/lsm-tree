@@ -2,8 +2,22 @@
 
 ## Unreleased
 
-* PATCH: Support `io-classes ^>=1.9` and `^>=1.10`. See PR [#819](https://github.com/IntersectMBO/lsm-tree/pull/819).
+### Breaking changes
 
+None
+
+### New features
+
+None
+
+### Minor changes
+
+* Support `io-classes ^>=1.9` and `^>=1.10`. See PR
+  [#819](https://github.com/IntersectMBO/lsm-tree/pull/819).
+
+### Bug fixes
+
+None
 
 ## 1.0.0.1 -- 2025-12-03
 
