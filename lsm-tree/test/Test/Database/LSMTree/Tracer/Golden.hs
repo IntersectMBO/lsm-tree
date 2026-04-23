@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -8,6 +9,7 @@ import           Control.Monad (void)
 import           Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import           Data.Monoid (Sum (..))
+import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree as R
 import           Paths_lsm_tree
@@ -18,6 +20,7 @@ import qualified System.IO as IO
 import           System.IO.Unsafe
 import           Test.Tasty (TestTree, localOption, testGroup)
 import           Test.Tasty.Golden
+import qualified Test.Tasty.HUnit as HU
 import           Test.Util.FS (withTempIOHasBlockIO)
 
 
@@ -25,23 +28,41 @@ tests :: TestTree
 tests =
     localOption OnPass $
     testGroup "Test.Database.LSMTree.Tracer.Golden" [
-        goldenVsFile
-          "golden_traceMessages"
-          goldenDataFile
-          dataFile
-          (golden_traceMessages dataFile)
+        testTraceMessages Debug
+      , testTraceMessages Release
       ]
+  where
+    testTraceMessages :: BuildType -> TestTree
+    testTraceMessages buildType =
+        if buildType == currentBuildType
+          then goldenVsFile testName goldenFile file (golden_traceMessages file)
+          else HU.testCaseInfo testName (pure "Skipped")
+      where
+        testName = "golden_traceMessages (" ++ show buildType ++ ")"
+        file = dataFile buildType
+        goldenFile = goldenDataFile buildType
+
+
+data BuildType = Debug | Release
+  deriving stock (Eq, Show)
+
+currentBuildType :: BuildType
+#ifdef NO_IGNORE_ASSERTS
+currentBuildType = Debug
+#else
+currentBuildType = Release
+#endif
 
 goldenDataDirectory :: FilePath
 goldenDataDirectory = unsafePerformIO getDataDir </> "tracer"
 
 -- | Path to the /golden/ file for 'golden_traceMessages'
-goldenDataFile :: FilePath
-goldenDataFile = dataFile <.> "golden"
+goldenDataFile :: BuildType -> FilePath
+goldenDataFile buildType = dataFile buildType <.> "golden"
 
 -- | Path to the output file for 'golden_traceMessages'
-dataFile :: FilePath
-dataFile = goldenDataDirectory </> "golden_traceMessages"
+dataFile :: BuildType -> FilePath
+dataFile buildType = goldenDataDirectory </> "golden_traceMessages" ++ show buildType
 
 -- | A monadic action that traces messages emitted by the public API of
 -- @lsm-tree@ to a file.
@@ -67,12 +88,17 @@ golden_traceMessages file =
       -- Open and close a session
       withOpenSession tr hfs hbio 4 sessionPath $ \s -> do
         -- Open and close a table
-        withTable s $ \(t1 :: Table IO K V B) -> do
+        withTableWith tableConfig s $ \(t1 :: Table IO K V B) -> do
           -- Try out all the update variants
           update t1 (K 0)  (Insert (V 0) Nothing)
           insert t1 (K 1) (V 1) (Just (B 1))
           delete t1 (K 2)
           upsert t1 (K 3) (V 3)
+
+          -- Do a bigger update to trigger a merge
+          let numInserts = fromIntegral (writeBufferSize * (sizeRatioInt + 1))
+          inserts t1 $ V.fromList $
+            [(K n, V n, Nothing) | n <- [4 .. numInserts+4]]
 
           -- Perform a lookup and its member variant
           FoundWithBlob (V 1) bref <- lookup t1 (K 1)
@@ -126,10 +152,26 @@ golden_traceMessages file =
 
         pure ()
 
+tableConfig :: TableConfig
+tableConfig =
+    defaultTableConfig {
+        confSizeRatio = sizeRatio
+      , confWriteBufferAlloc = AllocNumEntries writeBufferSize
+      , confMergeBatchSize = MergeBatchSize writeBufferSize
+      }
+
+sizeRatioInt :: Int
+sizeRatioInt = 4
+
+sizeRatio :: SizeRatio
+sizeRatio = Four
+
+writeBufferSize :: Int
+writeBufferSize = 1000  -- little less than by default, no need to do much work
+
 -- | A tracer that emits trace messages to a file handle
 fileHandleTracer :: IO.Handle -> Tracer IO String
 fileHandleTracer h = Tracer $ emit (IO.hPutStrLn h)
-
 
 -- | A tracer that emits trace messages to a binary file
 withBinaryFileTracer :: FilePath -> (Tracer IO String -> IO a) -> IO a
