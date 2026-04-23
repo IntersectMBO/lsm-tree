@@ -17,7 +17,9 @@ None
 
 ### Bug fixes
 
-None
+* Fix a bug where `lookups` with a large number of input keys would sometimes
+  return incorrect lookup results. See [PR
+  #841](https://github.com/IntersectMBO/lsm-tree/pull/841).
 
 ## 1.0.0.1 -- 2025-12-03
 

@@ -184,7 +184,9 @@ prop_bloomQueries (FPR fpr) filters keys =
 --
 -- There used to be a bug where this went wrong because of a typo in a bit-mask.
 -- This property test should ensure that we catch such mistakes in the future.
--- See PR #
+-- See PR #841 for more information.
+--
+-- <PR https://github.com/IntersectMBO/lsm-tree/pull/841>
 --
 prop_packUnpack_RunIxKeyIx :: Int_0xffff -> Int_0xffff -> Property
 prop_packUnpack_RunIxKeyIx r k =

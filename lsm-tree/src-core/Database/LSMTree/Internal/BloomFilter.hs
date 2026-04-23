@@ -89,7 +89,7 @@ packRunIxKeyIx r k =
 unpackRunIxKeyIx :: RunIxKeyIx -> (Int, Int)
 unpackRunIxKeyIx (MkRunIxKeyIx c) =
     ( fromIntegral (c `unsafeShiftR` 16)
-    , fromIntegral (c .&. 0xfff)
+    , fromIntegral (c .&. 0xffff)
     )
 {-# INLINE unpackRunIxKeyIx #-}
 
