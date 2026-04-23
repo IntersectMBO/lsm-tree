@@ -64,6 +64,7 @@ common language
     DerivingStrategies
     DerivingVia
     LambdaCase
+    OverloadedRecordDot
 
 flag serialblockio
   description: Use serial HasBlockIO regardless of the operating system
