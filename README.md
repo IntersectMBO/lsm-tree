@@ -15,3 +15,24 @@ of the Cardano Development Foundation and Intersect. A [project report] and
 
 The primary authors are Duncan Coutts, Joris Dral, Matthias Heinzel,
 Wolfgang Jeltsch, Wen Kokke, and Alex Washburn.
+
+## Contributors
+
+Our thanks go to those who have contributed to this project with development,
+bug reports, feature requests, blog posts, etc., including:
+
+* [coot](https://github.com/coot)
+* [Duncan Coutts](https://github.com/dcoutts)
+* [Erik de Castro Lopo](https://github.com/erikd)
+* [Georgy Lukyanov](https://github.com/geo2a)
+* [Javier Sagredo](https://github.com/jasagredo)
+* [Joris Dral](https://github.com/jorisdral)
+* [Matthias Heinzel](https://github.com/mheinzel)
+* [Mwihoti](https://github.com/mwihoti)
+* [omahs](https://github.com/omahs)
+* [peter maina](https://github.com/kanyuku)
+* [Recursion Ninja](https://github.com/recursion-ninja)
+* [sternenseemann](https://github.com/sternenseemann)
+* [Tex M.](https://github.com/Ranchhand87)
+* [Wen Kokke](https://github.com/wenkokke)
+* [Wolfgang Jeltsch](https://github.com/jeltsch)
