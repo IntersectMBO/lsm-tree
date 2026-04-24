@@ -214,6 +214,6 @@ instance Arbitrary Int_0xffff where
         Int_0xffff y
       | y <- shrink x.unwrap
       , 0 <= y
-      , y < 0xfff
+      , y < 0xffff
       ]
 
