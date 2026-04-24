@@ -1,5 +1,24 @@
 # Revision history for blockio
 
+## Next version -- unreleased
+
+### Breaking changes
+
+* Update to `fs-sim ^>=0.5`. See PR
+  [#845](https://github.com/IntersectMBO/lsm-tree/pull/845).
+
+### New features
+
+None
+
+### Minor changes
+
+None
+
+### Bug fixes
+
+None
+
 ## 0.1.1.2 -- 2026-04-24
 
 ### Breaking changes

@@ -16,7 +16,8 @@ None
 
 ### Minor changes
 
-None
+* Update to `fs-sim ^>=0.5`. See PR
+  [#845](https://github.com/IntersectMBO/lsm-tree/pull/845).
 
 ### Bug fixes
 

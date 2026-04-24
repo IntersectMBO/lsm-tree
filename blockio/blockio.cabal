@@ -149,7 +149,7 @@ library sim
     , blockio
     , bytestring             ^>=0.11 || ^>=0.12
     , fs-api                 ^>=0.4
-    , fs-sim                 ^>=0.4
+    , fs-sim                 ^>=0.4  || ^>=0.5
     , io-classes             ^>=1.6  || ^>=1.7  || ^>=1.8.0.1 || ^>=1.9 || ^>=1.10
     , io-classes:strict-stm
     , primitive              ^>=0.9

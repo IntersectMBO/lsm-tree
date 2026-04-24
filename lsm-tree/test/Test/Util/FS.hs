@@ -55,7 +55,7 @@ import           Control.Concurrent.Class.MonadMVar
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (assert)
 import           Control.Monad (void)
-import           Control.Monad.Class.MonadThrow (MonadCatch, MonadThrow)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Primitive (PrimMonad)
 import           Data.Bit (MVector (..), flipBit)
@@ -108,7 +108,7 @@ withTempIOHasBlockIO path action = withSystemTempDirectory path $ \dir -> do
 
 {-# INLINABLE withSimHasFS #-}
 withSimHasFS ::
-     (MonadSTM m, MonadThrow m, PrimMonad m, Testable prop1, Testable prop2)
+     (MonadSTM m, MonadMask m, PrimMonad m, Testable prop1, Testable prop2)
   => (MockFS -> prop1)
   -> MockFS
   -> (  HasFS m HandleMock
@@ -125,7 +125,7 @@ withSimHasFS post fs k = do
 
 {-# INLINABLE withSimHasBlockIO #-}
 withSimHasBlockIO ::
-     (MonadMVar m, MonadSTM m, MonadCatch m, PrimMonad m, Testable prop1, Testable prop2)
+     (MonadMVar m, MonadSTM m, MonadMask m, PrimMonad m, Testable prop1, Testable prop2)
   => (MockFS -> prop1)
   -> MockFS
   -> (  HasFS m HandleMock
@@ -145,7 +145,7 @@ withSimHasBlockIO post fs k = do
 
 {-# INLINABLE withSimErrorHasFS #-}
 withSimErrorHasFS ::
-     (MonadSTM m, MonadThrow m, PrimMonad m, Testable prop1, Testable prop2)
+     (MonadSTM m, MonadMask m, PrimMonad m, Testable prop1, Testable prop2)
   => (MockFS -> prop1)
   -> MockFS
   -> Errors
@@ -165,7 +165,7 @@ withSimErrorHasFS post fs errs k = do
 
 {-# INLINABLE withSimErrorHasBlockIO #-}
 withSimErrorHasBlockIO ::
-     ( MonadSTM m, MonadCatch m, MonadMVar m, PrimMonad m
+     ( MonadSTM m, MonadMask m, MonadMVar m, PrimMonad m
      , Testable prop1, Testable prop2
      )
   => (MockFS -> prop1)
