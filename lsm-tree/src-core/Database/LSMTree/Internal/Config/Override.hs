@@ -144,6 +144,8 @@ instance Override DiskCachePolicy (SnapLevels SnapshotRun) where
           in  override rdc x
 
 instance Override RunDataCaching (SnapLevel SnapshotRun) where
+  override _ lvl@SnapEmptyLevel =
+    lvl
   override rdc
     (SnapLevel (sir :: SnapIncomingRun SnapshotRun) (srs :: V.Vector SnapshotRun))
     = SnapLevel (override rdc sir) (V.map (override rdc) srs)

@@ -126,13 +126,13 @@ newtype SnapLevels r = SnapLevels { getSnapLevels :: V.Vector (SnapLevel r) }
   deriving stock (Eq, Functor, Foldable, Traversable)
   deriving newtype NFData
 
-data SnapLevel r = SnapLevel {
-    snapIncoming     :: !(SnapIncomingRun r)
-  , snapResidentRuns :: !(V.Vector r)
-  }
+data SnapLevel r =
+    SnapEmptyLevel
+  | SnapLevel !(SnapIncomingRun r) !(V.Vector r)
   deriving stock (Eq, Functor, Foldable, Traversable)
 
 instance NFData r => NFData (SnapLevel r) where
+  rnf SnapEmptyLevel  = ()
   rnf (SnapLevel a b) = rnf a `seq` rnf b
 
 -- | Note that for snapshots of incoming runs, we store only the merge debt and
@@ -385,7 +385,9 @@ toSnapLevel ::
      (PrimMonad m, MonadMVar m)
   => Level m h
   -> m (SnapLevel (Ref (Run m h)))
-toSnapLevel Level{..} = do
+toSnapLevel EmptyLevel =
+    pure SnapEmptyLevel
+toSnapLevel (Level incomingRun residentRuns) = do
     sir <- toSnapIncomingRun incomingRun
     pure (SnapLevel sir residentRuns)
 
@@ -667,7 +669,9 @@ fromSnapLevels hfs hbio refCtx salt uc conf resolve reg dir (SnapLevels levels) 
     -- TODO: we may wish to trace the merges created during snapshot restore:
 
     fromSnapLevel :: LevelNo -> SnapLevel (Ref (Run m h)) -> m (Level m h)
-    fromSnapLevel ln SnapLevel{snapIncoming, snapResidentRuns} = do
+    fromSnapLevel _ SnapEmptyLevel =
+        pure EmptyLevel
+    fromSnapLevel ln (SnapLevel snapIncoming snapResidentRuns) = do
         incomingRun <- withRollback reg
                          (fromSnapIncomingRun ln snapIncoming)
                          releaseIncomingRun
@@ -675,7 +679,7 @@ fromSnapLevels hfs hbio refCtx salt uc conf resolve reg dir (SnapLevels levels) 
                           withRollback reg
                             (dupRef r)
                             releaseRef
-        pure Level {incomingRun , residentRuns}
+        pure (Level incomingRun residentRuns)
 
     fromSnapIncomingRun ::
          LevelNo

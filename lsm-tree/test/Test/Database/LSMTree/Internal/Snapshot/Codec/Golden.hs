@@ -35,6 +35,7 @@ import qualified System.FS.API as FS
 import           System.FS.API.Types (MountPoint (..))
 import           System.FS.IO (ioHasFS)
 import           System.IO.Unsafe
+import           Test.Database.LSMTree.Internal.Snapshot.Codec ()
 import           Test.QuickCheck (Property, counterexample, ioProperty, once,
                      (.&&.))
 import qualified Test.Tasty as Tasty
@@ -54,6 +55,7 @@ tests =
           ]
       , testGroup "Backwards compatibility" [
             testCase "test_compatTableConfigV0" test_compatTableConfigV0
+          , testCase "test_compatSnapLevelV1" test_compatSnapLevelV1
           ]
       ]
 
@@ -150,6 +152,13 @@ test_compatTableConfigV0 =
           -- MergeBatchSize not included in V0, decoder uses WriteBufferAlloc
         , confMergeBatchSize = MergeBatchSize magicNumber2
         }
+
+test_compatSnapLevelV1 :: Assertion
+test_compatSnapLevelV1 =
+    assertGoldenFileDecodesTo (Proxy @(SnapLevel SnapshotRun)) "A" V1 $
+      -- Until V2, there was only a single constructor, so there was no tag
+      -- in the serialisation format to distinguish constructors.
+      SnapLevel (singGolden V1) (singGolden V1)
 
 -- | For types that changed their snapshot format between versions, we should
 -- also test that we can in fact still decode the old format.
@@ -396,9 +405,14 @@ instance EnumGolden (SnapLevels SnapshotRun) where
         SnapLevels{} -> ()
 
 instance EnumGolden (SnapLevel SnapshotRun) where
-  singGolden v = SnapLevel (singGolden v) (singGolden v)
+  enumGolden v = [
+        SnapLevel (singGolden v) (singGolden v)
+      ] ++ [
+        SnapEmptyLevel | v >= V2
+      ]
     where
       _coveredAllCases = \case
+        SnapEmptyLevel{} -> ()
         SnapLevel{} -> ()
 
 instance EnumGolden (SnapIncomingRun SnapshotRun) where
