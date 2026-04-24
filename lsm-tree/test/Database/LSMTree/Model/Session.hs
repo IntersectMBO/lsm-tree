@@ -598,7 +598,7 @@ saveSnapshot name label t@Table{..} = do
       })
 
 openTableFromSnapshot ::
-     forall k v b m.(
+     forall k v b m. (
        MonadState Model m
      , MonadError Err m
      , C k v b

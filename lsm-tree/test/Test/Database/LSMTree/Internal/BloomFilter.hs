@@ -44,6 +44,8 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
         prop_total_deserialisation_whitebox
     , testProperty "bloomQueries (bulk)" $
         prop_bloomQueries
+    , testProperty "prop_packUnpack_RunIxKeyIx" prop_packUnpack_RunIxKeyIx
+    , testProperty "prop_packUnpack_RunIxKeyIx_limits" prop_packUnpack_RunIxKeyIx_limits
     ]
 
 testSalt :: Bloom.Salt
@@ -168,3 +170,50 @@ prop_bloomQueries (FPR fpr) filters keys =
        ===
         map (\(RunIxKeyIx rix kix) -> (rix, kix))
             (VP.toList (bloomQueries testSalt (V.fromList filters') (V.fromList keys')))
+
+{-------------------------------------------------------------------------------
+  RunIxKeyIx
+-------------------------------------------------------------------------------}
+
+-- | Test that 'RunIx' and 'KeyIx' roundtrip through the 'RunIxKeyIx' pattern
+-- synonym
+--
+-- More specifically, if we apply a 'RunIxKeyIx' pattern synonym to a pair of
+-- 'RunIx' and 'KeyIx', and then pattern match on it agains, then we would
+-- expect to get the same 'RunIx' and 'KeyIx' out as the ones we put in.
+--
+-- There used to be a bug where this went wrong because of a typo in a bit-mask.
+-- This property test should ensure that we catch such mistakes in the future.
+-- See PR #841 for more information.
+--
+-- <PR https://github.com/IntersectMBO/lsm-tree/pull/841>
+--
+prop_packUnpack_RunIxKeyIx :: Int_0xffff -> Int_0xffff -> Property
+prop_packUnpack_RunIxKeyIx r k =
+    case RunIxKeyIx r.unwrap k.unwrap of
+      RunIxKeyIx r' k' -> r.unwrap === r' .&&. k.unwrap === k'
+
+-- | A variant of 'prop_packUnpack_RunIxKeyIx' applied to 'RunIx' and 'KeyIx'
+-- that are close to their upper bounds.
+prop_packUnpack_RunIxKeyIx_limits :: Property
+prop_packUnpack_RunIxKeyIx_limits = conjoin [
+      prop_packUnpack_RunIxKeyIx 0xffff       0xffff
+    , prop_packUnpack_RunIxKeyIx (0xffff - 1) 0xffff
+    , prop_packUnpack_RunIxKeyIx 0xffff       (0xffff - 1)
+    , prop_packUnpack_RunIxKeyIx (0xffff - 1) (0xffff - 1)
+    ]
+
+-- | An Int in the inclusive range @(0, 0xffff)@
+newtype Int_0xffff = Int_0xffff { unwrap :: Int }
+  deriving stock (Show, Eq)
+  deriving newtype Num
+
+instance Arbitrary Int_0xffff where
+  arbitrary = Int_0xffff <$> chooseInt (0, 0xffff)
+  shrink x = [
+        Int_0xffff y
+      | y <- shrink x.unwrap
+      , 0 <= y
+      , y < 0xfff
+      ]
+

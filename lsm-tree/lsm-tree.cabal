@@ -528,6 +528,7 @@ common language
     ExplicitNamespaces
     GADTs
     LambdaCase
+    OverloadedRecordDot
     RecordWildCards
     RoleAnnotations
     ViewPatterns
