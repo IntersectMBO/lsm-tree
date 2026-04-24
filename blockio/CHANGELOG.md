@@ -1,6 +1,6 @@
 # Revision history for blockio
 
-## Unreleased
+## 0.1.1.2 -- 2026-04-24
 
 ### Breaking changes
 
@@ -12,8 +12,10 @@ None
 
 ### Minor changes
 
-* Support `io-classes ^>=1.9` and `^>=1.10`. See PR
-  [#819](https://github.com/IntersectMBO/lsm-tree/pull/819).
+* Support `io-classes ^>=1.9` and `^>=1.10`. See [PR
+  #819](https://github.com/IntersectMBO/lsm-tree/pull/819).
+* Support `ghc-9.14`. See [PR
+  #836](https://github.com/IntersectMBO/lsm-tree/pull/836).
 
 ### Bug fixes
 
