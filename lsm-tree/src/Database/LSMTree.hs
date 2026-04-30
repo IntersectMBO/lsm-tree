@@ -1985,7 +1985,7 @@ runExample $ \session table1 -> do
     bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
       putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
 :}
-UnionDebt: 4
+UnionDebt: 5
 
 The worst-case disk I\/O complexity of this operation is \(O(0)\).
 
@@ -2030,9 +2030,9 @@ runExample $ \session table1 -> do
       putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
       putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 4
 :}
-UnionDebt: 4
+UnionDebt: 5
 Leftovers: 0
-UnionDebt: 2
+UnionDebt: 3
 Leftovers: 3
 
 __NOTE:__

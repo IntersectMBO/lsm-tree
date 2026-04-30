@@ -2178,7 +2178,9 @@ remainingUnionDebt t = do
             pure (UnionDebt 0)
           Union mt _ -> do
             (MergeDebt (MergeCredits c), _) <- MT.remainingMergeDebt mt
-            pure (UnionDebt c)
+            -- As long as there is a union level, the union is not considered
+            -- paid off, even if the merging tree is completed.
+            pure (UnionDebt (c + 1))
 
 {- |
 Union credits are passed to 'Database.LSMTree.supplyUnionCredits' to perform some amount of computation to incrementally complete a union.
@@ -2229,9 +2231,12 @@ supplyUnionCredits resolve t credits = do
       modifyWithActionRegistry_
         (RW.unsafeAcquireWriteAccess (tableContent tEnv))
         (atomically . RW.unsafeReleaseWriteAccess (tableContent tEnv))
-        $ \reg tc ->
-          case tableUnionLevel tc of
-            NoUnion -> pure tc
+        $ \reg tc -> do
+          -- We might have completed the merging tree, so try migrating.
+          let tr' = contramapTraceMerge (tableTracer t)
+          tc' <- migrateUnionLevel tr' (tableConfig t) reg tc
+          case tableUnionLevel tc' of
+            NoUnion -> pure tc'
             Union mt cache -> do
               unionLevel' <- MT.isStructurallyEmpty mt >>= \case
                 True  ->
@@ -2240,5 +2245,5 @@ supplyUnionCredits resolve t credits = do
                   cache' <- mkUnionCache reg mt
                   releaseUnionCache reg cache
                   pure (Union mt cache')
-              pure tc { tableUnionLevel = unionLevel' }
+              pure tc' { tableUnionLevel = unionLevel' }
       pure leftovers

@@ -37,6 +37,7 @@ tests =
       , testCase      "unit_union_credits"  unit_union_credits
       , testCase      "unit_union_credit_0" unit_union_credit_0
       , testCase      "unit_union_blobref_invalidation" unit_union_blobref_invalidation
+      , testCase      "unit_union_complete_via_sharing" unit_union_complete_via_sharing
       ]
 
 testSalt :: R.Salt
@@ -204,7 +205,7 @@ unit_union_credit_0 =
     withTable @_ @Key1 @Value1 @Blob1 sess $ \table -> do
       inserts table [(Key1 17, Value1 42, Nothing)]
 
-      bracket (table `union` table) closeTable $ \table' -> do
+      bracket (table `incrementalUnion` table) closeTable $ \table' -> do
         -- Supplying 0 credits works and returns 0 leftovers.
         UnionCredits leftover <- supplyUnionCredits table' (UnionCredits 0)
         leftover @?= 0
@@ -226,7 +227,7 @@ unit_union_blobref_invalidation =
       t1 <- newTableWith @_ @Key1 @Value1 @Blob1 config sess
       for_ ([0..99] :: [Word64]) $ \i ->
         inserts t1 [(Key1 i, Value1 i, Just (Blob1 i))]
-      t2 <- t1 `union` t1
+      t2 <- t1 `incrementalUnion` t1
 
       -- do lookups on the union table (the result contains blob refs)
       res <- lookups t2 (Key1 <$> [0..99])
@@ -245,6 +246,56 @@ unit_union_blobref_invalidation =
         confWriteBufferAlloc = AllocNumEntries 4
       }
 
+-- | Paying off union debt in one table can complete the merging tree of another
+-- table through sharing. However, the other table's debt still remains at 1
+-- until the union is migrated. Flushing the writebuffer will then migrate the
+-- union (which is useful in case the union run can become part of a new merge).
+unit_union_complete_via_sharing :: Assertion
+unit_union_complete_via_sharing =
+    withTempIOHasBlockIO "test" $ \hfs hbio ->
+    withOpenSession nullTracer hfs hbio testSalt (FS.mkFsPath []) $ \sess -> do
+      t1 <- newTableWith @_ @Key1 @Value1 @Blob1 config sess
+      let size1 = 50
+      inserts t1 $ V.fromList
+        [(Key1 i, Value1 i, Just (Blob1 i)) | i <- [1 .. fromIntegral size1]]
+
+      t2 <- t1 `incrementalUnion` t1
+
+      -- Initially, there is significant union debt (conservative lower bound).
+      assertUnionDebt t2 (@>= UnionDebt (2 * size1))
+
+      -- Create a new table that shares the merging tree. Instead of duplicating
+      -- we could also have created a new union with t2 as an input.
+      t3 <- duplicate t2
+      payOffUnionDebt t3
+
+      -- Through sharing, we indirectly completed the merging tree in t2, too.
+      -- However, there remains a union level, so the debt is 1.
+      assertUnionDebt t2 (@?= UnionDebt 1)
+
+      -- Trigger a writebuffer flush.
+      inserts t2 (V.fromList [(Key1 i, Value1 i, Nothing) | i <- [0..4]])
+
+      -- Because of the flush, the union level got migrated.
+      assertUnionDebt t2 (@?= UnionDebt 0)
+
+      closeTable t1
+      closeTable t2
+      closeTable t3
+  where
+    config = defaultTableConfig {
+        confWriteBufferAlloc = AllocNumEntries 4
+      }
+
+    assertUnionDebt t p = do
+        debt <- remainingUnionDebt t
+        p debt
+
+    payOffUnionDebt t = do
+        UnionDebt debt <- remainingUnionDebt t
+        _ <- supplyUnionCredits t (UnionCredits debt)
+        pure ()
+
 ignoreBlobRef :: Functor f => f (BlobRef m b) -> f ()
 ignoreBlobRef = fmap (const ())
 
@@ -252,6 +303,9 @@ assertException :: (Exception e, Eq e) => e -> Assertion -> Assertion
 assertException e assertion = do
    r <- try assertion
    r @?= Left e
+
+(@>=) :: (HasCallStack, Ord a, Show a) => a -> a -> Assertion
+x @>= y = (x >= y) @? ("expected: " ++ show x ++ " > " ++ show y)
 
 {-------------------------------------------------------------------------------
   Key and value types

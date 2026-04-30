@@ -12,6 +12,7 @@ module Database.LSMTree.Internal.MergingTree (
   , newOngoingMerge
   , newPendingLevelMerge
   , newPendingUnionMerge
+  , getCompleted
   , isStructurallyEmpty
   , remainingMergeDebt
   , supplyCredits
@@ -26,7 +27,7 @@ import           Control.Exception (assert)
 import           Control.Monad (foldM, (<$!>))
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadMask)
+import           Control.Monad.Class.MonadThrow (MonadMask, MonadThrow)
 import           Control.Monad.Primitive
 import           Control.RefCount
 import           Data.Foldable (toList, traverse_)
@@ -270,6 +271,32 @@ newPendingUnionMerge refCtx mts = do
       Just (mt, x) | V.null x
         -> pure mt
       _ -> mkMergingTree refCtx (PendingTreeMerge (PendingUnionMerge mts''))
+
+{-# SPECIALISE getCompleted ::
+     Ref (MergingTree IO h)
+  -> IO (Maybe (Ref (Run IO h))) #-}
+-- | If the merging tree is completed, return a new reference to the resulting
+-- run.
+--
+-- Resource tracking:
+-- * This allocates a new 'Ref' which the caller is responsible for releasing
+--   eventually.
+-- * The ownership of all input 'Ref's remains with the caller. This action
+--   will create duplicate references, not adopt the given ones.
+--
+-- ASYNC: this should be called with asynchronous exceptions masked because it
+-- allocates\/creates resources.
+getCompleted ::
+     (MonadMVar m, PrimMonad m, MonadThrow m)
+  => Ref (MergingTree m h)
+  -> m (Maybe (Ref (Run m h)))
+getCompleted (DeRef MergingTree {mergeState}) =
+    -- A simple read is sufficient. Once the merge is completed, it doesn't get
+    -- mutated further, so we don't have to worry about concurrent mutation.
+    readMVar mergeState >>= \case
+      CompletedTreeMerge r -> Just <$> dupRef r
+      OngoingTreeMerge{}   -> pure Nothing
+      PendingTreeMerge{}   -> pure Nothing
 
 {-# SPECIALISE isStructurallyEmpty :: Ref (MergingTree IO h) -> IO Bool #-}
 -- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
