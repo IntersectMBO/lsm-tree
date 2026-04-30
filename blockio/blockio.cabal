@@ -101,7 +101,7 @@ library
 
     if !flag(serialblockio)
       other-modules: System.FS.BlockIO.Async
-      build-depends: blockio-uring ^>=0.1
+      build-depends: blockio-uring ^>=0.2
 
   elif os(osx)
     hs-source-dirs: src-macos
