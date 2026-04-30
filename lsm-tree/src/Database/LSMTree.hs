@@ -1,389 +1,455 @@
-{- |
-Module      : Database.LSMTree
-Copyright   : (c) 2023-2025, Cardano Development Foundation
-License     : Apache-2.0
-Stability   : experimental
-Portability : portable
--}
-module Database.LSMTree (
-  -- * Usage Notes
-  -- $usage_notes
+-- |
+-- Module      : Database.LSMTree
+-- Copyright   : (c) 2023-2025, Cardano Development Foundation
+-- License     : Apache-2.0
+-- Stability   : experimental
+-- Portability : portable
+module Database.LSMTree
+  ( -- * Usage Notes
+    -- $usage_notes
 
-  -- ** Real and Simulated IO
-  -- $real_and_simulated_io
-  IOLike,
+    -- ** Real and Simulated IO
+    -- $real_and_simulated_io
+    IOLike,
 
-  -- * Examples
-  -- $setup
+    -- * Examples
+    -- $setup
 
-  -- * Sessions
-  Session,
-  withOpenSession,
-  withOpenSessionIO,
-  withNewSession,
-  withRestoreSession,
-  openSession,
-  newSession,
-  restoreSession,
-  closeSession,
+    -- * Sessions
+    Session,
+    withOpenSession,
+    withOpenSessionIO,
+    withNewSession,
+    withRestoreSession,
+    openSession,
+    newSession,
+    restoreSession,
+    closeSession,
 
-  -- * Tables
-  Table,
-  withTable,
-  withTableWith,
-  newTable,
-  newTableWith,
-  closeTable,
+    -- * Tables
+    Table,
+    withTable,
+    withTableWith,
+    newTable,
+    newTableWith,
+    closeTable,
 
-  -- ** Table Lookups #table_lookups#
-  member,
-  members,
-  LookupResult (..),
-  getValue,
-  getBlob,
-  lookup,
-  lookups,
-  Entry (..),
-  getEntryKey,
-  getEntryValue,
-  getEntryBlob,
-  rangeLookup,
+    -- ** Table Lookups #table_lookups#
+    member,
+    members,
+    LookupResult (NotFound, Found, FoundWithBlob),
+    getValue,
+    getBlob,
+    lookup,
+    lookups,
+    Entry (Entry, EntryWithBlob),
+    getEntryKey,
+    getEntryValue,
+    getEntryBlob,
+    rangeLookup,
 
-  -- ** Table Updates #table_updates#
-  insert,
-  inserts,
-  upsert,
-  upserts,
-  delete,
-  deletes,
-  Update (..),
-  update,
-  updates,
+    -- ** Table Updates #table_updates#
+    insert,
+    inserts,
+    upsert,
+    upserts,
+    delete,
+    deletes,
+    Update (Insert, Delete, Upsert),
+    update,
+    updates,
 
-  -- ** Table Duplication #table_duplication#
-  withDuplicate,
-  duplicate,
+    -- ** Table Duplication #table_duplication#
+    withDuplicate,
+    duplicate,
 
-  -- ** Table Unions #table_unions#
-  withUnion,
-  withUnions,
-  union,
-  unions,
-  withIncrementalUnion,
-  withIncrementalUnions,
-  incrementalUnion,
-  incrementalUnions,
-  remainingUnionDebt,
-  supplyUnionCredits,
+    -- ** Table Unions #table_unions#
+    withUnion,
+    withUnions,
+    union,
+    unions,
+    withIncrementalUnion,
+    withIncrementalUnions,
+    incrementalUnion,
+    incrementalUnions,
+    remainingUnionDebt,
+    supplyUnionCredits,
 
-  -- * Blob References #blob_references#
-  BlobRef,
-  retrieveBlob,
-  retrieveBlobs,
+    -- * Blob References #blob_references#
+    BlobRef,
+    retrieveBlob,
+    retrieveBlobs,
 
-  -- * Cursors #cursor#
-  Cursor,
-  withCursor,
-  withCursorAtOffset,
-  newCursor,
-  newCursorAtOffset,
-  closeCursor,
-  next,
-  take,
-  takeWhile,
+    -- * Cursors #cursor#
+    Cursor,
+    withCursor,
+    withCursorAtOffset,
+    newCursor,
+    newCursorAtOffset,
+    closeCursor,
+    next,
+    take,
+    takeWhile,
 
-  -- * Snapshots #snapshots#
-  saveSnapshot,
-  withTableFromSnapshot,
-  withTableFromSnapshotWith,
-  openTableFromSnapshot,
-  openTableFromSnapshotWith,
-  doesSnapshotExist,
-  deleteSnapshot,
-  listSnapshots,
-  SnapshotName,
-  isValidSnapshotName,
-  toSnapshotName,
-  SnapshotLabel (..),
+    -- * Snapshots #snapshots#
+    saveSnapshot,
+    withTableFromSnapshot,
+    withTableFromSnapshotWith,
+    openTableFromSnapshot,
+    openTableFromSnapshotWith,
+    doesSnapshotExist,
+    deleteSnapshot,
+    listSnapshots,
+    SnapshotName,
+    isValidSnapshotName,
+    toSnapshotName,
+    SnapshotLabel (SnapshotLabel),
 
-  -- * Session Configuration #session_configuration#
-  Salt,
+    -- * Session Configuration #session_configuration#
+    Salt,
 
-  -- * Table Configuration #table_configuration#
-  TableConfig (
-    confMergePolicy,
-    confSizeRatio,
-    confWriteBufferAlloc,
-    confBloomFilterAlloc,
-    confFencePointerIndex,
-    confDiskCachePolicy,
-    confMergeSchedule,
-    confMergeBatchSize
-  ),
-  defaultTableConfig,
-  MergePolicy (LazyLevelling),
-  MergeSchedule (..),
-  SizeRatio (Four),
-  WriteBufferAlloc (AllocNumEntries),
-  BloomFilterAlloc (AllocFixed, AllocRequestFPR),
-  FencePointerIndexType (OrdinaryIndex, CompactIndex),
-  DiskCachePolicy (..),
-  MergeBatchSize (..),
+    -- * Table Configuration #table_configuration#
+    -- |
+    -- [@confMergePolicy@]:
+    --     The /merge policy/ balances the performance of lookups against the performance of updates.
+    --
+    -- [@confMergeSchedule@]:
+    --     The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
+    --
+    -- [@confSizeRatio@]:
+    --     The /size ratio/ pushes the effects of the merge policy to the extreme.
+    --
+    -- [@confWriteBufferAlloc@]:
+    --     The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the database.
+    --
+    -- [@confBloomFilterAlloc@]:
+    --     The Bloom filter size balances the performance of lookups against the in-memory size of the database.
+    --
+    -- [@confFencePointerIndex@]:
+    --     The /fence-pointer index type/ supports two types of indexes.
+    --
+    -- [@confDiskCachePolicy@]:
+    --     The /disk cache policy/ supports caching lookup operations using the OS page cache.
+    --
+    -- [@confMergeBatchSize@]:
+    --     The merge batch size balances the maximum latency of individual update operations, versus the latency of a sequence of update operations.
+    TableConfig
+      ( confMergePolicy,
+        confMergeSchedule,
+        confSizeRatio,
+        confWriteBufferAlloc,
+        confBloomFilterAlloc,
+        confFencePointerIndex,
+        confDiskCachePolicy,
+        confMergeBatchSize
+      ),
+    defaultTableConfig,
+    MergePolicy (LazyLevelling),
+    MergeSchedule (OneShot, Incremental),
+    SizeRatio (Four),
+    WriteBufferAlloc (AllocNumEntries),
+    BloomFilterAlloc (AllocFixed, AllocRequestFPR),
+    FencePointerIndexType (OrdinaryIndex, CompactIndex),
+    DiskCachePolicy (DiskCacheAll, DiskCacheLevelOneTo, DiskCacheNone),
+    MergeBatchSize (MergeBatchSize),
 
-  -- ** Table Configuration Overrides #table_configuration_overrides#
-  TableConfigOverride (..),
-  noTableConfigOverride,
+    -- ** Table Configuration Overrides #table_configuration_overrides#
+    TableConfigOverride (TableConfigOverride, overrideDiskCachePolicy, overrideMergeBatchSize),
+    noTableConfigOverride,
 
-  -- * Ranges #ranges#
-  Range (..),
+    -- * Ranges #ranges#
+    Range (FromToExcluding, FromToIncluding),
 
-  -- * Union Credit and Debt
-  UnionCredits (..),
-  UnionDebt (..),
+    -- * Union Credit and Debt
+    UnionCredits (UnionCredits),
+    UnionDebt (UnionDebt),
 
-  -- * Key\/Value Serialisation #key_value_serialisation#
-  RawBytes (RawBytes),
-  SerialiseKey (serialiseKey, deserialiseKey),
-  SerialiseKeyOrderPreserving,
-  SerialiseValue (serialiseValue, deserialiseValue),
+    -- * Key\/Value Serialisation #key_value_serialisation#
+    RawBytes (RawBytes),
+    SerialiseKey (serialiseKey, deserialiseKey),
+    SerialiseKeyOrderPreserving,
+    SerialiseValue (serialiseValue, deserialiseValue),
 
-  -- ** Key\/Value Serialisation Property Tests #key_value_serialisation_property_tests#
-  serialiseKeyIdentity,
-  serialiseKeyIdentityUpToSlicing,
-  serialiseKeyPreservesOrdering,
-  serialiseValueIdentity,
-  serialiseValueIdentityUpToSlicing,
-  packSlice,
+    -- ** Key\/Value Serialisation Property Tests #key_value_serialisation_property_tests#
+    serialiseKeyIdentity,
+    serialiseKeyIdentityUpToSlicing,
+    serialiseKeyPreservesOrdering,
+    serialiseValueIdentity,
+    serialiseValueIdentityUpToSlicing,
+    packSlice,
 
-  -- * Monoidal Value Resolution #monoidal_value_resolution#
-  ResolveValue (..),
-  ResolveViaSemigroup (..),
-  ResolveAsFirst (..),
+    -- * Monoidal Value Resolution #monoidal_value_resolution#
+    ResolveValue (resolve, resolveSerialised),
+    ResolveViaSemigroup (ResolveViaSemigroup),
+    ResolveAsFirst (ResolveAsFirst, unResolveAsFirst),
 
-  -- ** Monoidal Value Resolution Property Tests #monoidal_value_resolution_property_tests#
-  resolveCompatibility,
-  resolveValidOutput,
-  resolveAssociativity,
+    -- ** Monoidal Value Resolution Property Tests #monoidal_value_resolution_property_tests#
+    resolveCompatibility,
+    resolveValidOutput,
+    resolveAssociativity,
 
-  -- * Errors #errors#
-  SessionDirDoesNotExistError (..),
-  SessionDirLockedError (..),
-  SessionDirCorruptedError (..),
-  SessionClosedError (..),
-  TableClosedError (..),
-  TableCorruptedError (..),
-  TableTooLargeError (..),
-  TableUnionNotCompatibleError (..),
-  SnapshotExistsError (..),
-  SnapshotDoesNotExistError (..),
-  SnapshotCorruptedError (..),
-  SnapshotNotCompatibleError (..),
-  BlobRefInvalidError (..),
-  CursorClosedError (..),
-  InvalidSnapshotNameError (..),
+    -- * Errors #errors#
+    SessionDirDoesNotExistError (ErrSessionDirDoesNotExist),
+    SessionDirLockedError (ErrSessionDirLocked),
+    SessionDirCorruptedError (ErrSessionDirCorrupted),
+    SessionClosedError (ErrSessionClosed),
+    TableClosedError (ErrTableClosed),
+    TableCorruptedError (ErrLookupByteCountDiscrepancy),
+    TableTooLargeError (ErrTableTooLarge),
+    TableUnionNotCompatibleError (ErrTableUnionHandleTypeMismatch, ErrTableUnionSessionMismatch),
+    SnapshotExistsError (ErrSnapshotExists),
+    SnapshotDoesNotExistError (ErrSnapshotDoesNotExist),
+    SnapshotCorruptedError (ErrSnapshotCorrupted),
+    SnapshotNotCompatibleError (ErrSnapshotWrongLabel),
+    BlobRefInvalidError (ErrBlobRefInvalid),
+    CursorClosedError (ErrCursorClosed),
+    InvalidSnapshotNameError (ErrInvalidSnapshotName),
 
-  -- * Traces #traces#
-  Tracer,
-  LSMTreeTrace (..),
-  SessionTrace (..),
-  TableTrace (..),
-  CursorTrace (..),
-  SessionId (..),
-  TableId (..),
-  CursorId (..),
-) where
+    -- * Traces #traces#
+    Tracer,
+    LSMTreeTrace (..),
+    SessionTrace (..),
+    TableTrace (..),
+    CursorTrace (..),
+    SessionId (..),
+    TableId (..),
+    CursorId (..),
+  )
+where
 
-import           Control.Concurrent.Class.MonadMVar.Strict (MonadMVar)
-import           Control.Concurrent.Class.MonadSTM (MonadSTM (STM))
-import           Control.DeepSeq (NFData (..))
-import           Control.Exception.Base (assert)
-import           Control.Monad.Class.MonadAsync (MonadAsync)
-import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadEvaluate,
-                     MonadMask, MonadThrow (..))
-import           Control.Monad.Primitive (PrimMonad)
-import           Control.Tracer (Tracer)
-import           Data.Bifunctor (Bifunctor (..))
-import           Data.Coerce (coerce)
-import           Data.Kind (Constraint, Type)
-import           Data.List.NonEmpty (NonEmpty (..))
-import           Data.Maybe (fromMaybe, isJust)
-import           Data.Typeable (Proxy (..), Typeable, eqT, type (:~:) (Refl),
-                     typeRep)
-import           Data.Vector (Vector)
-import qualified Data.Vector as V
-import qualified Database.LSMTree.Internal.BlobRef as Internal
-import           Database.LSMTree.Internal.Config
-                     (BloomFilterAlloc (AllocFixed, AllocRequestFPR),
-                     DiskCachePolicy (..), FencePointerIndexType (..),
-                     MergeBatchSize (..), MergePolicy (..), MergeSchedule (..),
-                     SizeRatio (..), TableConfig (..), WriteBufferAlloc (..),
-                     defaultTableConfig)
-import           Database.LSMTree.Internal.Config.Override
-                     (TableConfigOverride (..), noTableConfigOverride)
-import qualified Database.LSMTree.Internal.Entry as Entry
-import           Database.LSMTree.Internal.Paths (SnapshotName,
-                     isValidSnapshotName, toSnapshotName)
-import           Database.LSMTree.Internal.Range (Range (..))
-import           Database.LSMTree.Internal.RawBytes (RawBytes (..))
-import           Database.LSMTree.Internal.RunNumber (CursorId (..),
-                     TableId (..))
-import qualified Database.LSMTree.Internal.Serialise as Internal
-import           Database.LSMTree.Internal.Serialise.Class (SerialiseKey (..),
-                     SerialiseKeyOrderPreserving, SerialiseValue (..),
-                     packSlice, serialiseKeyIdentity,
-                     serialiseKeyIdentityUpToSlicing,
-                     serialiseKeyPreservesOrdering, serialiseValueIdentity,
-                     serialiseValueIdentityUpToSlicing)
-import           Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
-import           Database.LSMTree.Internal.Types (BlobRef (..), Cursor (..),
-                     ResolveAsFirst (..), ResolveValue (..),
-                     ResolveViaSemigroup (..), Salt, Session (..), Table (..),
-                     resolveAssociativity, resolveCompatibility,
-                     resolveValidOutput)
-import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
-                     CursorClosedError (..), CursorTrace,
-                     InvalidSnapshotNameError (..), LSMTreeTrace (..),
-                     ResolveSerialisedValue, SessionClosedError (..),
-                     SessionDirCorruptedError (..),
-                     SessionDirDoesNotExistError (..),
-                     SessionDirLockedError (..), SessionId (..),
-                     SessionTrace (..), SnapshotCorruptedError (..),
-                     SnapshotDoesNotExistError (..), SnapshotExistsError (..),
-                     SnapshotNotCompatibleError (..), TableClosedError (..),
-                     TableCorruptedError (..), TableTooLargeError (..),
-                     TableTrace, TableUnionNotCompatibleError (..),
-                     UnionCredits (..), UnionDebt (..))
-import qualified Database.LSMTree.Internal.Unsafe as Internal
-import           Prelude hiding (lookup, take, takeWhile)
-import           System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
-import           System.FS.BlockIO.API (HasBlockIO (..))
-import           System.FS.BlockIO.IO (defaultIOCtxParams, withIOHasBlockIO)
-import           System.FS.IO (HandleIO)
-import           System.Random (randomIO)
+import Control.Concurrent.Class.MonadMVar.Strict (MonadMVar)
+import Control.Concurrent.Class.MonadSTM (MonadSTM (STM))
+import Control.DeepSeq (NFData (..))
+import Control.Exception.Base (assert)
+import Control.Monad.Class.MonadAsync (MonadAsync)
+import Control.Monad.Class.MonadST (MonadST)
+import Control.Monad.Class.MonadThrow
+  ( MonadCatch (..),
+    MonadEvaluate,
+    MonadMask,
+    MonadThrow (..),
+  )
+import Control.Monad.Primitive (PrimMonad)
+import Control.Tracer (Tracer)
+import Data.Bifunctor (Bifunctor (..))
+import Data.Coerce (coerce)
+import Data.Kind (Constraint, Type)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Maybe (fromMaybe, isJust)
+import Data.Typeable
+  ( Proxy (..),
+    Typeable,
+    eqT,
+    typeRep,
+    type (:~:) (Refl),
+  )
+import Data.Vector (Vector)
+import Data.Vector qualified as V
+import Database.LSMTree.Internal.BlobRef qualified as Internal
+import Database.LSMTree.Internal.Config
+  ( BloomFilterAlloc (AllocFixed, AllocRequestFPR),
+    DiskCachePolicy (..),
+    FencePointerIndexType (..),
+    MergeBatchSize (..),
+    MergePolicy (..),
+    MergeSchedule (..),
+    SizeRatio (..),
+    TableConfig (..),
+    WriteBufferAlloc (..),
+    defaultTableConfig,
+  )
+import Database.LSMTree.Internal.Config.Override
+  ( TableConfigOverride (..),
+    noTableConfigOverride,
+  )
+import Database.LSMTree.Internal.Entry qualified as Entry
+import Database.LSMTree.Internal.Paths
+  ( SnapshotName,
+    isValidSnapshotName,
+    toSnapshotName,
+  )
+import Database.LSMTree.Internal.Range (Range (..))
+import Database.LSMTree.Internal.RawBytes (RawBytes (..))
+import Database.LSMTree.Internal.RunNumber
+  ( CursorId (..),
+    TableId (..),
+  )
+import Database.LSMTree.Internal.Serialise qualified as Internal
+import Database.LSMTree.Internal.Serialise.Class
+  ( SerialiseKey (..),
+    SerialiseKeyOrderPreserving,
+    SerialiseValue (..),
+    packSlice,
+    serialiseKeyIdentity,
+    serialiseKeyIdentityUpToSlicing,
+    serialiseKeyPreservesOrdering,
+    serialiseValueIdentity,
+    serialiseValueIdentityUpToSlicing,
+  )
+import Database.LSMTree.Internal.Snapshot (SnapshotLabel (..))
+import Database.LSMTree.Internal.Types
+  ( BlobRef (..),
+    Cursor (..),
+    ResolveAsFirst (..),
+    ResolveValue (..),
+    ResolveViaSemigroup (..),
+    Salt,
+    Session (..),
+    Table (..),
+    resolveAssociativity,
+    resolveCompatibility,
+    resolveValidOutput,
+  )
+import Database.LSMTree.Internal.Unsafe
+  ( BlobRefInvalidError (..),
+    CursorClosedError (..),
+    CursorTrace,
+    InvalidSnapshotNameError (..),
+    LSMTreeTrace (..),
+    ResolveSerialisedValue,
+    SessionClosedError (..),
+    SessionDirCorruptedError (..),
+    SessionDirDoesNotExistError (..),
+    SessionDirLockedError (..),
+    SessionId (..),
+    SessionTrace (..),
+    SnapshotCorruptedError (..),
+    SnapshotDoesNotExistError (..),
+    SnapshotExistsError (..),
+    SnapshotNotCompatibleError (..),
+    TableClosedError (..),
+    TableCorruptedError (..),
+    TableTooLargeError (..),
+    TableTrace,
+    TableUnionNotCompatibleError (..),
+    UnionCredits (..),
+    UnionDebt (..),
+  )
+import Database.LSMTree.Internal.Unsafe qualified as Internal
+import System.FS.API (FsPath, HasFS (..), MountPoint (..), mkFsPath)
+import System.FS.BlockIO.API (HasBlockIO (..))
+import System.FS.BlockIO.IO (defaultIOCtxParams, withIOHasBlockIO)
+import System.FS.IO (HandleIO)
+import System.Random (randomIO)
+import Prelude hiding (lookup, take, takeWhile)
 
 --------------------------------------------------------------------------------
 -- Usage Notes
 --------------------------------------------------------------------------------
 
-{- $usage_notes
-This section focuses on the differences between the full API as defined in this module and the simple API as defined in "Database.LSMTree.Simple".
-It assumes that the reader is familiar with [Usage Notes for the simple API]("Database.LSMTree.Simple#g:usage_notes"), which discusses crucial topics such as [Resource Management]("Database.LSMTree.Simple#g:resource_management"), [Concurrency]("Database.LSMTree.Simple#g:concurrency"), [ACID properties]("Database.LSMTree.Simple#g:acid"), and [Sharing]("Database.LSMTree.Simple#g:sharing").
--}
-
-{- $real_and_simulated_io
--}
+-- $usage_notes
+-- This section focuses on the differences between the full API as defined in this module and the simple API as defined in "Database.LSMTree.Simple".
+-- It assumes that the reader is familiar with [Usage Notes for the simple API]("Database.LSMTree.Simple#g:usage_notes"), which discusses crucial topics such as [Resource Management]("Database.LSMTree.Simple#g:resource_management"), [Concurrency]("Database.LSMTree.Simple#g:concurrency"), [ACID properties]("Database.LSMTree.Simple#g:acid"), and [Sharing]("Database.LSMTree.Simple#g:sharing").
 
 type IOLike :: (Type -> Type) -> Constraint
 type IOLike m =
-  ( MonadAsync m
-  , MonadMVar m
-  , MonadThrow m
-  , MonadThrow (STM m)
-  , MonadCatch m
-  , MonadMask m
-  , PrimMonad m
-  , MonadST m
-  , MonadEvaluate m
+  ( MonadAsync m,
+    MonadMVar m,
+    MonadThrow m,
+    MonadThrow (STM m),
+    MonadCatch m,
+    MonadMask m,
+    PrimMonad m,
+    MonadST m,
+    MonadEvaluate m
   )
 
 --------------------------------------------------------------------------------
 -- Example
 --------------------------------------------------------------------------------
 
-{- $setup
-
-The examples in this module use the preamble described in this section, which does three things:
-
-1.  It imports this module qualified, as intended, as well as any other relevant modules.
-2.  It defines types for keys, values, and BLOBs.
-3.  It defines a helper function that runs examples with access to an open session and fresh table.
-
-=== Importing "Database.LSMTree"
-
-This module is intended to be imported qualified, to avoid name clashes with Prelude functions.
-
->>> import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..), SerialiseKey (..), SerialiseValue (..), Session, Table)
->>> import qualified Database.LSMTree as LSMT
-
-=== Defining key, value, and BLOB types
-
-The examples in this module use the types @Key@, @Value@, and @Blob@ for keys, values and BLOBs.
-
->>> import Data.ByteString (ByteString)
->>> import Data.ByteString.Short (ShortByteString)
->>> import Data.Proxy (Proxy)
->>> import Data.String (IsString)
->>> import Data.Word (Word64)
-
-The type @Key@ is a newtype wrapper around 'Data.Word.Word64'.
-The required instance of 'SerialiseKey' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.Word.Word64'.
-
->>> :{
-newtype Key = Key Word64
-  deriving stock (Eq, Ord, Show)
-  deriving newtype (Num, SerialiseKey)
-:}
-
-The type @Value@ is a newtype wrapper around 'Data.ByteString.Short.ShortByteString'.
-The required instance of 'SerialiseValue' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.ByteString.Short.ShortByteString'.
-
->>> :{
-newtype Value = Value ShortByteString
-  deriving stock (Eq, Show)
-  deriving newtype (IsString, SerialiseValue)
-:}
-
-The type @Value@ has an instance of @ResolveValue@ which appends the new value to the old value separated by a space.
-It is sufficient to define either 'resolve' or 'resolveSerialised',
-as each can be defined in terms of the other and 'serialiseValue'\/'deserialiseValue'.
-For optimal performance, you should /always/ define 'resolveSerialised' manually.
-
-__NOTE__:
-The /first/ argument of 'resolve' and 'resolveSerialised' is the /new/ value and the /second/ argument is the /old/ value.
-
->>> :{
-instance ResolveValue Value where
-  resolve :: Value -> Value -> Value
-  resolve (Value new) (Value old) = Value (new <> " " <> old)
-  resolveSerialised :: Proxy Value -> RawBytes -> RawBytes -> RawBytes
-  resolveSerialised _ new old = new <> " " <> old
-:}
-
-The type @Blob@ is a newtype wrapper around 'Data.ByteString.ByteString',
-The required instance of 'SerialiseValue' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.ByteString.ByteString'.
-
->>> :{
-newtype Blob = Blob ByteString
-  deriving stock (Eq, Show)
-  deriving newtype (IsString, SerialiseValue)
-:}
-
-=== Defining a helper function to run examples
-
-The examples in this module are wrapped in a call to @runExample@,
-which creates a temporary session directory and
-runs the example with access to an open 'Session' and a fresh 'Table'.
-
->>> import           Control.Exception (bracket, bracket_)
->>> import           Data.Foldable (traverse_)
->>> import qualified System.Directory as Dir
->>> import           System.FilePath ((</>))
->>> import           System.Process (getCurrentPid)
->>> :{
-runExample :: (Session IO -> Table IO Key Value Blob -> IO a) -> IO a
-runExample action = do
-  tmpDir <- Dir.getTemporaryDirectory
-  pid <- getCurrentPid
-  let sessionDir = tmpDir </> "doctest_Database_LSMTree" </> show pid
-  let createSessionDir = Dir.createDirectoryIfMissing True sessionDir
-  let removeSessionDir = Dir.removeDirectoryRecursive sessionDir
-  bracket_ createSessionDir removeSessionDir $ do
-    LSMT.withOpenSessionIO mempty sessionDir $ \session -> do
-      LSMT.withTable session $ \table ->
-        action session table
-:}
--}
+-- $setup
+--
+-- The examples in this module use the preamble described in this section, which does three things:
+--
+-- 1.  It imports this module qualified, as intended, as well as any other relevant modules.
+-- 2.  It defines types for keys, values, and BLOBs.
+-- 3.  It defines a helper function that runs examples with access to an open session and fresh table.
+--
+-- === Importing "Database.LSMTree"
+--
+-- This module is intended to be imported qualified, to avoid name clashes with Prelude functions.
+--
+-- >>> import           Database.LSMTree (BlobRef, Cursor, RawBytes, ResolveValue (..), SerialiseKey (..), SerialiseValue (..), Session, Table)
+-- >>> import qualified Database.LSMTree as LSMT
+--
+-- === Defining key, value, and BLOB types
+--
+-- The examples in this module use the types @Key@, @Value@, and @Blob@ for keys, values and BLOBs.
+--
+-- >>> import Data.ByteString (ByteString)
+-- >>> import Data.ByteString.Short (ShortByteString)
+-- >>> import Data.Proxy (Proxy)
+-- >>> import Data.String (IsString)
+-- >>> import Data.Word (Word64)
+--
+-- The type @Key@ is a newtype wrapper around 'Data.Word.Word64'.
+-- The required instance of 'SerialiseKey' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.Word.Word64'.
+--
+-- >>> :{
+-- newtype Key = Key Word64
+--   deriving stock (Eq, Ord, Show)
+--   deriving newtype (Num, SerialiseKey)
+-- :}
+--
+-- The type @Value@ is a newtype wrapper around 'Data.ByteString.Short.ShortByteString'.
+-- The required instance of 'SerialiseValue' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.ByteString.Short.ShortByteString'.
+--
+-- >>> :{
+-- newtype Value = Value ShortByteString
+--   deriving stock (Eq, Show)
+--   deriving newtype (IsString, SerialiseValue)
+-- :}
+--
+-- The type @Value@ has an instance of @ResolveValue@ which appends the new value to the old value separated by a space.
+-- It is sufficient to define either 'resolve' or 'resolveSerialised',
+-- as each can be defined in terms of the other and 'serialiseValue'\/'deserialiseValue'.
+-- For optimal performance, you should /always/ define 'resolveSerialised' manually.
+--
+-- __NOTE__:
+-- The /first/ argument of 'resolve' and 'resolveSerialised' is the /new/ value and the /second/ argument is the /old/ value.
+--
+-- >>> :{
+-- instance ResolveValue Value where
+--   resolve :: Value -> Value -> Value
+--   resolve (Value new) (Value old) = Value (new <> " " <> old)
+--   resolveSerialised :: Proxy Value -> RawBytes -> RawBytes -> RawBytes
+--   resolveSerialised _ new old = new <> " " <> old
+-- :}
+--
+-- The type @Blob@ is a newtype wrapper around 'Data.ByteString.ByteString',
+-- The required instance of 'SerialiseValue' is derived by @GeneralisedNewtypeDeriving@ from the preexisting instance for 'Data.ByteString.ByteString'.
+--
+-- >>> :{
+-- newtype Blob = Blob ByteString
+--   deriving stock (Eq, Show)
+--   deriving newtype (IsString, SerialiseValue)
+-- :}
+--
+-- === Defining a helper function to run examples
+--
+-- The examples in this module are wrapped in a call to @runExample@,
+-- which creates a temporary session directory and
+-- runs the example with access to an open 'Session' and a fresh 'Table'.
+--
+-- >>> import           Control.Exception (bracket, bracket_)
+-- >>> import           Data.Foldable (traverse_)
+-- >>> import qualified System.Directory as Dir
+-- >>> import           System.FilePath ((</>))
+-- >>> import           System.Process (getCurrentPid)
+-- >>> :{
+-- runExample :: (Session IO -> Table IO Key Value Blob -> IO a) -> IO a
+-- runExample action = do
+--   tmpDir <- Dir.getTemporaryDirectory
+--   pid <- getCurrentPid
+--   let sessionDir = tmpDir </> "doctest_Database_LSMTree" </> show pid
+--   let createSessionDir = Dir.createDirectoryIfMissing True sessionDir
+--   let removeSessionDir = Dir.removeDirectoryRecursive sessionDir
+--   bracket_ createSessionDir removeSessionDir $ do
+--     LSMT.withOpenSessionIO mempty sessionDir $ \session -> do
+--       LSMT.withTable session $ \table ->
+--         action session table
+-- :}
 
 --------------------------------------------------------------------------------
 -- Sessions
@@ -391,44 +457,42 @@ runExample action = do
 
 -- NOTE: 'Session' is defined in 'Database.LSMTree.Internal.Types'
 
-{- |
-Run an action with access to a session opened from a session directory.
-
-If the session directory is empty, a new session is created using the given salt.
-Otherwise, the session directory is restored as an existing session ignoring the given salt.
-
-If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
-Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
-Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
-The following assumes all tables in the session have the same merge policy:
-
-['LazyLevelling']:
-  \(O(o \: T \log_T \frac{n}{B})\).
-
-The variable \(o\) refers to the number of open tables and cursors in the session.
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'openSession' and 'closeSession'.
-
-Throws the following exceptions:
-
-['SessionDirDoesNotExistError']:
-    If the session directory does not exist.
-['SessionDirLockedError']:
-    If the session directory is locked by another process.
-['SessionDirCorruptedError']:
-    If the session directory is malformed.
--}
-{-# SPECIALISE
-  withOpenSession ::
-    Tracer IO LSMTreeTrace ->
-    HasFS IO HandleIO ->
-    HasBlockIO IO HandleIO ->
-    Salt ->
-    FsPath ->
-    (Session IO -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to a session opened from a session directory.
+--
+-- If the session directory is empty, a new session is created using the given salt.
+-- Otherwise, the session directory is restored as an existing session ignoring the given salt.
+--
+-- If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
+-- Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+-- Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
+-- The following assumes all tables in the session have the same merge policy:
+--
+-- ['LazyLevelling']:
+--   \(O(o \: T \log_T \frac{n}{B})\).
+--
+-- The variable \(o\) refers to the number of open tables and cursors in the session.
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'openSession' and 'closeSession'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionDirDoesNotExistError']:
+--     If the session directory does not exist.
+-- ['SessionDirLockedError']:
+--     If the session directory is locked by another process.
+-- ['SessionDirCorruptedError']:
+--     If the session directory is malformed.
+{-# SPECIALIZE withOpenSession ::
+  Tracer IO LSMTreeTrace ->
+  HasFS IO HandleIO ->
+  HasBlockIO IO HandleIO ->
+  Salt ->
+  FsPath ->
+  (Session IO -> IO a) ->
+  IO a
   #-}
 withOpenSession ::
   forall m h a.
@@ -458,43 +522,41 @@ withOpenSessionIO tracer sessionDir action = do
   withIOHasBlockIO mountPoint defaultIOCtxParams $ \hasFS hasBlockIO ->
     withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
 
-{- |
-Run an action with access to a new session.
-
-The session directory must be empty.
-
-If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
-Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
-Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
-The following assumes all tables in the session have the same merge policy:
-
-['LazyLevelling']:
-  \(O(o \: T \log_T \frac{n}{B})\).
-
-The variable \(o\) refers to the number of open tables and cursors in the session.
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'newSession' and 'closeSession'.
-
-Throws the following exceptions:
-
-['SessionDirDoesNotExistError']:
-    If the session directory does not exist.
-['SessionDirLockedError']:
-    If the session directory is locked by another process.
-['SessionDirCorruptedError']:
-    If the session directory is malformed.
--}
-{-# SPECIALISE
-  withNewSession ::
-    Tracer IO LSMTreeTrace ->
-    HasFS IO HandleIO ->
-    HasBlockIO IO HandleIO ->
-    Salt ->
-    FsPath ->
-    (Session IO -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to a new session.
+--
+-- The session directory must be empty.
+--
+-- If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
+-- Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+-- Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
+-- The following assumes all tables in the session have the same merge policy:
+--
+-- ['LazyLevelling']:
+--   \(O(o \: T \log_T \frac{n}{B})\).
+--
+-- The variable \(o\) refers to the number of open tables and cursors in the session.
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'newSession' and 'closeSession'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionDirDoesNotExistError']:
+--     If the session directory does not exist.
+-- ['SessionDirLockedError']:
+--     If the session directory is locked by another process.
+-- ['SessionDirCorruptedError']:
+--     If the session directory is malformed.
+{-# SPECIALIZE withNewSession ::
+  Tracer IO LSMTreeTrace ->
+  HasFS IO HandleIO ->
+  HasBlockIO IO HandleIO ->
+  Salt ->
+  FsPath ->
+  (Session IO -> IO a) ->
+  IO a
   #-}
 withNewSession ::
   forall m h a.
@@ -511,43 +573,41 @@ withNewSession ::
 withNewSession tracer hasFS hasBlockIO sessionSalt sessionDir action = do
   Internal.withNewSession tracer hasFS hasBlockIO sessionSalt sessionDir (action . Session)
 
-{- |
-Run an action with access to a restored session.
-
-The session directory must be non-empty: a session must have previously been
-opened and closed in this directory.
-
-If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
-Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
-Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
-The following assumes all tables in the session have the same merge policy:
-
-['LazyLevelling']:
-  \(O(o \: T \log_T \frac{n}{B})\).
-
-The variable \(o\) refers to the number of open tables and cursors in the session.
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'restoreSession' and 'closeSession'.
-
-Throws the following exceptions:
-
-['SessionDirDoesNotExistError']:
-    If the session directory does not exist.
-['SessionDirLockedError']:
-    If the session directory is locked by another process.
-['SessionDirCorruptedError']:
-    If the session directory is malformed.
--}
-{-# SPECIALISE
-  withRestoreSession ::
-    Tracer IO LSMTreeTrace ->
-    HasFS IO HandleIO ->
-    HasBlockIO IO HandleIO ->
-    FsPath ->
-    (Session IO -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to a restored session.
+--
+-- The session directory must be non-empty: a session must have previously been
+-- opened and closed in this directory.
+--
+-- If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
+-- Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+-- Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the open tables in the session.
+-- The following assumes all tables in the session have the same merge policy:
+--
+-- ['LazyLevelling']:
+--   \(O(o \: T \log_T \frac{n}{B})\).
+--
+-- The variable \(o\) refers to the number of open tables and cursors in the session.
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'restoreSession' and 'closeSession'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionDirDoesNotExistError']:
+--     If the session directory does not exist.
+-- ['SessionDirLockedError']:
+--     If the session directory is locked by another process.
+-- ['SessionDirCorruptedError']:
+--     If the session directory is malformed.
+{-# SPECIALIZE withRestoreSession ::
+  Tracer IO LSMTreeTrace ->
+  HasFS IO HandleIO ->
+  HasBlockIO IO HandleIO ->
+  FsPath ->
+  (Session IO -> IO a) ->
+  IO a
   #-}
 withRestoreSession ::
   forall m h a.
@@ -562,33 +622,31 @@ withRestoreSession ::
 withRestoreSession tracer hasFS hasBlockIO sessionDir action = do
   Internal.withRestoreSession tracer hasFS hasBlockIO sessionDir (action . Session)
 
-{- |
-Open a session from a session directory.
-
-If the session directory is empty, a new session is created using the given salt.
-Otherwise, the session directory is restored as an existing session ignoring the given salt.
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
-
-Throws the following exceptions:
-
-['SessionDirDoesNotExistError']:
-    If the session directory does not exist.
-['SessionDirLockedError']:
-    If the session directory is locked by another process.
-['SessionDirCorruptedError']:
-    If the session directory is malformed.
--}
-{-# SPECIALISE
-  openSession ::
-    Tracer IO LSMTreeTrace ->
-    HasFS IO HandleIO ->
-    HasBlockIO IO HandleIO ->
-    Salt ->
-    FsPath ->
-    IO (Session IO)
+-- |
+-- Open a session from a session directory.
+--
+-- If the session directory is empty, a new session is created using the given salt.
+-- Otherwise, the session directory is restored as an existing session ignoring the given salt.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(1)\).
+--
+-- __Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionDirDoesNotExistError']:
+--     If the session directory does not exist.
+-- ['SessionDirLockedError']:
+--     If the session directory is locked by another process.
+-- ['SessionDirCorruptedError']:
+--     If the session directory is malformed.
+{-# SPECIALIZE openSession ::
+  Tracer IO LSMTreeTrace ->
+  HasFS IO HandleIO ->
+  HasBlockIO IO HandleIO ->
+  Salt ->
+  FsPath ->
+  IO (Session IO)
   #-}
 openSession ::
   forall m h.
@@ -604,32 +662,30 @@ openSession ::
 openSession tracer hasFS hasBlockIO sessionSalt sessionDir =
   Session <$> Internal.openSession tracer hasFS hasBlockIO sessionSalt sessionDir
 
-{- |
-Create a new session.
-
-The session directory must be empty.
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
-
-Throws the following exceptions:
-
-['SessionDirDoesNotExistError']:
-    If the session directory does not exist.
-['SessionDirLockedError']:
-    If the session directory is locked by another process.
-['SessionDirCorruptedError']:
-    If the session directory is malformed.
--}
-{-# SPECIALISE
-  newSession ::
-    Tracer IO LSMTreeTrace ->
-    HasFS IO HandleIO ->
-    HasBlockIO IO HandleIO ->
-    Salt ->
-    FsPath ->
-    IO (Session IO)
+-- |
+-- Create a new session.
+--
+-- The session directory must be empty.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(1)\).
+--
+-- __Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionDirDoesNotExistError']:
+--     If the session directory does not exist.
+-- ['SessionDirLockedError']:
+--     If the session directory is locked by another process.
+-- ['SessionDirCorruptedError']:
+--     If the session directory is malformed.
+{-# SPECIALIZE newSession ::
+  Tracer IO LSMTreeTrace ->
+  HasFS IO HandleIO ->
+  HasBlockIO IO HandleIO ->
+  Salt ->
+  FsPath ->
+  IO (Session IO)
   #-}
 newSession ::
   forall m h.
@@ -645,32 +701,30 @@ newSession ::
 newSession tracer hasFS hasBlockIO sessionSalt sessionDir =
   Session <$> Internal.newSession tracer hasFS hasBlockIO sessionSalt sessionDir
 
-{- |
-Restore a session from a session directory.
-
-The session directory must be non-empty: a session must have previously been
-opened (and closed) in this directory.
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
-
-Throws the following exceptions:
-
-['SessionDirDoesNotExistError']:
-    If the session directory does not exist.
-['SessionDirLockedError']:
-    If the session directory is locked by another process.
-['SessionDirCorruptedError']:
-    If the session directory is malformed.
--}
-{-# SPECIALISE
-  restoreSession ::
-    Tracer IO LSMTreeTrace ->
-    HasFS IO HandleIO ->
-    HasBlockIO IO HandleIO ->
-    FsPath ->
-    IO (Session IO)
+-- |
+-- Restore a session from a session directory.
+--
+-- The session directory must be non-empty: a session must have previously been
+-- opened (and closed) in this directory.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(1)\).
+--
+-- __Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionDirDoesNotExistError']:
+--     If the session directory does not exist.
+-- ['SessionDirLockedError']:
+--     If the session directory is locked by another process.
+-- ['SessionDirCorruptedError']:
+--     If the session directory is malformed.
+{-# SPECIALIZE restoreSession ::
+  Tracer IO LSMTreeTrace ->
+  HasFS IO HandleIO ->
+  HasBlockIO IO HandleIO ->
+  FsPath ->
+  IO (Session IO)
   #-}
 restoreSession ::
   forall m h.
@@ -684,26 +738,24 @@ restoreSession ::
 restoreSession tracer hasFS hasBlockIO sessionDir =
   Session <$> Internal.restoreSession tracer hasFS hasBlockIO sessionDir
 
-{- |
-Close a session.
-
-If there are no open tables or cursors in the session, then the disk I\/O complexity of this operation is \(O(1)\).
-Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
-Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the tables in the session.
-The following assumes all tables in the session have the same merge policy:
-
-['LazyLevelling']:
-  \(O(o \: T \log_T \frac{n}{B})\).
-
-The variable \(o\) refers to the number of open tables and cursors in the session.
-
-Closing is idempotent, i.e., closing a closed session does nothing.
-All other operations on a closed session will throw an exception.
--}
-{-# SPECIALISE
-  closeSession ::
-    Session IO ->
-    IO ()
+-- |
+-- Close a session.
+--
+-- If there are no open tables or cursors in the session, then the disk I\/O complexity of this operation is \(O(1)\).
+-- Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
+-- Consequently, the worst-case disk I\/O complexity of this operation depends on the merge policy of the tables in the session.
+-- The following assumes all tables in the session have the same merge policy:
+--
+-- ['LazyLevelling']:
+--   \(O(o \: T \log_T \frac{n}{B})\).
+--
+-- The variable \(o\) refers to the number of open tables and cursors in the session.
+--
+-- Closing is idempotent, i.e., closing a closed session does nothing.
+-- All other operations on a closed session will throw an exception.
+{-# SPECIALIZE closeSession ::
+  Session IO ->
+  IO ()
   #-}
 closeSession ::
   forall m.
@@ -719,28 +771,26 @@ closeSession (Session session) =
 
 -- NOTE: 'Table' is defined in 'Database.LSMTree.Internal.Types'
 
-{- |
-Run an action with access to an empty table.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'newTable' and 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
--}
-{-# SPECIALISE
-  withTable ::
-    Session IO ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to an empty table.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'newTable' and 'closeTable'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+{-# SPECIALIZE withTable ::
+  Session IO ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withTable ::
   forall m k v b a.
@@ -752,12 +802,11 @@ withTable session =
   withTableWith defaultTableConfig session
 
 -- | Variant of 'withTable' that accepts [table configuration](#g:table_configuration).
-{-# SPECIALISE
-  withTableWith ::
-    TableConfig ->
-    Session IO ->
-    (Table IO k v b -> IO a) ->
-    IO a
+{-# SPECIALIZE withTableWith ::
+  TableConfig ->
+  Session IO ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withTableWith ::
   forall m k v b a.
@@ -769,22 +818,20 @@ withTableWith ::
 withTableWith tableConfig (Session session) action =
   Internal.withTable session tableConfig (action . Table)
 
-{- |
-Create an empty table.
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-__Warning:__ Tables hold open resources and must be closed using 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
--}
-{-# SPECIALISE
-  newTable ::
-    Session IO ->
-    IO (Table IO k v b)
+-- |
+-- Create an empty table.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(1)\).
+--
+-- __Warning:__ Tables hold open resources and must be closed using 'closeTable'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+{-# SPECIALIZE newTable ::
+  Session IO ->
+  IO (Table IO k v b)
   #-}
 newTable ::
   forall m k v b.
@@ -794,14 +841,12 @@ newTable ::
 newTable session =
   newTableWith defaultTableConfig session
 
-{- |
-Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
--}
-{-# SPECIALISE
-  newTableWith ::
-    TableConfig ->
-    Session IO ->
-    IO (Table IO k v b)
+-- |
+-- Variant of 'newTable' that accepts [table configuration](#g:table_configuration).
+{-# SPECIALIZE newTableWith ::
+  TableConfig ->
+  Session IO ->
+  IO (Table IO k v b)
   #-}
 newTableWith ::
   forall m k v b.
@@ -812,23 +857,21 @@ newTableWith ::
 newTableWith tableConfig (Session session) =
   Table <$> Internal.new session tableConfig
 
-{- |
-Close a table.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-Closing is idempotent, i.e., closing a closed table does nothing.
-All other operations on a closed table will throw an exception.
-
-__Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
--}
-{-# SPECIALISE
-  closeTable ::
-    Table IO k v b ->
-    IO ()
+-- |
+-- Close a table.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- Closing is idempotent, i.e., closing a closed table does nothing.
+-- All other operations on a closed table will throw an exception.
+--
+-- __Warning:__ Tables are ephemeral. Once you close a table, its data is lost forever. To persist tables, use [snapshots](#g:snapshots).
+{-# SPECIALIZE closeTable ::
+  Table IO k v b ->
+  IO ()
   #-}
 closeTable ::
   forall m k v b.
@@ -842,39 +885,37 @@ closeTable (Table table) =
 -- Lookups
 --------------------------------------------------------------------------------
 
-{- |
-Check if the key is a member of the table.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  print =<< LSMT.member table 0
-:}
-True
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-Membership tests can be performed concurrently from multiple Haskell threads.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['TableCorruptedError']:
-    If the table data is corrupted.
--}
-{-# SPECIALISE
-  member ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Table IO k v b ->
-    k ->
-    IO Bool
+-- |
+-- Check if the key is a member of the table.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   print =<< LSMT.member table 0
+-- :}
+-- True
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- Membership tests can be performed concurrently from multiple Haskell threads.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['TableCorruptedError']:
+--     If the table data is corrupted.
+{-# SPECIALIZE member ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Table IO k v b ->
+  k ->
+  IO Bool
   #-}
 member ::
   forall m k v b.
@@ -887,27 +928,25 @@ member =
   -- Technically, this does not need the 'SerialiseValue' constraint.
   (fmap (isJust . getValue) .) . lookup
 
-{- |
-Variant of 'member' for batch membership tests.
-The batch of keys corresponds in-order to the batch of results.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(b \: T \log_T \frac{n}{B})\).
-
-The variable \(b\) refers to the length of the input vector.
-
-The following property holds in the absence of races:
-
-prop> members table keys = traverse (member table) keys
--}
-{-# SPECIALISE
-  members ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Table IO k v b ->
-    Vector k ->
-    IO (Vector Bool)
+-- |
+-- Variant of 'member' for batch membership tests.
+-- The batch of keys corresponds in-order to the batch of results.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(b \: T \log_T \frac{n}{B})\).
+--
+-- The variable \(b\) refers to the length of the input vector.
+--
+-- The following property holds in the absence of races:
+--
+-- prop> members table keys = traverse (member table) keys
+{-# SPECIALIZE members ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Table IO k v b ->
+  Vector k ->
+  IO (Vector Bool)
   #-}
 members ::
   forall m k v b.
@@ -926,22 +965,20 @@ data LookupResult v b
   | FoundWithBlob !v !b
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
-{- |
-Get the field of type @v@ from a @'LookupResult' v b@, if any.
--}
+-- |
+-- Get the field of type @v@ from a @'LookupResult' v b@, if any.
 getValue :: LookupResult v b -> Maybe v
 getValue = \case
   NotFound -> Nothing
   Found !v -> Just v
   FoundWithBlob !v !_b -> Just v
 
-{- |
-Get the field of type @b@ from a @'LookupResult' v b@, if any.
-
-The following property holds:
-
-prop> isJust (getBlob result) <= isJust (getValue result)
--}
+-- |
+-- Get the field of type @b@ from a @'LookupResult' v b@, if any.
+--
+-- The following property holds:
+--
+-- prop> isJust (getBlob result) <= isJust (getValue result)
 getBlob :: LookupResult v b -> Maybe b
 getBlob = \case
   NotFound -> Nothing
@@ -962,59 +999,57 @@ instance Bifunctor LookupResult where
     Found v -> Found (f v)
     FoundWithBlob v b -> FoundWithBlob (f v) (g b)
 
-{- |
-Look up the value associated with a key.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  print =<< LSMT.lookup table 0
-:}
-Found (Value "Hello")
-
-If the key is not associated with any value, 'lookup' returns 'NotFound'.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.lookup table 0
-:}
-NotFound
-
-If the key has an associated BLOB, the result contains a 'BlobRef'.
-The full BLOB can be retrieved by passing that 'BlobRef' to 'retrieveBlob'.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" (Just "World")
-  print
-    =<< traverse (LSMT.retrieveBlob session)
-    =<< LSMT.lookup table 0
-:}
-FoundWithBlob (Value "Hello") (Blob "World")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-Lookups can be performed concurrently from multiple Haskell threads.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['TableCorruptedError']:
-    If the table data is corrupted.
--}
-{-# SPECIALISE
-  lookup ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Table IO k v b ->
-    k ->
-    IO (LookupResult v (BlobRef IO b))
+-- |
+-- Look up the value associated with a key.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   print =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Hello")
+--
+-- If the key is not associated with any value, 'lookup' returns 'NotFound'.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.lookup table 0
+-- :}
+-- NotFound
+--
+-- If the key has an associated BLOB, the result contains a 'BlobRef'.
+-- The full BLOB can be retrieved by passing that 'BlobRef' to 'retrieveBlob'.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" (Just "World")
+--   print
+--     =<< traverse (LSMT.retrieveBlob session)
+--     =<< LSMT.lookup table 0
+-- :}
+-- FoundWithBlob (Value "Hello") (Blob "World")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- Lookups can be performed concurrently from multiple Haskell threads.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['TableCorruptedError']:
+--     If the table data is corrupted.
+{-# SPECIALIZE lookup ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Table IO k v b ->
+  k ->
+  IO (LookupResult v (BlobRef IO b))
   #-}
 lookup ::
   forall m k v b.
@@ -1028,27 +1063,25 @@ lookup table k = do
   let mmv = fst <$> V.uncons mvs
   pure $ fromMaybe NotFound mmv
 
-{- |
-Variant of 'lookup' for batch lookups.
-The batch of keys corresponds in-order to the batch of results.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(b \: T \log_T \frac{n}{B})\).
-
-The variable \(b\) refers to the length of the input vector.
-
-The following property holds in the absence of races:
-
-prop> lookups table keys = traverse (lookup table) keys
--}
-{-# SPECIALISE
-  lookups ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Table IO k v b ->
-    Vector k ->
-    IO (Vector (LookupResult v (BlobRef IO b)))
+-- |
+-- Variant of 'lookup' for batch lookups.
+-- The batch of keys corresponds in-order to the batch of results.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(b \: T \log_T \frac{n}{B})\).
+--
+-- The variable \(b\) refers to the length of the input vector.
+--
+-- The following property holds in the absence of races:
+--
+-- prop> lookups table keys = traverse (lookup table) keys
+{-# SPECIALIZE lookups ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Table IO k v b ->
+  Vector k ->
+  IO (Vector (LookupResult v (BlobRef IO b)))
   #-}
 lookups ::
   forall m k v b.
@@ -1060,37 +1093,34 @@ lookups ::
 lookups (Table table :: Table m k v b) keys = do
   maybeEntries <- Internal.lookups (_getResolveSerialisedValue (Proxy @v)) (fmap Internal.serialiseKey keys) table
   pure $ maybe NotFound entryToLookupResult <$> maybeEntries
- where
-  entryToLookupResult = \case
-    Entry.Insert !v -> Found (Internal.deserialiseValue v)
-    Entry.InsertWithBlob !v !b -> FoundWithBlob (Internal.deserialiseValue v) (BlobRef b)
-    Entry.Upsert !v -> Found (Internal.deserialiseValue v)
-    Entry.Delete -> NotFound
+  where
+    entryToLookupResult = \case
+      Entry.Insert !v -> Found (Internal.deserialiseValue v)
+      Entry.InsertWithBlob !v !b -> FoundWithBlob (Internal.deserialiseValue v) (BlobRef b)
+      Entry.Upsert !v -> Found (Internal.deserialiseValue v)
+      Entry.Delete -> NotFound
 
 data Entry k v b
   = Entry !k !v
   | EntryWithBlob !k !v !b
   deriving stock (Eq, Show, Functor, Foldable, Traversable)
 
-{- |
-Get the field of type @k@ from an @'Entry' k v b@.
--}
+-- |
+-- Get the field of type @k@ from an @'Entry' k v b@.
 getEntryKey :: Entry k v b -> k
-getEntryKey (Entry !k !_v)             = k
+getEntryKey (Entry !k !_v) = k
 getEntryKey (EntryWithBlob !k !_v !_b) = k
 
-{- |
-Get the field of type @v@ from an @'Entry' k v b@.
--}
+-- |
+-- Get the field of type @v@ from an @'Entry' k v b@.
 getEntryValue :: Entry k v b -> v
-getEntryValue (Entry !_k !v)             = v
+getEntryValue (Entry !_k !v) = v
 getEntryValue (EntryWithBlob !_k !v !_b) = v
 
-{- |
-Get the field of type @b@ from an @'Entry' k v b@, if any.
--}
+-- |
+-- Get the field of type @b@ from an @'Entry' k v b@, if any.
 getEntryBlob :: Entry k v b -> Maybe b
-getEntryBlob (Entry !_k !_v)            = Nothing
+getEntryBlob (Entry !_k !_v) = Nothing
 getEntryBlob (EntryWithBlob !_k !_v !b) = Just b
 
 instance (NFData k, NFData v, NFData b) => NFData (Entry k v b) where
@@ -1105,29 +1135,27 @@ instance Bifunctor (Entry k) where
     Entry k v -> Entry k (f v)
     EntryWithBlob k v b -> EntryWithBlob k (f v) (g b)
 
-{- |
-Look up a batch of values associated with keys in the given range.
-
-The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B} + \frac{b}{P})\),
-where the variable \(b\) refers to the length of the /output/ vector.
-
-Range lookups can be performed concurrently from multiple Haskell threads.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['TableCorruptedError']:
-    If the table data is corrupted.
--}
-{-# SPECIALISE
-  rangeLookup ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Table IO k v b ->
-    Range k ->
-    IO (Vector (Entry k v (BlobRef IO b)))
+-- |
+-- Look up a batch of values associated with keys in the given range.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(T \log_T \frac{n}{B} + \frac{b}{P})\),
+-- where the variable \(b\) refers to the length of the /output/ vector.
+--
+-- Range lookups can be performed concurrently from multiple Haskell threads.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['TableCorruptedError']:
+--     If the table data is corrupted.
+{-# SPECIALIZE rangeLookup ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Table IO k v b ->
+  Range k ->
+  IO (Vector (Entry k v (BlobRef IO b)))
   #-}
 rangeLookup ::
   forall m k v b.
@@ -1145,63 +1173,61 @@ rangeLookup (Table table :: Table m k v b) range =
 -- Updates
 --------------------------------------------------------------------------------
 
-{- |
-Insert associates the given value and BLOB with the given key in the table.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  print =<< LSMT.lookup table 0
-:}
-Found (Value "Hello")
-
-Insert may optionally associate a BLOB value with the given key.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" (Just "World")
-  print
-    =<< traverse (retrieveBlob session)
-    =<< LSMT.lookup table 0
-:}
-FoundWithBlob (Value "Hello") (Blob "World")
-
-Insert overwrites any value and BLOB previously associated with the given key,
-even if the given BLOB is 'Nothing'.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" (Just "World")
-  LSMT.insert table 0 "Goodbye" Nothing
-  print
-    =<< traverse (retrieveBlob session)
-    =<< LSMT.lookup table 0
-:}
-Found (Value "Goodbye")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{n}{P})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  insert ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    k ->
-    v ->
-    Maybe b ->
-    IO ()
+-- |
+-- Insert associates the given value and BLOB with the given key in the table.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   print =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Hello")
+--
+-- Insert may optionally associate a BLOB value with the given key.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" (Just "World")
+--   print
+--     =<< traverse (retrieveBlob session)
+--     =<< LSMT.lookup table 0
+-- :}
+-- FoundWithBlob (Value "Hello") (Blob "World")
+--
+-- Insert overwrites any value and BLOB previously associated with the given key,
+-- even if the given BLOB is 'Nothing'.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" (Just "World")
+--   LSMT.insert table 0 "Goodbye" Nothing
+--   print
+--     =<< traverse (retrieveBlob session)
+--     =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Goodbye")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{n}{P})\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE insert ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  k ->
+  v ->
+  Maybe b ->
+  IO ()
   #-}
 insert ::
   forall m k v b.
@@ -1215,28 +1241,26 @@ insert ::
 insert table k v b =
   inserts table (V.singleton (k, v, b))
 
-{- |
-Variant of 'insert' for batch insertions.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
-
-The variable \(b\) refers to the length of the input vector.
-
-The following property holds in the absence of races:
-
-prop> inserts table entries = traverse_ (uncurry $ insert table) entries
--}
-{-# SPECIALISE
-  inserts ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    Vector (k, v, Maybe b) ->
-    IO ()
+-- |
+-- Variant of 'insert' for batch insertions.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
+--
+-- The variable \(b\) refers to the length of the input vector.
+--
+-- The following property holds in the absence of races:
+--
+-- prop> inserts table entries = traverse_ (uncurry $ insert table) entries
+{-# SPECIALIZE inserts ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  Vector (k, v, Maybe b) ->
+  IO ()
   #-}
 inserts ::
   forall m k v b.
@@ -1248,61 +1272,59 @@ inserts ::
 inserts table entries =
   updates table (fmap (\(k, v, mb) -> (k, Insert v mb)) entries)
 
-{- |
-If the given key is not a member of the table, 'upsert' associates the given value with the given key in the table.
-Otherwise, 'upsert' updates the value associated with the given key by combining it with the given value using 'resolve'.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.upsert table 0 "Hello"
-  LSMT.upsert table 0 "Goodbye"
-  print =<< LSMT.lookup table 0
-:}
-Found (Value "Goodbye Hello")
-
-__Warning:__
-Upsert deletes any BLOB previously associated with the given key.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" (Just "World")
-  LSMT.upsert table 0 "Goodbye"
-  print
-    =<< traverse (LSMT.retrieveBlob session)
-    =<< LSMT.lookup table 0
-:}
-Found (Value "Goodbye Hello")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{n}{P})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-
-The following property holds in the absence of races:
-
-@
-upsert table k v = do
-  r <- lookup table k
-  let v' = maybe v (resolve v) (getValue r)
-  insert table k v' Nothing
-@
--}
-{-# SPECIALISE
-  upsert ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    k ->
-    v ->
-    IO ()
+-- |
+-- If the given key is not a member of the table, 'upsert' associates the given value with the given key in the table.
+-- Otherwise, 'upsert' updates the value associated with the given key by combining it with the given value using 'resolve'.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.upsert table 0 "Hello"
+--   LSMT.upsert table 0 "Goodbye"
+--   print =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Goodbye Hello")
+--
+-- __Warning:__
+-- Upsert deletes any BLOB previously associated with the given key.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" (Just "World")
+--   LSMT.upsert table 0 "Goodbye"
+--   print
+--     =<< traverse (LSMT.retrieveBlob session)
+--     =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Goodbye Hello")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{n}{P})\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+--
+-- The following property holds in the absence of races:
+--
+-- @
+-- upsert table k v = do
+--   r <- lookup table k
+--   let v' = maybe v (resolve v) (getValue r)
+--   insert table k v' Nothing
+-- @
+{-# SPECIALIZE upsert ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  k ->
+  v ->
+  IO ()
   #-}
 upsert ::
   forall m k v b.
@@ -1315,28 +1337,26 @@ upsert ::
 upsert table k v =
   upserts table (V.singleton (k, v))
 
-{- |
-Variant of 'upsert' for batch insertions.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
-
-The variable \(b\) refers to the length of the input vector.
-
-The following property holds in the absence of races:
-
-prop> upserts table entries = traverse_ (uncurry $ upsert table) entries
--}
-{-# SPECIALISE
-  upserts ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    Vector (k, v) ->
-    IO ()
+-- |
+-- Variant of 'upsert' for batch insertions.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
+--
+-- The variable \(b\) refers to the length of the input vector.
+--
+-- The following property holds in the absence of races:
+--
+-- prop> upserts table entries = traverse_ (uncurry $ upsert table) entries
+{-# SPECIALIZE upserts ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  Vector (k, v) ->
+  IO ()
   #-}
 upserts ::
   forall m k v b.
@@ -1348,47 +1368,45 @@ upserts ::
 upserts table entries =
   updates table (second Upsert <$> entries)
 
-{- |
-Delete a key from the table.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.delete table 0
-  print =<< LSMT.lookup table 0
-:}
-NotFound
-
-If the key is not a member of the table, the table is left unchanged.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.delete table 1
-  print =<< LSMT.lookup table 0
-:}
-Found (Value "Hello")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{n}{P})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  delete ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    k ->
-    IO ()
+-- |
+-- Delete a key from the table.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.delete table 0
+--   print =<< LSMT.lookup table 0
+-- :}
+-- NotFound
+--
+-- If the key is not a member of the table, the table is left unchanged.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.delete table 1
+--   print =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Hello")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{n}{P})\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE delete ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  k ->
+  IO ()
   #-}
 delete ::
   forall m k v b.
@@ -1400,28 +1418,26 @@ delete ::
 delete table k =
   deletes table (V.singleton k)
 
-{- |
-Variant of 'delete' for batch deletions.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
-
-The variable \(b\) refers to the length of the input vector.
-
-The following property holds in the absence of races:
-
-prop> deletes table keys = traverse_ (delete table) keys
--}
-{-# SPECIALISE
-  deletes ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    Vector k ->
-    IO ()
+-- |
+-- Variant of 'delete' for batch deletions.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
+--
+-- The variable \(b\) refers to the length of the input vector.
+--
+-- The following property holds in the absence of races:
+--
+-- prop> deletes table keys = traverse_ (delete table) keys
+{-# SPECIALIZE deletes ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  Vector k ->
+  IO ()
   #-}
 deletes ::
   forall m k v b.
@@ -1447,36 +1463,34 @@ instance (NFData v, NFData b) => NFData (Update v b) where
     Delete -> ()
     Upsert v -> rnf v
 
-{- |
-Update generalises 'insert', 'delete', and 'upsert'.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{n}{P})\).
-
-The following properties hold:
-
-prop> update table k (Insert v mb) = insert table k v mb
-prop> update table k Delete = delete table k
-prop> update table k (Upsert v) = upsert table k v
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  update ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    k ->
-    Update v b ->
-    IO ()
+-- |
+-- Update generalises 'insert', 'delete', and 'upsert'.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(\frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{n}{P})\).
+--
+-- The following properties hold:
+--
+-- prop> update table k (Insert v mb) = insert table k v mb
+-- prop> update table k Delete = delete table k
+-- prop> update table k (Upsert v) = upsert table k v
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE update ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  k ->
+  Update v b ->
+  IO ()
   #-}
 update ::
   forall m k v b.
@@ -1489,28 +1503,26 @@ update ::
 update table k mv =
   updates table (V.singleton (k, mv))
 
-{- |
-Variant of 'update' for batch updates.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
-
-['LazyLevelling'\/'Incremental']:
-    \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
-['LazyLevelling'\/'OneShot']:
-    \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
-
-The variable \(b\) refers to the length of the input vector.
-
-The following property holds in the absence of races:
-
-prop> updates table entries = traverse_ (uncurry $ update table) entries
--}
-{-# SPECIALISE
-  updates ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
-    Table IO k v b ->
-    Vector (k, Update v b) ->
-    IO ()
+-- |
+-- Variant of 'update' for batch updates.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy and the merge schedule of the table:
+--
+-- ['LazyLevelling'\/'Incremental']:
+--     \(O(b \: \frac{1}{P} \: \log_T \frac{n}{B})\).
+-- ['LazyLevelling'\/'OneShot']:
+--     \(O(\frac{b}{P} \log_T \frac{b}{B} + \frac{n}{P})\).
+--
+-- The variable \(b\) refers to the length of the input vector.
+--
+-- The following property holds in the absence of races:
+--
+-- prop> updates table entries = traverse_ (uncurry $ update table) entries
+{-# SPECIALIZE updates ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v, SerialiseValue b) =>
+  Table IO k v b ->
+  Vector (k, Update v b) ->
+  IO ()
   #-}
 updates ::
   forall m k v b.
@@ -1521,59 +1533,57 @@ updates ::
   m ()
 updates (Table table :: Table m k v b) entries =
   Internal.updates (_getResolveSerialisedValue (Proxy @v)) (serialiseEntry <$> entries) table
- where
-  serialiseEntry (k, u) = (Internal.serialiseKey k, serialiseUpdate u)
-  serialiseUpdate = \case
-    Insert v (Just b) -> Entry.InsertWithBlob (Internal.serialiseValue v) (Internal.serialiseBlob b)
-    Insert v Nothing -> Entry.Insert (Internal.serialiseValue v)
-    Delete -> Entry.Delete
-    Upsert v -> Entry.Upsert (Internal.serialiseValue v)
+  where
+    serialiseEntry (k, u) = (Internal.serialiseKey k, serialiseUpdate u)
+    serialiseUpdate = \case
+      Insert v (Just b) -> Entry.InsertWithBlob (Internal.serialiseValue v) (Internal.serialiseBlob b)
+      Insert v Nothing -> Entry.Insert (Internal.serialiseValue v)
+      Delete -> Entry.Delete
+      Upsert v -> Entry.Upsert (Internal.serialiseValue v)
 
 --------------------------------------------------------------------------------
 -- Duplication
 --------------------------------------------------------------------------------
 
-{- |
-Run an action with access to the duplicate of a table.
-
-The duplicate is an independent copy of the given table.
-Subsequent updates to the original table do not affect the duplicate, and vice versa.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.withDuplicate table $ \table' -> do
-    print =<< LSMT.lookup table' 0
-    LSMT.insert table' 0 "Goodbye" Nothing
-    print =<< LSMT.lookup table' 0
-  LSMT.lookup table 0
-  print =<< LSMT.lookup table 0
-:}
-Found (Value "Hello")
-Found (Value "Goodbye")
-Found (Value "Hello")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'duplicate' and 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  withDuplicate ::
-    Table IO k v b ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to the duplicate of a table.
+--
+-- The duplicate is an independent copy of the given table.
+-- Subsequent updates to the original table do not affect the duplicate, and vice versa.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.withDuplicate table $ \table' -> do
+--     print =<< LSMT.lookup table' 0
+--     LSMT.insert table' 0 "Goodbye" Nothing
+--     print =<< LSMT.lookup table' 0
+--   LSMT.lookup table 0
+--   print =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Hello")
+-- Found (Value "Goodbye")
+-- Found (Value "Hello")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'duplicate' and 'closeTable'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE withDuplicate ::
+  Table IO k v b ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withDuplicate ::
   forall m k v b a.
@@ -1584,41 +1594,39 @@ withDuplicate ::
 withDuplicate table =
   bracket (duplicate table) closeTable
 
-{- |
-Duplicate a table.
-
-The duplicate is an independent copy of the given table.
-Subsequent updates to the original table do not affect the duplicate, and vice versa.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  bracket (LSMT.duplicate table) LSMT.closeTable $ \table' -> do
-    print =<< LSMT.lookup table' 0
-    LSMT.insert table' 0 "Goodbye" Nothing
-    print =<< LSMT.lookup table' 0
-  LSMT.lookup table 0
-  print =<< LSMT.lookup table 0
-:}
-Found (Value "Hello")
-Found (Value "Goodbye")
-Found (Value "Hello")
-
-The worst-case disk I\/O complexity of this operation is \(O(0)\).
-
-__Warning:__ The duplicate must be independently closed using 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  duplicate ::
-    Table IO k v b ->
-    IO (Table IO k v b)
+-- |
+-- Duplicate a table.
+--
+-- The duplicate is an independent copy of the given table.
+-- Subsequent updates to the original table do not affect the duplicate, and vice versa.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   bracket (LSMT.duplicate table) LSMT.closeTable $ \table' -> do
+--     print =<< LSMT.lookup table' 0
+--     LSMT.insert table' 0 "Goodbye" Nothing
+--     print =<< LSMT.lookup table' 0
+--   LSMT.lookup table 0
+--   print =<< LSMT.lookup table 0
+-- :}
+-- Found (Value "Hello")
+-- Found (Value "Goodbye")
+-- Found (Value "Hello")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(0)\).
+--
+-- __Warning:__ The duplicate must be independently closed using 'closeTable'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE duplicate ::
+  Table IO k v b ->
+  IO (Table IO k v b)
   #-}
 duplicate ::
   forall m k v b.
@@ -1632,53 +1640,51 @@ duplicate (Table table) =
 -- Union
 --------------------------------------------------------------------------------
 
-{- |
-Run an action with access to a table that contains the union of the entries of the given tables.
-
->>> :{
-runExample $ \session table1 -> do
-  LSMT.insert table1 0 "Hello" Nothing
-  LSMT.withTable session $ \table2 -> do
-    LSMT.insert table2 0 "World" Nothing
-    LSMT.insert table2 1 "Goodbye" Nothing
-    LSMT.withUnion table1 table2 $ \table3 -> do
-      print =<< LSMT.lookup table3 0
-      print =<< LSMT.lookup table3 1
-    print =<< LSMT.lookup table1 0
-    print =<< LSMT.lookup table2 0
-:}
-Found (Value "Hello World")
-Found (Value "Goodbye")
-Found (Value "Hello")
-Found (Value "World")
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'union' and 'closeTable'.
-
-__Warning:__ Both input tables must be from the same 'Session'.
-
-__Warning:__ This is a relatively expensive operation that may take some time to complete.
-See 'withIncrementalUnion' for an incremental alternative.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['TableUnionNotCompatibleError']:
-    If both tables are not from the same 'Session'.
--}
-{-# SPECIALISE
-  withUnion ::
-    (ResolveValue v) =>
-    Table IO k v b ->
-    Table IO k v b ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to a table that contains the union of the entries of the given tables.
+--
+-- >>> :{
+-- runExample $ \session table1 -> do
+--   LSMT.insert table1 0 "Hello" Nothing
+--   LSMT.withTable session $ \table2 -> do
+--     LSMT.insert table2 0 "World" Nothing
+--     LSMT.insert table2 1 "Goodbye" Nothing
+--     LSMT.withUnion table1 table2 $ \table3 -> do
+--       print =<< LSMT.lookup table3 0
+--       print =<< LSMT.lookup table3 1
+--     print =<< LSMT.lookup table1 0
+--     print =<< LSMT.lookup table2 0
+-- :}
+-- Found (Value "Hello World")
+-- Found (Value "Goodbye")
+-- Found (Value "Hello")
+-- Found (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'union' and 'closeTable'.
+--
+-- __Warning:__ Both input tables must be from the same 'Session'.
+--
+-- __Warning:__ This is a relatively expensive operation that may take some time to complete.
+-- See 'withIncrementalUnion' for an incremental alternative.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['TableUnionNotCompatibleError']:
+--     If both tables are not from the same 'Session'.
+{-# SPECIALIZE withUnion ::
+  (ResolveValue v) =>
+  Table IO k v b ->
+  Table IO k v b ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withUnion ::
   forall m k v b a.
@@ -1691,15 +1697,13 @@ withUnion ::
 withUnion table1 table2 =
   bracket (table1 `union` table2) closeTable
 
-{- |
-Variant of 'withUnions' that takes any number of tables.
--}
-{-# SPECIALISE
-  withUnions ::
-    (ResolveValue v) =>
-    NonEmpty (Table IO k v b) ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Variant of 'withUnions' that takes any number of tables.
+{-# SPECIALIZE withUnions ::
+  (ResolveValue v) =>
+  NonEmpty (Table IO k v b) ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withUnions ::
   forall m k v b a.
@@ -1711,54 +1715,52 @@ withUnions ::
 withUnions tables =
   bracket (unions tables) closeTable
 
-{- |
-Create a table that contains the union of the entries of the given tables.
-
-If the given key is a member of a single input table, then the same key and value occur in the output table.
-Otherwise, the values for duplicate keys are combined using 'resolve' from left to right.
-If the 'resolve' function behaves like 'const', then this computes a left-biased union.
-
->>> :{
-runExample $ \session table1 -> do
-  LSMT.insert table1 0 "Hello" Nothing
-  LSMT.withTable session $ \table2 -> do
-    LSMT.insert table2 0 "World" Nothing
-    LSMT.insert table2 1 "Goodbye" Nothing
-    bracket (LSMT.union table1 table2) LSMT.closeTable $ \table3 -> do
-      print =<< LSMT.lookup table3 0
-      print =<< LSMT.lookup table3 1
-    print =<< LSMT.lookup table1 0
-    print =<< LSMT.lookup table2 0
-:}
-Found (Value "Hello World")
-Found (Value "Goodbye")
-Found (Value "Hello")
-Found (Value "World")
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
-
-__Warning:__ The new table must be independently closed using 'closeTable'.
-
-__Warning:__ Both input tables must be from the same 'Session'.
-
-__Warning:__ This is a relatively expensive operation that may take some time to complete.
-See 'incrementalUnion' for an incremental alternative.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['TableUnionNotCompatibleError']:
-    If both tables are not from the same 'Session'.
--}
-{-# SPECIALISE
-  union ::
-    (ResolveValue v) =>
-    Table IO k v b ->
-    Table IO k v b ->
-    IO (Table IO k v b)
+-- |
+-- Create a table that contains the union of the entries of the given tables.
+--
+-- If the given key is a member of a single input table, then the same key and value occur in the output table.
+-- Otherwise, the values for duplicate keys are combined using 'resolve' from left to right.
+-- If the 'resolve' function behaves like 'const', then this computes a left-biased union.
+--
+-- >>> :{
+-- runExample $ \session table1 -> do
+--   LSMT.insert table1 0 "Hello" Nothing
+--   LSMT.withTable session $ \table2 -> do
+--     LSMT.insert table2 0 "World" Nothing
+--     LSMT.insert table2 1 "Goodbye" Nothing
+--     bracket (LSMT.union table1 table2) LSMT.closeTable $ \table3 -> do
+--       print =<< LSMT.lookup table3 0
+--       print =<< LSMT.lookup table3 1
+--     print =<< LSMT.lookup table1 0
+--     print =<< LSMT.lookup table2 0
+-- :}
+-- Found (Value "Hello World")
+-- Found (Value "Goodbye")
+-- Found (Value "Hello")
+-- Found (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
+--
+-- __Warning:__ The new table must be independently closed using 'closeTable'.
+--
+-- __Warning:__ Both input tables must be from the same 'Session'.
+--
+-- __Warning:__ This is a relatively expensive operation that may take some time to complete.
+-- See 'incrementalUnion' for an incremental alternative.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['TableUnionNotCompatibleError']:
+--     If both tables are not from the same 'Session'.
+{-# SPECIALIZE union ::
+  (ResolveValue v) =>
+  Table IO k v b ->
+  Table IO k v b ->
+  IO (Table IO k v b)
   #-}
 union ::
   forall m k v b.
@@ -1770,14 +1772,12 @@ union ::
 union table1 table2 =
   unions (table1 :| table2 : [])
 
-{- |
-Variant of 'union' that takes any number of tables.
--}
-{-# SPECIALISE
-  unions ::
-    (ResolveValue v) =>
-    NonEmpty (Table IO k v b) ->
-    IO (Table IO k v b)
+-- |
+-- Variant of 'union' that takes any number of tables.
+{-# SPECIALIZE unions ::
+  (ResolveValue v) =>
+  NonEmpty (Table IO k v b) ->
+  IO (Table IO k v b)
   #-}
 unions ::
   forall m k v b.
@@ -1792,56 +1792,54 @@ unions tables = do
     assert (leftovers >= 0) $ pure ()
     pure table
 
-{- |
-Run an action with access to a table that incrementally computes the union of the given tables.
-
->>> :{
-runExample $ \session table1 -> do
-  LSMT.insert table1 0 "Hello" Nothing
-  LSMT.withTable session $ \table2 -> do
-    LSMT.insert table2 0 "World" Nothing
-    LSMT.insert table2 1 "Goodbye" Nothing
-    LSMT.withIncrementalUnion table1 table2 $ \table3 -> do
-      print =<< LSMT.lookup table3 0
-      print =<< LSMT.lookup table3 1
-    print =<< LSMT.lookup table1 0
-    print =<< LSMT.lookup table2 0
-:}
-Found (Value "Hello World")
-Found (Value "Goodbye")
-Found (Value "Hello")
-Found (Value "World")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'incrementalUnion' and 'closeTable'.
-
-The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
-The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
-While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
-
-__Warning:__ Both input tables must be from the same 'Session'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['TableUnionNotCompatibleError']:
-    If both tables are not from the same 'Session'.
--}
-{-# SPECIALISE
-  withIncrementalUnion ::
-    Table IO k v b ->
-    Table IO k v b ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to a table that incrementally computes the union of the given tables.
+--
+-- >>> :{
+-- runExample $ \session table1 -> do
+--   LSMT.insert table1 0 "Hello" Nothing
+--   LSMT.withTable session $ \table2 -> do
+--     LSMT.insert table2 0 "World" Nothing
+--     LSMT.insert table2 1 "Goodbye" Nothing
+--     LSMT.withIncrementalUnion table1 table2 $ \table3 -> do
+--       print =<< LSMT.lookup table3 0
+--       print =<< LSMT.lookup table3 1
+--     print =<< LSMT.lookup table1 0
+--     print =<< LSMT.lookup table2 0
+-- :}
+-- Found (Value "Hello World")
+-- Found (Value "Goodbye")
+-- Found (Value "Hello")
+-- Found (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'incrementalUnion' and 'closeTable'.
+--
+-- The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
+-- The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
+-- While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
+--
+-- __Warning:__ Both input tables must be from the same 'Session'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['TableUnionNotCompatibleError']:
+--     If both tables are not from the same 'Session'.
+{-# SPECIALIZE withIncrementalUnion ::
+  Table IO k v b ->
+  Table IO k v b ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withIncrementalUnion ::
   forall m k v b a.
@@ -1853,21 +1851,19 @@ withIncrementalUnion ::
 withIncrementalUnion table1 table2 =
   bracket (incrementalUnion table1 table2) closeTable
 
-{- |
-Variant of 'withIncrementalUnion' that takes any number of tables.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B} + b)\).
-
-The variable \(b\) refers to the number of input tables.
--}
-{-# SPECIALISE
-  withIncrementalUnions ::
-    NonEmpty (Table IO k v b) ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Variant of 'withIncrementalUnion' that takes any number of tables.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B} + b)\).
+--
+-- The variable \(b\) refers to the number of input tables.
+{-# SPECIALIZE withIncrementalUnions ::
+  NonEmpty (Table IO k v b) ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withIncrementalUnions ::
   forall m k v b a.
@@ -1878,50 +1874,48 @@ withIncrementalUnions ::
 withIncrementalUnions tables =
   bracket (incrementalUnions tables) closeTable
 
-{- |
-Create a table that incrementally computes the union of the given tables.
-
->>> :{
-runExample $ \session table1 -> do
-  LSMT.insert table1 0 "Hello" Nothing
-  LSMT.withTable session $ \table2 -> do
-    LSMT.insert table2 0 "World" Nothing
-    LSMT.insert table2 1 "Goodbye" Nothing
-    bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
-      print =<< LSMT.lookup table3 0
-      print =<< LSMT.lookup table3 1
-    print =<< LSMT.lookup table1 0
-    print =<< LSMT.lookup table2 0
-:}
-Found (Value "Hello World")
-Found (Value "Goodbye")
-Found (Value "Hello")
-Found (Value "World")
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
-The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
-While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
-
-__Warning:__ The new table must be independently closed using 'closeTable'.
-
-__Warning:__ Both input tables must be from the same 'Session'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['TableUnionNotCompatibleError']:
-    If both tables are not from the same 'Session'.
--}
-{-# SPECIALISE
-  incrementalUnion ::
-    Table IO k v b ->
-    Table IO k v b ->
-    IO (Table IO k v b)
+-- |
+-- Create a table that incrementally computes the union of the given tables.
+--
+-- >>> :{
+-- runExample $ \session table1 -> do
+--   LSMT.insert table1 0 "Hello" Nothing
+--   LSMT.withTable session $ \table2 -> do
+--     LSMT.insert table2 0 "World" Nothing
+--     LSMT.insert table2 1 "Goodbye" Nothing
+--     bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
+--       print =<< LSMT.lookup table3 0
+--       print =<< LSMT.lookup table3 1
+--     print =<< LSMT.lookup table1 0
+--     print =<< LSMT.lookup table2 0
+-- :}
+-- Found (Value "Hello World")
+-- Found (Value "Goodbye")
+-- Found (Value "Hello")
+-- Found (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(1)\).
+--
+-- The created table has a /union debt/ which represents the amount of computation that remains. See 'remainingUnionDebt'.
+-- The union debt can be paid off by supplying /union credit/ which performs an amount of computation proportional to the amount of union credit. See 'supplyUnionCredits'.
+-- While a table has unresolved union debt, operations may become more expensive by a factor that scales with the number of unresolved unions.
+--
+-- __Warning:__ The new table must be independently closed using 'closeTable'.
+--
+-- __Warning:__ Both input tables must be from the same 'Session'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['TableUnionNotCompatibleError']:
+--     If both tables are not from the same 'Session'.
+{-# SPECIALIZE incrementalUnion ::
+  Table IO k v b ->
+  Table IO k v b ->
+  IO (Table IO k v b)
   #-}
 incrementalUnion ::
   forall m k v b.
@@ -1932,16 +1926,14 @@ incrementalUnion ::
 incrementalUnion table1 table2 = do
   incrementalUnions (table1 :| table2 : [])
 
-{- |
-Variant of 'incrementalUnion' for any number of tables.
-
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
-where the variable \(b\) refers to the number of input tables.
--}
-{-# SPECIALISE
-  incrementalUnions ::
-    NonEmpty (Table IO k v b) ->
-    IO (Table IO k v b)
+-- |
+-- Variant of 'incrementalUnion' for any number of tables.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(b)\),
+-- where the variable \(b\) refers to the number of input tables.
+{-# SPECIALIZE incrementalUnions ::
+  NonEmpty (Table IO k v b) ->
+  IO (Table IO k v b)
   #-}
 incrementalUnions ::
   forall m k v b.
@@ -1952,11 +1944,10 @@ incrementalUnions tables@(Table _ :| _) =
   _withInternalTables tables (fmap Table . Internal.unions)
 
 -- | Internal helper. Run an action with access to the underlying tables.
-{-# SPECIALISE
-  _withInternalTables ::
-    NonEmpty (Table IO k v b) ->
-    (forall h. (Typeable h) => NonEmpty (Internal.Table IO h) -> IO a) ->
-    IO a
+{-# SPECIALIZE _withInternalTables ::
+  NonEmpty (Table IO k v b) ->
+  (forall h. (Typeable h) => NonEmpty (Internal.Table IO h) -> IO a) ->
+  IO a
   #-}
 _withInternalTables ::
   forall m k v b a.
@@ -1966,40 +1957,38 @@ _withInternalTables ::
   m a
 _withInternalTables (Table (table :: Internal.Table m h) :| tables) action =
   action . (table :|) =<< traverse assertTableType (zip [1 ..] tables)
- where
-  assertTableType :: (Int, Table m k v b) -> m (Internal.Table m h)
-  assertTableType (i, Table (table' :: Internal.Table m h'))
-    | Just Refl <- eqT @h @h' = pure table'
-    | otherwise = throwIO $ ErrTableUnionHandleTypeMismatch 0 (typeRep $ Proxy @h) i (typeRep $ Proxy @h')
+  where
+    assertTableType :: (Int, Table m k v b) -> m (Internal.Table m h)
+    assertTableType (i, Table (table' :: Internal.Table m h'))
+      | Just Refl <- eqT @h @h' = pure table'
+      | otherwise = throwIO $ ErrTableUnionHandleTypeMismatch 0 (typeRep $ Proxy @h) i (typeRep $ Proxy @h')
 
-{- |
-Get an /upper bound/ for the amount of remaining union debt.
-This includes the union debt of any table that was part of the union's input.
-
->>> :{
-runExample $ \session table1 -> do
-  LSMT.insert table1 0 "Hello" Nothing
-  LSMT.withTable session $ \table2 -> do
-    LSMT.insert table2 0 "World" Nothing
-    LSMT.insert table2 1 "Goodbye" Nothing
-    bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
-      putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
-:}
-UnionDebt: 4
-
-The worst-case disk I\/O complexity of this operation is \(O(0)\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  remainingUnionDebt ::
-    Table IO k v b ->
-    IO UnionDebt
+-- |
+-- Get an /upper bound/ for the amount of remaining union debt.
+-- This includes the union debt of any table that was part of the union's input.
+--
+-- >>> :{
+-- runExample $ \session table1 -> do
+--   LSMT.insert table1 0 "Hello" Nothing
+--   LSMT.withTable session $ \table2 -> do
+--     LSMT.insert table2 0 "World" Nothing
+--     LSMT.insert table2 1 "Goodbye" Nothing
+--     bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
+--       putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
+-- :}
+-- UnionDebt: 4
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(0)\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE remainingUnionDebt ::
+  Table IO k v b ->
+  IO UnionDebt
   #-}
 remainingUnionDebt ::
   forall m k v b.
@@ -2009,53 +1998,51 @@ remainingUnionDebt ::
 remainingUnionDebt (Table table) =
   Internal.remainingUnionDebt table
 
-{- |
-Supply the given amount of union credits.
-
-This reduces the union debt by /at least/ the number of supplied union credits.
-It is therefore advisable to query 'remainingUnionDebt' every once in a while to get an upper bound on the current debt.
-
-This function returns any surplus of union credits as /leftover/ credits when a union has finished.
-In particular, if the returned number of credits is positive, then the union is finished.
-
->>> :{
-runExample $ \session table1 -> do
-  LSMT.insert table1 0 "Hello" Nothing
-  LSMT.withTable session $ \table2 -> do
-    LSMT.insert table2 0 "World" Nothing
-    LSMT.insert table2 1 "Goodbye" Nothing
-    bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
-      putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
-      putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 2
-      putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
-      putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 4
-:}
-UnionDebt: 4
-Leftovers: 0
-UnionDebt: 2
-Leftovers: 3
-
-__NOTE:__
-The 'remainingUnionDebt' functions gets an /upper bound/ for the amount of remaning union debt.
-In the example above, the second call to 'remainingUnionDebt' reports @2@, but the union debt is @1@.
-Therefore, the second call to 'supplyUnionCredits' returns more leftovers than expected.
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
-where the variable \(b\) refers to the amount of credits supplied.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  supplyUnionCredits ::
-    (ResolveValue v) =>
-    Table IO k v b ->
-    UnionCredits ->
-    IO UnionCredits
+-- |
+-- Supply the given amount of union credits.
+--
+-- This reduces the union debt by /at least/ the number of supplied union credits.
+-- It is therefore advisable to query 'remainingUnionDebt' every once in a while to get an upper bound on the current debt.
+--
+-- This function returns any surplus of union credits as /leftover/ credits when a union has finished.
+-- In particular, if the returned number of credits is positive, then the union is finished.
+--
+-- >>> :{
+-- runExample $ \session table1 -> do
+--   LSMT.insert table1 0 "Hello" Nothing
+--   LSMT.withTable session $ \table2 -> do
+--     LSMT.insert table2 0 "World" Nothing
+--     LSMT.insert table2 1 "Goodbye" Nothing
+--     bracket (LSMT.incrementalUnion table1 table2) LSMT.closeTable $ \table3 -> do
+--       putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
+--       putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 2
+--       putStrLn . ("UnionDebt: "<>) . show =<< LSMT.remainingUnionDebt table3
+--       putStrLn . ("Leftovers: "<>) . show =<< LSMT.supplyUnionCredits table3 4
+-- :}
+-- UnionDebt: 4
+-- Leftovers: 0
+-- UnionDebt: 2
+-- Leftovers: 3
+--
+-- __NOTE:__
+-- The 'remainingUnionDebt' functions gets an /upper bound/ for the amount of remaning union debt.
+-- In the example above, the second call to 'remainingUnionDebt' reports @2@, but the union debt is @1@.
+-- Therefore, the second call to 'supplyUnionCredits' returns more leftovers than expected.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
+-- where the variable \(b\) refers to the amount of credits supplied.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE supplyUnionCredits ::
+  (ResolveValue v) =>
+  Table IO k v b ->
+  UnionCredits ->
+  IO UnionCredits
   #-}
 supplyUnionCredits ::
   forall m k v b.
@@ -2073,36 +2060,34 @@ supplyUnionCredits (Table table :: Table m k v b) credits =
 
 -- NOTE: 'BlobRef' is defined in 'Database.LSMTree.Internal.Types'
 
-{- |
-Retrieve the blob value from a blob reference.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" (Just "World")
-  print
-    =<< traverse (LSMT.retrieveBlob session)
-    =<< LSMT.lookup table 0
-:}
-FoundWithBlob (Value "Hello") (Blob "World")
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-__Warning:__ A blob reference is /not stable/. Any operation that modifies the table,
-cursor, or session that corresponds to a blob reference may cause it to be invalidated.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['BlobRefInvalidError']:
-    If the blob reference has been invalidated.
--}
-{-# SPECIALISE
-  retrieveBlob ::
-    (SerialiseValue b) =>
-    Session IO ->
-    BlobRef IO b ->
-    IO b
+-- |
+-- Retrieve the blob value from a blob reference.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" (Just "World")
+--   print
+--     =<< traverse (LSMT.retrieveBlob session)
+--     =<< LSMT.lookup table 0
+-- :}
+-- FoundWithBlob (Value "Hello") (Blob "World")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(1)\).
+--
+-- __Warning:__ A blob reference is /not stable/. Any operation that modifies the table,
+-- cursor, or session that corresponds to a blob reference may cause it to be invalidated.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['BlobRefInvalidError']:
+--     If the blob reference has been invalidated.
+{-# SPECIALIZE retrieveBlob ::
+  (SerialiseValue b) =>
+  Session IO ->
+  BlobRef IO b ->
+  IO b
   #-}
 retrieveBlob ::
   forall m b.
@@ -2114,23 +2099,21 @@ retrieveBlob session blobRef = do
   blobs <- retrieveBlobs session (V.singleton blobRef)
   pure $ V.head blobs
 
-{- |
-Variant of 'retrieveBlob' for batch retrieval.
-The batch of blob references corresponds in-order to the batch of results.
-
-The worst-case disk I\/O complexity of this operation is \(O(b)\),
-where the variable \(b\) refers to the length of the input vector.
-
-The following property holds in the absence of races:
-
-prop> retrieveBlobs session blobRefs = traverse (retrieveBlob session) blobRefs
--}
-{-# SPECIALISE
-  retrieveBlobs ::
-    (SerialiseValue b) =>
-    Session IO ->
-    Vector (BlobRef IO b) ->
-    IO (Vector b)
+-- |
+-- Variant of 'retrieveBlob' for batch retrieval.
+-- The batch of blob references corresponds in-order to the batch of results.
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(b)\),
+-- where the variable \(b\) refers to the length of the input vector.
+--
+-- The following property holds in the absence of races:
+--
+-- prop> retrieveBlobs session blobRefs = traverse (retrieveBlob session) blobRefs
+{-# SPECIALIZE retrieveBlobs ::
+  (SerialiseValue b) =>
+  Session IO ->
+  Vector (BlobRef IO b) ->
+  IO (Vector b)
   #-}
 retrieveBlobs ::
   forall m b.
@@ -2144,11 +2127,11 @@ retrieveBlobs (Session (session :: Internal.Session m h)) blobRefs = do
   weakBlobRefs <- traverse assertBlobRefHandleType (V.zip blobRefNums blobRefs)
   serialisedBlobs <- Internal.retrieveBlobs session weakBlobRefs
   pure $ Internal.deserialiseBlob <$> serialisedBlobs
- where
-  assertBlobRefHandleType :: (Int, BlobRef m b) -> m (Internal.WeakBlobRef m h)
-  assertBlobRefHandleType (i, BlobRef (weakBlobRef :: Internal.WeakBlobRef m h'))
-    | Just Refl <- eqT @h @h' = pure weakBlobRef
-    | otherwise = throwIO $ ErrBlobRefInvalid i
+  where
+    assertBlobRefHandleType :: (Int, BlobRef m b) -> m (Internal.WeakBlobRef m h)
+    assertBlobRefHandleType (i, BlobRef (weakBlobRef :: Internal.WeakBlobRef m h'))
+      | Just Refl <- eqT @h @h' = pure weakBlobRef
+      | otherwise = throwIO $ ErrBlobRefInvalid i
 
 --------------------------------------------------------------------------------
 -- Cursors
@@ -2156,42 +2139,40 @@ retrieveBlobs (Session (session :: Internal.Session m h)) blobRefs = do
 
 -- NOTE: 'Cursor' is defined in 'Database.LSMTree.Internal.Types'
 
-{- |
-Run an action with access to a cursor.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.withCursor table $ \cursor -> do
-    traverse_ print
-      =<< LSMT.take 32 cursor
-:}
-Entry (Key 0) (Value "Hello")
-Entry (Key 1) (Value "World")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'newCursor' and 'closeCursor'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  withCursor ::
-    (ResolveValue v) =>
-    Table IO k v b ->
-    (Cursor IO k v b -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to a cursor.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.withCursor table $ \cursor -> do
+--     traverse_ print
+--       =<< LSMT.take 32 cursor
+-- :}
+-- Entry (Key 0) (Value "Hello")
+-- Entry (Key 1) (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'newCursor' and 'closeCursor'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE withCursor ::
+  (ResolveValue v) =>
+  Table IO k v b ->
+  (Cursor IO k v b -> IO a) ->
+  IO a
   #-}
 withCursor ::
   forall m k v b a.
@@ -2203,26 +2184,24 @@ withCursor ::
 withCursor (Table table) action =
   Internal.withCursor (_getResolveSerialisedValue (Proxy @v)) Internal.NoOffsetKey table (action . Cursor)
 
-{- |
-Variant of 'withCursor' that starts at a given key.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.withCursorAtOffset table 1 $ \cursor -> do
-    traverse_ print
-      =<< LSMT.take 32 cursor
-:}
-Entry (Key 1) (Value "World")
--}
-{-# SPECIALISE
-  withCursorAtOffset ::
-    (SerialiseKey k, ResolveValue v) =>
-    Table IO k v b ->
-    k ->
-    (Cursor IO k v b -> IO a) ->
-    IO a
+-- |
+-- Variant of 'withCursor' that starts at a given key.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.withCursorAtOffset table 1 $ \cursor -> do
+--     traverse_ print
+--       =<< LSMT.take 32 cursor
+-- :}
+-- Entry (Key 1) (Value "World")
+{-# SPECIALIZE withCursorAtOffset ::
+  (SerialiseKey k, ResolveValue v) =>
+  Table IO k v b ->
+  k ->
+  (Cursor IO k v b -> IO a) ->
+  IO a
   #-}
 withCursorAtOffset ::
   forall m k v b a.
@@ -2235,39 +2214,37 @@ withCursorAtOffset ::
 withCursorAtOffset (Table table) offsetKey action =
   Internal.withCursor (_getResolveSerialisedValue (Proxy @v)) (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table (action . Cursor)
 
-{- |
-Create a cursor for the given table.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  bracket (LSMT.newCursor table) LSMT.closeCursor $ \cursor -> do
-    traverse_ print
-      =<< LSMT.take 32 cursor
-:}
-Entry (Key 0) (Value "Hello")
-Entry (Key 1) (Value "World")
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-__Warning:__ Cursors hold open resources and must be closed using 'closeCursor'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
--}
-{-# SPECIALISE
-  newCursor ::
-    (ResolveValue v) =>
-    Table IO k v b ->
-    IO (Cursor IO k v b)
+-- |
+-- Create a cursor for the given table.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   bracket (LSMT.newCursor table) LSMT.closeCursor $ \cursor -> do
+--     traverse_ print
+--       =<< LSMT.take 32 cursor
+-- :}
+-- Entry (Key 0) (Value "Hello")
+-- Entry (Key 1) (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- __Warning:__ Cursors hold open resources and must be closed using 'closeCursor'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+{-# SPECIALIZE newCursor ::
+  (ResolveValue v) =>
+  Table IO k v b ->
+  IO (Cursor IO k v b)
   #-}
 newCursor ::
   forall m k v b.
@@ -2278,25 +2255,23 @@ newCursor ::
 newCursor (Table table) =
   Cursor <$> Internal.newCursor (_getResolveSerialisedValue (Proxy @v)) Internal.NoOffsetKey table
 
-{- |
-Variant of 'newCursor' that starts at a given key.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  bracket (LSMT.newCursorAtOffset table 1) LSMT.closeCursor $ \cursor -> do
-    traverse_ print
-      =<< LSMT.take 32 cursor
-:}
-Entry (Key 1) (Value "World")
--}
-{-# SPECIALISE
-  newCursorAtOffset ::
-    (SerialiseKey k, ResolveValue v) =>
-    Table IO k v b ->
-    k ->
-    IO (Cursor IO k v b)
+-- |
+-- Variant of 'newCursor' that starts at a given key.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   bracket (LSMT.newCursorAtOffset table 1) LSMT.closeCursor $ \cursor -> do
+--     traverse_ print
+--       =<< LSMT.take 32 cursor
+-- :}
+-- Entry (Key 1) (Value "World")
+{-# SPECIALIZE newCursorAtOffset ::
+  (SerialiseKey k, ResolveValue v) =>
+  Table IO k v b ->
+  k ->
+  IO (Cursor IO k v b)
   #-}
 newCursorAtOffset ::
   forall m k v b.
@@ -2308,21 +2283,19 @@ newCursorAtOffset ::
 newCursorAtOffset (Table table) offsetKey =
   Cursor <$> Internal.newCursor (_getResolveSerialisedValue (Proxy @v)) (Internal.OffsetKey $ Internal.serialiseKey offsetKey) table
 
-{- |
-Close a cursor.
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-Closing is idempotent, i.e., closing a closed cursor does nothing.
-All other operations on a closed cursor will throw an exception.
--}
-{-# SPECIALISE
-  closeCursor ::
-    Cursor IO k v b ->
-    IO ()
+-- |
+-- Close a cursor.
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- Closing is idempotent, i.e., closing a closed cursor does nothing.
+-- All other operations on a closed cursor will throw an exception.
+{-# SPECIALIZE closeCursor ::
+  Cursor IO k v b ->
+  IO ()
   #-}
 closeCursor ::
   forall m k v b.
@@ -2332,36 +2305,34 @@ closeCursor ::
 closeCursor (Cursor cursor) =
   Internal.closeCursor cursor
 
-{- |
-Read the next table entry from the cursor.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.withCursor table $ \cursor -> do
-    print =<< LSMT.next cursor
-    print =<< LSMT.next cursor
-    print =<< LSMT.next cursor
-:}
-Just (Entry (Key 0) (Value "Hello"))
-Just (Entry (Key 1) (Value "World"))
-Nothing
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{1}{P})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['CursorClosedError']:
-    If the cursor is closed.
--}
-{-# SPECIALISE
-  next ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Cursor IO k v b ->
-    IO (Maybe (Entry k v (BlobRef IO b)))
+-- |
+-- Read the next table entry from the cursor.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.withCursor table $ \cursor -> do
+--     print =<< LSMT.next cursor
+--     print =<< LSMT.next cursor
+--     print =<< LSMT.next cursor
+-- :}
+-- Just (Entry (Key 0) (Value "Hello"))
+-- Just (Entry (Key 1) (Value "World"))
+-- Nothing
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{1}{P})\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['CursorClosedError']:
+--     If the cursor is closed.
+{-# SPECIALIZE next ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Cursor IO k v b ->
+  IO (Maybe (Entry k v (BlobRef IO b)))
   #-}
 next ::
   forall m k v b.
@@ -2374,43 +2345,41 @@ next iterator = do
   entries <- take 1 iterator
   pure $ fst <$> V.uncons entries
 
-{- |
-Read the next batch of table entries from the cursor.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.withCursor table $ \cursor -> do
-    traverse_ print
-      =<< LSMT.take 32 cursor
-:}
-Entry (Key 0) (Value "Hello")
-Entry (Key 1) (Value "World")
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
-where the variable \(b\) refers to the length of the /output/ vector,
-which is /at most/ equal to the given number.
-In practice, the length of the output vector is only less than the given number
-once the cursor reaches the end of the table.
-
-The following property holds:
-
-prop> take n cursor = catMaybes <$> replicateM n (next cursor)
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['CursorClosedError']:
-    If the cursor is closed.
--}
-{-# SPECIALISE
-  take ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Int ->
-    Cursor IO k v b ->
-    IO (Vector (Entry k v (BlobRef IO b)))
+-- |
+-- Read the next batch of table entries from the cursor.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.withCursor table $ \cursor -> do
+--     traverse_ print
+--       =<< LSMT.take 32 cursor
+-- :}
+-- Entry (Key 0) (Value "Hello")
+-- Entry (Key 1) (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
+-- where the variable \(b\) refers to the length of the /output/ vector,
+-- which is /at most/ equal to the given number.
+-- In practice, the length of the output vector is only less than the given number
+-- once the cursor reaches the end of the table.
+--
+-- The following property holds:
+--
+-- prop> take n cursor = catMaybes <$> replicateM n (next cursor)
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['CursorClosedError']:
+--     If the cursor is closed.
+{-# SPECIALIZE take ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Int ->
+  Cursor IO k v b ->
+  IO (Vector (Entry k v (BlobRef IO b)))
   #-}
 take ::
   forall m k v b.
@@ -2424,44 +2393,42 @@ take n (Cursor cursor :: Cursor m k v b) =
     Just !b -> EntryWithBlob (Internal.deserialiseKey k) (Internal.deserialiseValue v) (BlobRef b)
     Nothing -> Entry (Internal.deserialiseKey k) (Internal.deserialiseValue v)
 
-{- |
-Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.withCursor table $ \cursor -> do
-    traverse_ print
-      =<< LSMT.takeWhile 32 (<1) cursor
-:}
-Entry (Key 0) (Value "Hello")
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
-where the variable \(b\) refers to the length of the /output/ vector,
-which is /at most/ equal to the given number.
-In practice, the length of the output vector is only less than the given number
-when the predicate returns false or the cursor reaches the end of the table.
-
-The following properties hold:
-
-prop> takeWhile n (const True) cursor = take n cursor
-prop> takeWhile n (const False) cursor = pure empty
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['CursorClosedError']:
-    If the cursor is closed.
--}
-{-# SPECIALISE
-  takeWhile ::
-    (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
-    Int ->
-    (k -> Bool) ->
-    Cursor IO k v b ->
-    IO (Vector (Entry k v (BlobRef IO b)))
+-- |
+-- Variant of 'take' that accepts an additional predicate to determine whether or not to continue reading.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.withCursor table $ \cursor -> do
+--     traverse_ print
+--       =<< LSMT.takeWhile 32 (<1) cursor
+-- :}
+-- Entry (Key 0) (Value "Hello")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{b}{P})\),
+-- where the variable \(b\) refers to the length of the /output/ vector,
+-- which is /at most/ equal to the given number.
+-- In practice, the length of the output vector is only less than the given number
+-- when the predicate returns false or the cursor reaches the end of the table.
+--
+-- The following properties hold:
+--
+-- prop> takeWhile n (const True) cursor = take n cursor
+-- prop> takeWhile n (const False) cursor = pure empty
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['CursorClosedError']:
+--     If the cursor is closed.
+{-# SPECIALIZE takeWhile ::
+  (SerialiseKey k, SerialiseValue v, ResolveValue v) =>
+  Int ->
+  (k -> Bool) ->
+  Cursor IO k v b ->
+  IO (Vector (Entry k v (BlobRef IO b)))
   #-}
 takeWhile ::
   forall m k v b.
@@ -2473,7 +2440,7 @@ takeWhile ::
   m (Vector (Entry k v (BlobRef m b)))
 takeWhile n p (Cursor cursor :: Cursor m k v b) =
   -- TODO: implement this function using a variant of 'readCursorWhile' that does not take the maximum batch size
-  Internal.readCursorWhile (_getResolveSerialisedValue (Proxy @v)) (p . Internal.deserialiseKey) n cursor $  \ !k !v -> \case
+  Internal.readCursorWhile (_getResolveSerialisedValue (Proxy @v)) (p . Internal.deserialiseKey) n cursor $ \ !k !v -> \case
     Just !b -> EntryWithBlob (Internal.deserialiseKey k) (Internal.deserialiseValue v) (BlobRef b)
     Nothing -> Entry (Internal.deserialiseKey k) (Internal.deserialiseValue v)
 
@@ -2481,43 +2448,41 @@ takeWhile n p (Cursor cursor :: Cursor m k v b) =
 -- Snapshots
 --------------------------------------------------------------------------------
 
-{- |
-Save the current state of the table to disk as a snapshot under the given
-snapshot name. This is the /only/ mechanism that persists a table. Each snapshot
-must have a unique name, which may be used to restore the table from that snapshot
-using 'openTableFromSnapshot'.
-Saving a snapshot /does not/ close the table.
-
-Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
-However, it is not so cheap that one should use it after every operation.
-
->>> :{
-runExample $ \session table -> do
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.saveSnapshot "example" "Key Value Blob" table
-:}
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['SnapshotExistsError']:
-    If a snapshot with the same name already exists.
--}
-{-# SPECIALISE
-  saveSnapshot ::
-    SnapshotName ->
-    SnapshotLabel ->
-    Table IO k v b ->
-    IO ()
+-- |
+-- Save the current state of the table to disk as a snapshot under the given
+-- snapshot name. This is the /only/ mechanism that persists a table. Each snapshot
+-- must have a unique name, which may be used to restore the table from that snapshot
+-- using 'openTableFromSnapshot'.
+-- Saving a snapshot /does not/ close the table.
+--
+-- Saving a snapshot is /relatively/ cheap when compared to opening a snapshot.
+-- However, it is not so cheap that one should use it after every operation.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.saveSnapshot "example" "Key Value Blob" table
+-- :}
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['SnapshotExistsError']:
+--     If a snapshot with the same name already exists.
+{-# SPECIALIZE saveSnapshot ::
+  SnapshotName ->
+  SnapshotLabel ->
+  Table IO k v b ->
+  IO ()
   #-}
 saveSnapshot ::
   forall m k v b.
@@ -2529,51 +2494,49 @@ saveSnapshot ::
 saveSnapshot snapName snapLabel (Table table) =
   Internal.saveSnapshot snapName snapLabel table
 
-{- |
-Run an action with access to a table from a snapshot.
-
->>> :{
-runExample $ \session table -> do
-  -- Save snapshot
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.saveSnapshot "example" "Key Value Blob" table
-  -- Open snapshot
-  LSMT.withTableFromSnapshot @_ @Key @Value @Blob session "example" "Key Value Blob" $ \table' -> do
-      LSMT.withCursor table' $ \cursor ->
-        traverse_ print
-          =<< LSMT.take 32 cursor
-:}
-Entry (Key 0) (Value "Hello")
-Entry (Key 1) (Value "World")
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
-
-This function is exception-safe for both synchronous and asynchronous exceptions.
-
-It is recommended to use this function instead of 'openTableFromSnapshot' and 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['SnapshotDoesNotExistError']
-    If no snapshot with the given name exists.
-['SnapshotCorruptedError']:
-    If the snapshot data is corrupted.
-['SnapshotNotCompatibleError']:
-    If the snapshot has a different label or is a different table type.
--}
-{-# SPECIALISE
-  withTableFromSnapshot ::
-    (ResolveValue v) =>
-    Session IO ->
-    SnapshotName ->
-    SnapshotLabel ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Run an action with access to a table from a snapshot.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   -- Save snapshot
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.saveSnapshot "example" "Key Value Blob" table
+--   -- Open snapshot
+--   LSMT.withTableFromSnapshot @_ @Key @Value @Blob session "example" "Key Value Blob" $ \table' -> do
+--       LSMT.withCursor table' $ \cursor ->
+--         traverse_ print
+--           =<< LSMT.take 32 cursor
+-- :}
+-- Entry (Key 0) (Value "Hello")
+-- Entry (Key 1) (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
+--
+-- This function is exception-safe for both synchronous and asynchronous exceptions.
+--
+-- It is recommended to use this function instead of 'openTableFromSnapshot' and 'closeTable'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['SnapshotDoesNotExistError']
+--     If no snapshot with the given name exists.
+-- ['SnapshotCorruptedError']:
+--     If the snapshot data is corrupted.
+-- ['SnapshotNotCompatibleError']:
+--     If the snapshot has a different label or is a different table type.
+{-# SPECIALIZE withTableFromSnapshot ::
+  (ResolveValue v) =>
+  Session IO ->
+  SnapshotName ->
+  SnapshotLabel ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withTableFromSnapshot ::
   forall m k v b a.
@@ -2587,19 +2550,17 @@ withTableFromSnapshot ::
 withTableFromSnapshot session snapName snapLabel =
   bracket (openTableFromSnapshot session snapName snapLabel) closeTable
 
-{- |
-Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
--}
-{-# SPECIALISE
-  withTableFromSnapshotWith ::
-    forall k v b a.
-    (ResolveValue v) =>
-    TableConfigOverride ->
-    Session IO ->
-    SnapshotName ->
-    SnapshotLabel ->
-    (Table IO k v b -> IO a) ->
-    IO a
+-- |
+-- Variant of 'withTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+{-# SPECIALIZE withTableFromSnapshotWith ::
+  forall k v b a.
+  (ResolveValue v) =>
+  TableConfigOverride ->
+  Session IO ->
+  SnapshotName ->
+  SnapshotLabel ->
+  (Table IO k v b -> IO a) ->
+  IO a
   #-}
 withTableFromSnapshotWith ::
   forall m k v b a.
@@ -2614,51 +2575,49 @@ withTableFromSnapshotWith ::
 withTableFromSnapshotWith tableConfigOverride session snapName snapLabel =
   bracket (openTableFromSnapshotWith tableConfigOverride session snapName snapLabel) closeTable
 
-{- |
-Open a table from a named snapshot.
-
->>> :{
-runExample $ \session table -> do
-  -- Save snapshot
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.saveSnapshot "example" "Key Value Blob" table
-  -- Open snapshot
-  bracket
-    (LSMT.openTableFromSnapshot @_ @Key @Value @Blob session "example" "Key Value Blob")
-    LSMT.closeTable $ \table' -> do
-      LSMT.withCursor table' $ \cursor ->
-        traverse_ print
-          =<< LSMT.take 32 cursor
-:}
-Entry (Key 0) (Value "Hello")
-Entry (Key 1) (Value "World")
-
-The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
-
-__Warning:__ The new table must be independently closed using 'closeTable'.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['TableClosedError']:
-    If the table is closed.
-['SnapshotDoesNotExistError']
-    If no snapshot with the given name exists.
-['SnapshotCorruptedError']:
-    If the snapshot data is corrupted.
-['SnapshotNotCompatibleError']:
-    If the snapshot has a different label or is a different table type.
--}
-{-# SPECIALISE
-  openTableFromSnapshot ::
-    forall k v b.
-    (ResolveValue v) =>
-    Session IO ->
-    SnapshotName ->
-    SnapshotLabel ->
-    IO (Table IO k v b)
+-- |
+-- Open a table from a named snapshot.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   -- Save snapshot
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.saveSnapshot "example" "Key Value Blob" table
+--   -- Open snapshot
+--   bracket
+--     (LSMT.openTableFromSnapshot @_ @Key @Value @Blob session "example" "Key Value Blob")
+--     LSMT.closeTable $ \table' -> do
+--       LSMT.withCursor table' $ \cursor ->
+--         traverse_ print
+--           =<< LSMT.take 32 cursor
+-- :}
+-- Entry (Key 0) (Value "Hello")
+-- Entry (Key 1) (Value "World")
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(\frac{n}{P})\).
+--
+-- __Warning:__ The new table must be independently closed using 'closeTable'.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['TableClosedError']:
+--     If the table is closed.
+-- ['SnapshotDoesNotExistError']
+--     If no snapshot with the given name exists.
+-- ['SnapshotCorruptedError']:
+--     If the snapshot data is corrupted.
+-- ['SnapshotNotCompatibleError']:
+--     If the snapshot has a different label or is a different table type.
+{-# SPECIALIZE openTableFromSnapshot ::
+  forall k v b.
+  (ResolveValue v) =>
+  Session IO ->
+  SnapshotName ->
+  SnapshotLabel ->
+  IO (Table IO k v b)
   #-}
 openTableFromSnapshot ::
   forall m k v b.
@@ -2671,18 +2630,16 @@ openTableFromSnapshot ::
 openTableFromSnapshot session snapName snapLabel =
   openTableFromSnapshotWith noTableConfigOverride session snapName snapLabel
 
-{- |
-Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
--}
-{-# SPECIALISE
-  openTableFromSnapshotWith ::
-    forall k v b.
-    (ResolveValue v) =>
-    TableConfigOverride ->
-    Session IO ->
-    SnapshotName ->
-    SnapshotLabel ->
-    IO (Table IO k v b)
+-- |
+-- Variant of 'openTableFromSnapshot' that accepts [table configuration overrides](#g:table_configuration_overrides).
+{-# SPECIALIZE openTableFromSnapshotWith ::
+  forall k v b.
+  (ResolveValue v) =>
+  TableConfigOverride ->
+  Session IO ->
+  SnapshotName ->
+  SnapshotLabel ->
+  IO (Table IO k v b)
   #-}
 openTableFromSnapshotWith ::
   forall m k v b.
@@ -2696,36 +2653,34 @@ openTableFromSnapshotWith ::
 openTableFromSnapshotWith tableConfigOverride (Session session) snapName snapLabel =
   Table <$> Internal.openTableFromSnapshot tableConfigOverride session snapName snapLabel (_getResolveSerialisedValue (Proxy @v))
 
-{- |
-Delete the named snapshot.
-
->>> :{
-runExample $ \session table -> do
-  -- Save snapshot
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.saveSnapshot "example" "Key Value Blob" table
-  -- Delete snapshot
-  LSMT.deleteSnapshot session "example"
-:}
-
-The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
-
-['LazyLevelling']:
-    \(O(T \log_T \frac{n}{B})\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
-['SnapshotDoesNotExistError']:
-    If no snapshot with the given name exists.
--}
-{-# SPECIALISE
-  deleteSnapshot ::
-    Session IO ->
-    SnapshotName ->
-    IO ()
+-- |
+-- Delete the named snapshot.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   -- Save snapshot
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.saveSnapshot "example" "Key Value Blob" table
+--   -- Delete snapshot
+--   LSMT.deleteSnapshot session "example"
+-- :}
+--
+-- The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+--
+-- ['LazyLevelling']:
+--     \(O(T \log_T \frac{n}{B})\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+-- ['SnapshotDoesNotExistError']:
+--     If no snapshot with the given name exists.
+{-# SPECIALIZE deleteSnapshot ::
+  Session IO ->
+  SnapshotName ->
+  IO ()
   #-}
 deleteSnapshot ::
   forall m.
@@ -2736,34 +2691,32 @@ deleteSnapshot ::
 deleteSnapshot (Session session) =
   Internal.deleteSnapshot session
 
-{- |
-Check if the named snapshot exists.
-
->>> :{
-runExample $ \session table -> do
-  -- Save snapshot
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.saveSnapshot "example" "Key Value Blob" table
-  -- Check snapshots
-  print =<< doesSnapshotExist session "example"
-  print =<< doesSnapshotExist session "this_snapshot_does_not_exist"
-:}
-True
-False
-
-The worst-case disk I\/O complexity of this operation is \(O(1)\).
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
--}
-{-# SPECIALISE
-  doesSnapshotExist ::
-    Session IO ->
-    SnapshotName ->
-    IO Bool
+-- |
+-- Check if the named snapshot exists.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   -- Save snapshot
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.saveSnapshot "example" "Key Value Blob" table
+--   -- Check snapshots
+--   print =<< doesSnapshotExist session "example"
+--   print =<< doesSnapshotExist session "this_snapshot_does_not_exist"
+-- :}
+-- True
+-- False
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(1)\).
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+{-# SPECIALIZE doesSnapshotExist ::
+  Session IO ->
+  SnapshotName ->
+  IO Bool
   #-}
 doesSnapshotExist ::
   forall m.
@@ -2774,33 +2727,31 @@ doesSnapshotExist ::
 doesSnapshotExist (Session session) =
   Internal.doesSnapshotExist session
 
-{- |
-List the names of all snapshots.
-
->>> :{
-runExample $ \session table -> do
-  -- Save snapshot
-  LSMT.insert table 0 "Hello" Nothing
-  LSMT.insert table 1 "World" Nothing
-  LSMT.saveSnapshot "example" "Key Value Blob" table
-  -- List snapshots
-  traverse_ print
-    =<< listSnapshots session
-:}
-"example"
-
-The worst-case disk I\/O complexity of this operation is \(O(s)\),
-where \(s\) refers to the number of snapshots in the session.
-
-Throws the following exceptions:
-
-['SessionClosedError']:
-    If the session is closed.
--}
-{-# SPECIALISE
-  listSnapshots ::
-    Session IO ->
-    IO [SnapshotName]
+-- |
+-- List the names of all snapshots.
+--
+-- >>> :{
+-- runExample $ \session table -> do
+--   -- Save snapshot
+--   LSMT.insert table 0 "Hello" Nothing
+--   LSMT.insert table 1 "World" Nothing
+--   LSMT.saveSnapshot "example" "Key Value Blob" table
+--   -- List snapshots
+--   traverse_ print
+--     =<< listSnapshots session
+-- :}
+-- "example"
+--
+-- The worst-case disk I\/O complexity of this operation is \(O(s)\),
+-- where \(s\) refers to the number of snapshots in the session.
+--
+-- Throws the following exceptions:
+--
+-- ['SessionClosedError']:
+--     If the session is closed.
+{-# SPECIALIZE listSnapshots ::
+  Session IO ->
+  IO [SnapshotName]
   #-}
 listSnapshots ::
   forall m.
