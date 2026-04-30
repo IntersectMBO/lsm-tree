@@ -4,8 +4,13 @@
 
 ### Breaking changes
 
-* Update to `fs-sim ^>=0.5`. See PR
-  [#845](https://github.com/IntersectMBO/lsm-tree/pull/845).
+* Update to `fs-sim ^>=0.5`. See [PR
+  #845](https://github.com/IntersectMBO/lsm-tree/pull/845).
+* `IOCtxParams` has a new record field for configuring the use of IOWAIT
+  metrics. Like the other configuration options, this option only applies on
+  Linux platforms. See [PR
+  #846](https://github.com/IntersectMBO/lsm-tree/pull/846). For more information
+  about the new option, see the documentation for `blockio-uring`.
 
 ### New features
 
@@ -13,7 +18,8 @@ None
 
 ### Minor changes
 
-None
+* Support `blockio-uring ^>= 0.2`, and drop support for `blockio-uring ^>= 0.1`.
+  See [PR #846](https://github.com/IntersectMBO/lsm-tree/pull/846)
 
 ### Bug fixes
 
