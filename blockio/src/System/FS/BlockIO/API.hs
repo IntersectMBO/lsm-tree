@@ -270,7 +270,7 @@ synchroniseDirectoryRecursive hfs hbio path = do
           synchroniseDirectory hbio path'
         else
           error $ printf
-            "listDirectoryRecursive: %s is not a file or directory"
+            "synchroniseDirectoryRecursive: %s is not a file or directory"
             (show path')
 
 {-------------------------------------------------------------------------------

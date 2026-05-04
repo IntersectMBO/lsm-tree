@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
+{-# OPTIONS_GHC -Wwarn=deprecations #-}
 
 {- HLINT ignore "Redundant pure" -}
 
@@ -24,6 +25,7 @@ import           Data.Word (Word64)
 import           Database.LSMTree as LSMT
 import qualified System.Directory as IO (createDirectoryIfMissing,
                      doesDirectoryExist, removeDirectoryRecursive)
+import           System.FilePath ((</>))
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.API as FS
 import qualified System.FS.BlockIO.IO as FS
@@ -41,8 +43,8 @@ import           System.IO.Unsafe (unsafePerformIO)
 -- functional requirement.
 demo :: Bool -> IO ()
 demo interactive = do
-  freshDirectory "_demo"
-  withOpenSessionIO tracer "_demo" $ \session -> do
+  freshDirectory ("_demo" </> "session")
+  withOpenMountedSessionIO tracer "_demo" (FS.mkFsPath ["session"]) $ \session -> do
     withTableWith config session  $ \(table :: Table IO K V B) -> do
       pause interactive -- [0]
 
@@ -141,8 +143,8 @@ demo interactive = do
          (LSMT.IOLike m, Typeable h)
       => FS.HasFS m h -> FS.HasBlockIO m h -> m ()
     simpleAction hasFS hasBlockIO = do
-      let sessionDir = FS.mkFsPath ["_demo"]
-      FS.createDirectoryIfMissing hasFS False sessionDir
+      let sessionDir = FS.mkFsPath ["_demo", "session"]
+      FS.createDirectoryIfMissing hasFS True sessionDir
       withOpenSession tracer hasFS hasBlockIO 17 sessionDir $ \session -> do
         withTableWith config session  $ \(table :: Table m K V B) -> do
           inserts table $ V.fromList [ (K i, V i, Just (B i)) | i <- [1 .. 10_000] ]
@@ -215,7 +217,7 @@ freshDirectory :: FilePath -> IO ()
 freshDirectory path = do
     b <- IO.doesDirectoryExist path
     when b $ IO.removeDirectoryRecursive path
-    IO.createDirectoryIfMissing False path
+    IO.createDirectoryIfMissing True path
 
 print' :: (Show a, MonadST m) => a -> m ()
 print' x = stToIO $ unsafeIOToST $ print x

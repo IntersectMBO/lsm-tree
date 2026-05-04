@@ -1,5 +1,6 @@
-{-# LANGUAGE CPP       #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- | This module brings together the internal parts to provide an API in terms
@@ -23,6 +24,8 @@ module Database.LSMTree.Internal.Unsafe (
   , SnapshotDoesNotExistError (..)
   , SnapshotCorruptedError (..)
   , SnapshotNotCompatibleError (..)
+  , SnapshotImportDirDoesNotExistError (..)
+  , SnapshotExportDirExistsError (..)
   , BlobRefInvalidError (..)
   , CursorClosedError (..)
   , FileFormat (..)
@@ -79,6 +82,8 @@ module Database.LSMTree.Internal.Unsafe (
   , deleteSnapshot
   , doesSnapshotExist
   , listSnapshots
+  , importSnapshot
+  , exportSnapshot
     -- * Multiple writable tables
   , duplicate
     -- * Table union
@@ -126,6 +131,7 @@ import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
                      FileFormat (..))
 import qualified Database.LSMTree.Internal.Cursor as Cursor
 import           Database.LSMTree.Internal.Entry (Entry)
+import qualified Database.LSMTree.Internal.FS as FS
 import           Database.LSMTree.Internal.IncomingRun (IncomingRun (..))
 import           Database.LSMTree.Internal.Lookup (TableCorruptedError (..),
                      lookupsIO, lookupsIOWithWriteBuffer)
@@ -242,6 +248,18 @@ data SessionTrace =
   | TraceDeletedSnapshot SnapshotName
     -- | We are listing snapshots.
   | TraceListSnapshots
+
+    -- | We are importing a snapshot. A 'TraceImportedSnapshot' message should
+    -- follow if successful.
+  | TraceImportSnapshot SnapshotName FsPath
+    -- | Importing a snapshot was successful.
+  | TraceImportedSnapshot SnapshotName
+
+    -- | We are exported a snapshot. A 'TraceExportedSnapshot' message should
+    -- follow if successful.
+  | TraceExportSnapshot SnapshotName FsPath
+    -- | Exporting a snapshot was successful.
+  | TraceExportedSnapshot SnapshotName
 
     -- | We are retrieving blobs.
   | TraceRetrieveBlobs Int
@@ -1894,6 +1912,110 @@ listSnapshots sesh = do
             (Paths.getNamedSnapshotDir $ Paths.namedSnapshotDir root snap)
       if b then pure $ Just snap
             else pure $ Nothing
+
+-- | A snapshot was intended to be imported, but the source directory does not
+-- exist.
+data SnapshotImportDirDoesNotExistError
+    = SnapshotImportDirDoesNotExistError !FsPath
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+{-# SPECIALISE importSnapshot ::
+     Session IO h
+  -> SnapshotName
+  -> FsPath
+  -> IO () #-}
+-- |  See 'Database.LSMTree.importSnapshot'.
+importSnapshot ::
+     (MonadMask m, MonadSTM m, PrimMonad m)
+  => Session m h
+  -> SnapshotName
+  -> FsPath
+  -> m ()
+importSnapshot sesh snap sourcePath = do
+    traceWith sesh.sessionTracer $ TraceImportSnapshot snap sourcePath
+    withKeepSessionOpen sesh $ \seshEnv ->
+      withActionRegistry $ \reg -> do
+        let hfs = seshEnv.sessionHasFS
+            hbio = seshEnv.sessionHasBlockIO
+
+        -- Guard that the snapshot does not exist already
+        let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
+        snapshotExists <- doesSnapshotDirExist snap seshEnv
+        when snapshotExists $ throwIO (ErrSnapshotExists snap)
+
+        let destinationPath = Paths.getNamedSnapshotDir snapDir
+
+        sourceExists <- FS.doesDirectoryExist hfs sourcePath
+        unless sourceExists $ throwIO (SnapshotImportDirDoesNotExistError sourcePath)
+
+        -- we assume the snapshots directory already exists, so we just have
+        -- to create the directory for this specific snapshot.
+        withRollback_ reg
+          (FS.createDirectory hfs destinationPath)
+          (FS.removeDirectoryRecursive hfs destinationPath)
+
+        -- create hard links for all files in the destination directory
+        FS.hardLinkDirectoryRecursive hfs hbio reg sourcePath destinationPath
+
+        -- Make the destination directory and its contents durable
+        FS.synchroniseDirectoryRecursive hfs hbio destinationPath
+
+        -- Note: trace the success message only after all side effects have been
+        -- succesfully performed
+        delayedCommit reg $
+          traceWith sesh.sessionTracer $ TraceImportedSnapshot snap
+
+-- | A snapshot was intended to be exported, but the destination directory
+-- already exists.
+data SnapshotExportDirExistsError
+    = SnapshotExportDirExistsError !FsPath
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
+{-# SPECIALISE exportSnapshot ::
+     Session IO h
+  -> SnapshotName
+  -> FsPath
+  -> IO () #-}
+-- |  See 'Database.LSMTree.exportSnapshot'.
+exportSnapshot ::
+     (MonadMask m, MonadSTM m, PrimMonad m)
+  => Session m h
+  -> SnapshotName
+  -> FsPath
+  -> m ()
+exportSnapshot sesh snap destinationPath = do
+    traceWith (sessionTracer sesh) $ TraceExportSnapshot snap destinationPath
+    withKeepSessionOpen sesh $ \seshEnv ->
+      withActionRegistry $ \reg -> do
+        let hfs = seshEnv.sessionHasFS
+            hbio = seshEnv.sessionHasBlockIO
+
+        -- Guard that the snapshot exists already
+        let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
+        snapshotExists <- doesSnapshotDirExist snap seshEnv
+        unless snapshotExists $ throwIO (ErrSnapshotDoesNotExist snap)
+
+        let sourcePath = Paths.getNamedSnapshotDir snapDir
+
+        destinationExists <- FS.doesDirectoryExist hfs destinationPath
+        when destinationExists $ throwIO (SnapshotExportDirExistsError sourcePath)
+
+        withRollback_ reg
+          (FS.createDirectoryIfMissing hfs True destinationPath)
+          (FS.removeDirectoryRecursive hfs destinationPath)
+
+        -- Create hard links for all files in the destination directory
+        FS.hardLinkDirectoryRecursive hfs hbio reg sourcePath destinationPath
+
+        -- Make the directory and its contents durable.
+        FS.synchroniseDirectoryRecursive hfs hbio destinationPath
+
+        -- Note: trace the success message only after all side effects have been
+        -- succesfully performed
+        delayedCommit reg $
+          traceWith sesh.sessionTracer $ TraceExportedSnapshot snap
 
 {-------------------------------------------------------------------------------
   Multiple writable tables

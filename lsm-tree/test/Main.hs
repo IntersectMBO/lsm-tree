@@ -41,6 +41,7 @@ import qualified Test.Database.LSMTree.Internal.WriteBufferBlobs.FS
 import qualified Test.Database.LSMTree.Internal.WriteBufferReader.FS
 import qualified Test.Database.LSMTree.Model.Table
 import qualified Test.Database.LSMTree.Resolve
+import qualified Test.Database.LSMTree.Snapshots
 import qualified Test.Database.LSMTree.StateMachine
 import qualified Test.Database.LSMTree.StateMachine.DL
 import qualified Test.Database.LSMTree.Tracer.Golden
@@ -90,6 +91,7 @@ main = do
     , Test.Database.LSMTree.Internal.WriteBufferReader.FS.tests
     , Test.Database.LSMTree.Model.Table.tests
     , Test.Database.LSMTree.Resolve.tests
+    , Test.Database.LSMTree.Snapshots.tests
     , Test.Database.LSMTree.StateMachine.tests
     , Test.Database.LSMTree.StateMachine.DL.tests
     , Test.Database.LSMTree.Tracer.Golden.tests
