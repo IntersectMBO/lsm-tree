@@ -12,12 +12,36 @@
 
 ### New features
 
-None
+### Full API
+
+* Add a new `importSnapshot` function for importing snapshots from outside a
+  session into that session. See [PR
+  #835](https://github.com/IntersectMBO/lsm-tree/pull/835).
+* Add a new `SnapshotImportDirDoesNotExistError` exception, which can currently
+  only be thrown by thrown by `importSnapshot`. See [PR
+  #835](https://github.com/IntersectMBO/lsm-tree/pull/835).
+* Add a new `exportSnapshot` function for exporting snapshots from inside a
+  session to outside that session. See [PR
+  #835](https://github.com/IntersectMBO/lsm-tree/pull/835).
+* Add a new `SnapshotExportDirExistsError` exception, which can currently only
+  be thrown by thrown by `exportSnapshot`. See [PR
+  #835](https://github.com/IntersectMBO/lsm-tree/pull/835).
+* Add a new `withOpenMountedSessionIO` function, a variant of
+  `withOpenSessionIO` with more general control over where snapshots can be
+  exported to and imported from. See [PR
+  #835](https://github.com/IntersectMBO/lsm-tree/pull/835).
 
 ### Minor changes
 
 * Update to `fs-sim ^>=0.5`. See PR
   [#845](https://github.com/IntersectMBO/lsm-tree/pull/845).
+
+### Full API
+
+* Deprecate `withOpenSessionIO` in favour of `withOpenMountedSessionIO`.
+  `withOpenSessionIO` is generally unsafe to use with the new `importSnapshot`
+  and `exportSnapshot` functions. See [PR
+  #835](https://github.com/IntersectMBO/lsm-tree/pull/835).
 
 ### Bug fixes
 

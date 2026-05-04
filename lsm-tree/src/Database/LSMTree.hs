@@ -20,6 +20,7 @@ module Database.LSMTree (
   Session,
   withOpenSession,
   withOpenSessionIO,
+  withOpenMountedSessionIO,
   withNewSession,
   withRestoreSession,
   openSession,
@@ -101,6 +102,8 @@ module Database.LSMTree (
   doesSnapshotExist,
   deleteSnapshot,
   listSnapshots,
+  importSnapshot,
+  exportSnapshot,
   SnapshotName,
   isValidSnapshotName,
   toSnapshotName,
@@ -178,6 +181,8 @@ module Database.LSMTree (
   SnapshotDoesNotExistError (..),
   SnapshotCorruptedError (..),
   SnapshotNotCompatibleError (..),
+  SnapshotImportDirDoesNotExistError (..),
+  SnapshotExportDirExistsError (..),
   BlobRefInvalidError (..),
   CursorClosedError (..),
   InvalidSnapshotNameError (..),
@@ -250,6 +255,8 @@ import           Database.LSMTree.Internal.Unsafe (BlobRefInvalidError (..),
                      SessionDirLockedError (..), SessionId (..),
                      SessionTrace (..), SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
+                     SnapshotExportDirExistsError (..),
+                     SnapshotImportDirDoesNotExistError (..),
                      SnapshotNotCompatibleError (..), TableClosedError (..),
                      TableCorruptedError (..), TableTooLargeError (..),
                      TableTrace, TableUnionNotCompatibleError (..),
@@ -369,17 +376,28 @@ runs the example with access to an open 'Session' and a fresh 'Table'.
 >>> import           Data.Foldable (traverse_)
 >>> import qualified System.Directory as Dir
 >>> import           System.FilePath ((</>))
+>>> import           System.FS.API (FsPath, mkFsPath)
+>>> import qualified System.FS.API as FS
 >>> import           System.Process (getCurrentPid)
+
+>>> :{
+withTempDirectory :: String -> (FilePath -> IO a) -> IO a
+withTempDirectory name k = do
+    sysTmpDir <- Dir.getTemporaryDirectory
+    pid <- getCurrentPid
+    let tmpDir = sysTmpDir </> name </> show pid
+    let createTmpDir = Dir.createDirectoryIfMissing True tmpDir
+    let removeTmpDir = Dir.removeDirectoryRecursive tmpDir
+    bracket_ createTmpDir removeTmpDir $ k tmpDir
+:}
+
 >>> :{
 runExample :: (Session IO -> Table IO Key Value Blob -> IO a) -> IO a
-runExample action = do
-  tmpDir <- Dir.getTemporaryDirectory
-  pid <- getCurrentPid
-  let sessionDir = tmpDir </> "doctest_Database_LSMTree" </> show pid
-  let createSessionDir = Dir.createDirectoryIfMissing True sessionDir
-  let removeSessionDir = Dir.removeDirectoryRecursive sessionDir
-  bracket_ createSessionDir removeSessionDir $ do
-    LSMT.withOpenSessionIO mempty sessionDir $ \session -> do
+runExample action =
+  withTempDirectory "doctest_Database_LSMTree" $ \tmpDir -> do
+    let sessionPath = FS.mkFsPath ["session"]
+    Dir.createDirectoryIfMissing True (tmpDir </> "session")
+    LSMT.withOpenMountedSessionIO mempty tmpDir sessionPath $ \session -> do
       LSMT.withTable session $ \table ->
         action session table
 :}
@@ -396,6 +414,26 @@ Run an action with access to a session opened from a session directory.
 
 If the session directory is empty, a new session is created using the given salt.
 Otherwise, the session directory is restored as an existing session ignoring the given salt.
+
+As a feature, @lsm-tree@ uses abstract 'HasFS' and 'HasBlockIO' interfaces to
+abstract over interaction with the file system.
+These abstract interfaces can be instantiated with a real file system (for use in practice) or
+a simulated file system (for comprehensive testing).
+For more information about the interfaces and its instantiations, see the Haddock
+documentation of the @fs-api@, @fs-sim@, @blockio@ packages.
+
+The session directory is a relative 'FsPath' path that is interpreted relative to the /root/ of
+the given 'HasFS' and 'HasBlockio' interfaces.
+If the interaces are instantiated with the real file system, then the root is an
+(absolute or relative) file path.
+In this case, the root is also called the /mount point/ of the interface.
+If the interfaces are instantiated with a simulation, then the root is some abstract location.
+
+Any 'FsPath' paths used with the session after the session is created are also interpreted
+with respect to the root of these interfaces.
+'importSnapshot' and 'exportSnapshot' are currently the only two functions that take
+'FsPaths' as arguments.
+'FsPath's are subject to a number of constraints, which are mentioned in its Haddock documentation.
 
 If there are no open tables or cursors when the session terminates, then the disk I\/O complexity of this operation is \(O(1)\).
 Otherwise, 'closeTable' is called for each open table and 'closeCursor' is called for each open cursor.
@@ -426,6 +464,7 @@ Throws the following exceptions:
     HasFS IO HandleIO ->
     HasBlockIO IO HandleIO ->
     Salt ->
+    -- | The session directory
     FsPath ->
     (Session IO -> IO a) ->
     IO a
@@ -445,15 +484,52 @@ withOpenSession ::
 withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDir action = do
   Internal.withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDir (action . Session)
 
--- | Variant of 'withOpenSession' that is specialised to 'IO' using the real filesystem.
+{-# DEPRECATED withOpenSessionIO "withOpenSessionIO is not compatible with importSnapshot and exportSnapshot. Use withOpenMountedSessionIO instead." #-}
+{- |
+Variant of 'withOpenSession' that is specialised to 'IO' using the real filesystem.
+
+Any 'FsPath' paths used with the session after the session is created are interpreted
+with respect to the session directory.
+'importSnapshot' and 'exportSnapshot' are currently the only two functions that take
+'FsPaths' as arguments.
+'FsPath's are subject to a number of constraints, which are mentioned in its Haddock documentation.
+
+It is generally not advisable to use 'importSnapshot' and 'exportSnapshot' when the session is
+created using 'withOpenSessionIO'.
+Snapshots should only be exported to somewhere /outside/ the session directory, which is not possible
+when the session is created using 'withOpenSessionIO'.
+Use 'withOpenMountedSessionIO' or 'withOpenSession' instead.
+-}
 withOpenSessionIO ::
   Tracer IO LSMTreeTrace ->
+  -- | The session directory
   FilePath ->
   (Session IO -> IO a) ->
   IO a
-withOpenSessionIO tracer sessionDir action = do
-  let mountPoint = MountPoint sessionDir
-  let sessionDirFsPath = mkFsPath []
+withOpenSessionIO tracer sessionDir action =
+    withOpenMountedSessionIO tracer sessionDir (mkFsPath []) action
+
+{- |
+Variant of 'withOpenSession' that is specialised to 'IO' using the real filesystem.
+
+The session directory is an 'FsPath' path that is interpreted relative to the given mount point.
+Any 'FsPath' paths used with the session after the session is created are also interpreted
+with respect to the mount point.
+'importSnapshot' and 'exportSnapshot' are currently the only two functions that take
+'FsPaths' as arguments.
+'FsPath's are subject to a number of constraints, which are mentioned in its haddock documentation.
+-}
+withOpenMountedSessionIO ::
+  Tracer IO LSMTreeTrace ->
+  -- | The mount point
+  FilePath ->
+  -- | Session directory
+  FsPath ->
+  (Session IO -> IO a) ->
+  IO a
+withOpenMountedSessionIO tracer mountPointDir sessionDir action = do
+  let mountPoint = MountPoint mountPointDir
+  let sessionDirFsPath = sessionDir
   sessionSalt <- randomIO
   withIOHasBlockIO mountPoint defaultIOCtxParams $ \hasFS hasBlockIO ->
     withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDirFsPath action
@@ -2809,6 +2885,145 @@ listSnapshots ::
   m [SnapshotName]
 listSnapshots (Session session) =
   Internal.listSnapshots session
+
+
+{- |
+Import a snapshot from an external directory.
+
+Importing does not not check whether the external directoy is a snapshot, and
+neither does importing verify the snapshot contents if it is a snapshot.
+Open the snapshot to verify that it is a snapshot and that it is not corrupted.
+
+The 'FsPath' path to the source directory is a relative path that is interpreted
+relative to a /root/ (sometimes also called a mount point).
+What the root is depends on which function was used to create the session.
+See 'withOpenSession', 'withOpenSessionIO', and 'withOpenMountedSessionIO' for more
+information about the root.
+
+It is generally not advisable to use 'importSnapshot' and 'exportSnapshot' when the session is
+created using 'withOpenSessionIO'.
+Snapshots should only be exported to somewhere /outside/ the session directory, which is not possible
+when the session is created using 'withOpenSessionIO'.
+Use 'withOpenMountedSessionIO' or 'withOpenSession' instead.
+
+>>> :{
+runExample $ \session table -> do
+  -- Save snapshot
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+  -- Export then import snapshot
+  let exportDir = mkFsPath ["export"]
+  LSMT.exportSnapshot session "example" exportDir
+  LSMT.importSnapshot session "example_new" exportDir
+  -- Open the imported snapshot
+  LSMT.withTableFromSnapshot @_ @_ @Value
+    session "example_new" "Key Value Blob" $ \table' -> do
+      print =<< LSMT.lookup table 0
+      print =<< LSMT.lookup table 1
+:}
+Found (Value "Hello")
+Found (Value "World")
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['SnapshotExistsError']:
+    If a snapshot with the same name already exists.
+['SnapshotImportDirDoesNotExistError']:
+    If the source directory for the to-be-imported snapshot does not exist.
+-}
+{-# SPECIALISE
+  importSnapshot ::
+    Session IO ->
+    SnapshotName ->
+    FsPath ->
+    IO ()
+  #-}
+importSnapshot ::
+  forall m.
+  (IOLike m) =>
+  Session m ->
+  SnapshotName ->
+  -- | Source directory
+  FsPath ->
+  m ()
+importSnapshot (Session session) =
+    Internal.importSnapshot session
+
+{- |
+Export a snapshot to an external directory.
+
+The destination directory should not exist already.
+
+The 'FsPath' path to the destination directory is a relative path that is interpreted
+relative to a /root/.
+What the root is depends on which function was used to create the session.
+See 'withOpenSession', 'withOpenSessionIO', and 'withOpenMountedSessionIO' for more
+information about the root.
+
+It is generally not advisable to use 'importSnapshot' and 'exportSnapshot' when the session is
+created using 'withOpenSessionIO'.
+Snapshots should only be exported to somewhere /outside/ the session directory, which is not possible
+when the session is created using 'withOpenSessionIO'.
+Use 'withOpenMountedSessionIO' or 'withOpenSession' instead.
+
+>>> :{
+runExample $ \session table -> do
+  -- Save snapshot
+  LSMT.insert table 0 "Hello" Nothing
+  LSMT.insert table 1 "World" Nothing
+  LSMT.saveSnapshot "example" "Key Value Blob" table
+  -- Export then import snapshot
+  let exportDir = mkFsPath ["export"]
+  LSMT.exportSnapshot session "example" exportDir
+  LSMT.importSnapshot session "example_new" exportDir
+  -- Open the imported snapshot
+  LSMT.withTableFromSnapshot @_ @_ @Value
+    session "example_new" "Key Value Blob" $ \table' -> do
+      print =<< LSMT.lookup table 0
+      print =<< LSMT.lookup table 1
+:}
+Found (Value "Hello")
+Found (Value "World")
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy of the table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
+
+Throws the following exceptions:
+
+['SessionClosedError']:
+    If the session is closed.
+['SnapshotDoesNotExistError']:
+    If no snapshot with the given name exists.
+['SnapshotExportDirExistsError']:
+    If the destination directory for the to-be-exported snapshot already exists.
+-}
+{-# SPECIALISE
+  exportSnapshot ::
+    Session IO ->
+    SnapshotName ->
+    FsPath ->
+    IO ()
+  #-}
+exportSnapshot ::
+  forall m.
+  (IOLike m) =>
+  Session m ->
+  SnapshotName ->
+  -- | Destination directory
+  FsPath ->
+  m ()
+exportSnapshot (Session session) =
+    Internal.exportSnapshot session
 
 -- | Internal helper. Get 'resolveSerialised' at type 'ResolveSerialisedValue'.
 _getResolveSerialisedValue ::
