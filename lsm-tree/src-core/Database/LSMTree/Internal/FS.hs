@@ -1,12 +1,13 @@
 module Database.LSMTree.Internal.FS (
     -- * Hard links
     hardLink
+  , hardLinkDirectoryRecursive
     -- * Copy file
   , copyFile
   ) where
 
 import           Control.ActionRegistry
-import           Control.Monad (void)
+import           Control.Monad (forM_, void)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad)
 
@@ -15,6 +16,7 @@ import           System.FS.API
 import qualified System.FS.API.Lazy as FSL
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
+import           Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
   Hard links
@@ -30,7 +32,9 @@ import           System.FS.BlockIO.API (HasBlockIO)
     -> IO ()
   #-}
 -- | @'hardLink' hfs hbio reg sourcePath destinationPath@ creates a hard link from
--- @sourcePath@ to @targetPath@.
+-- @sourcePath@ to @destinationPath@.
+--
+-- Both the source path and destination path should be on the same disk volume.
 hardLink ::
      (MonadMask m, PrimMonad m)
   => HasFS m h
@@ -44,6 +48,46 @@ hardLink hfs hbio reg sourcePath destinationPath = do
       (FS.createHardLink hbio sourcePath destinationPath)
       (FS.removeFile hfs destinationPath)
 
+{-# SPECIALISE
+  hardLinkDirectoryRecursive ::
+       HasFS IO h
+    -> HasBlockIO IO h
+    -> ActionRegistry IO
+    -> FS.FsPath
+    -> FS.FsPath
+    -> IO ()
+  #-}
+-- | Recursively create hard links for all the directory contents of the source
+-- path at the destination path.
+--
+-- Both the source path and destination path should be on the same disk volume.
+hardLinkDirectoryRecursive ::
+     (MonadMask m, PrimMonad m)
+  => HasFS m h
+  -> HasBlockIO m h
+  -> ActionRegistry m
+     -- | Source path
+  -> FS.FsPath
+     -- | Destination path
+  -> FS.FsPath
+  -> m ()
+hardLinkDirectoryRecursive hfs hbio reg sourcePath destinationPath = do
+    entries <- FS.listDirectory hfs sourcePath
+    forM_ entries $ \entry -> do
+      let sourcePath' = sourcePath FS.</> FS.mkFsPath [entry]
+          destinationPath' = destinationPath FS.</> FS.mkFsPath [entry]
+      isFile <- FS.doesFileExist hfs sourcePath'
+      if isFile then
+        hardLink hfs hbio reg sourcePath' destinationPath'
+      else do
+        isDirectory <- FS.doesDirectoryExist hfs sourcePath'
+        if isDirectory then do
+          hardLinkDirectoryRecursive hfs hbio reg sourcePath' destinationPath'
+        else
+          error $ printf
+            "hardLinkDirectoryRecursive: %s is not a file or directory"
+            (show sourcePath')
+
 {-------------------------------------------------------------------------------
   Copy file
 -------------------------------------------------------------------------------}
@@ -56,7 +100,8 @@ hardLink hfs hbio reg sourcePath destinationPath = do
     -> FS.FsPath
     -> IO ()
   #-}
--- | @'copyFile' hfs reg source target@ copies the @source@ path to the @target@ path.
+-- | @'copyFile' hfs reg sourcePath destinationPath@ copies the file contents of
+-- @sourcePath@ to the @destinationPath@.
 copyFile ::
      (MonadMask m, PrimMonad m)
   => HasFS m h

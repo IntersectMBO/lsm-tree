@@ -186,6 +186,7 @@ import qualified Database.LSMTree as LSMT
 import qualified Database.LSMTree.Internal.Types as LSMT
 import qualified Database.LSMTree.Internal.Unsafe as Internal
 import           Prelude hiding (lookup, take, takeWhile)
+import qualified System.FS.API as FS
 import           System.FS.API (MountPoint (..), mkFsPath)
 import           System.FS.BlockIO.API (HasBlockIO (..))
 import           System.FS.BlockIO.IO (defaultIOCtxParams, ioHasBlockIO)
@@ -426,7 +427,7 @@ withOpenSession ::
 withOpenSession dir action = do
     let tracer = mempty
     _convertSessionDirErrors dir $
-        LSMT.withOpenSessionIO tracer dir (action . Session)
+        LSMT.withOpenMountedSessionIO tracer dir (FS.mkFsPath []) (action . Session)
 
 {- |
 Open a session from a session directory.
