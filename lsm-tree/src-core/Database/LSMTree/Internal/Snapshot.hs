@@ -38,7 +38,6 @@ import           Control.ActionRegistry
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Control.DeepSeq (NFData (..))
-import           Control.Monad (void)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
                      bracketOnError)
@@ -52,6 +51,7 @@ import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
+import qualified Database.LSMTree.Internal.FS as FS
 import           Database.LSMTree.Internal.IncomingRun
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
@@ -76,8 +76,6 @@ import qualified Database.LSMTree.Internal.WriteBufferReader as WBR
 import qualified Database.LSMTree.Internal.WriteBufferWriter as WBW
 import qualified System.FS.API as FS
 import           System.FS.API (HasFS, (<.>), (</>))
-import qualified System.FS.API.Lazy as FSL
-import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
 
 {-------------------------------------------------------------------------------
@@ -474,13 +472,13 @@ snapshotWriteBuffer hfs hbio activeUc snapUc reg activeDir snapDir wb wbb = do
   -- Hard link the write buffer and write buffer blobs to the snapshot directory.
   snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter snapUc
   let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
-  hardLink hfs hbio reg
+  FS.hardLink hfs hbio reg
     (writeBufferKOpsPath activeWriteBufferPaths)
     (writeBufferKOpsPath snapWriteBufferPaths)
-  hardLink hfs hbio reg
+  FS.hardLink hfs hbio reg
     (writeBufferBlobPath activeWriteBufferPaths)
     (writeBufferBlobPath snapWriteBufferPaths)
-  hardLink hfs hbio reg
+  FS.hardLink hfs hbio reg
     (writeBufferChecksumsPath activeWriteBufferPaths)
     (writeBufferChecksumsPath snapWriteBufferPaths)
   pure snapWriteBufferPaths
@@ -522,7 +520,7 @@ openWriteBuffer reg resolve hfs hbio refCtx uc activeDir snapWriteBufferPaths = 
   activeWriteBufferNumber <- uniqueToInt <$> incrUniqCounter uc
   let activeWriteBufferBlobPath =
         getActiveDir activeDir </> FS.mkFsPath [show activeWriteBufferNumber] <.> "wbblobs"
-  copyFile hfs reg (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
+  FS.copyFile hfs reg (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
   writeBufferBlobs <-
     withRollback reg
       (WBB.open hfs refCtx activeWriteBufferBlobPath FS.AllowExisting)
@@ -768,56 +766,5 @@ hardLinkRunFiles ::
 hardLinkRunFiles hfs hbio reg sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
-    sequenceA_ (hardLink hfs hbio reg <$> sourcePaths <*> targetPaths)
-    hardLink hfs hbio reg (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
-
-{-# SPECIALISE
-  hardLink ::
-       HasFS IO h
-    -> HasBlockIO IO h
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
-    -> IO ()
-  #-}
--- | @'hardLink' hfs hbio reg sourcePath targetPath@ creates a hard link from
--- @sourcePath@ to @targetPath@.
-hardLink ::
-     (MonadMask m, PrimMonad m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> ActionRegistry m
-  -> FS.FsPath
-  -> FS.FsPath
-  -> m ()
-hardLink hfs hbio reg sourcePath targetPath = do
-    withRollback_ reg
-      (FS.createHardLink hbio sourcePath targetPath)
-      (FS.removeFile hfs targetPath)
-
-{-------------------------------------------------------------------------------
-  Copy file
--------------------------------------------------------------------------------}
-
-{-# SPECIALISE
-  copyFile ::
-       HasFS IO h
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
-    -> IO ()
-  #-}
--- | @'copyFile' hfs reg source target@ copies the @source@ path to the @target@ path.
-copyFile ::
-     (MonadMask m, PrimMonad m)
-  => HasFS m h
-  -> ActionRegistry m
-  -> FS.FsPath
-  -> FS.FsPath
-  -> m ()
-copyFile hfs reg sourcePath targetPath =
-    flip (withRollback_ reg) (FS.removeFile hfs targetPath) $
-      FS.withFile hfs sourcePath FS.ReadMode $ \sourceHandle ->
-        FS.withFile hfs targetPath (FS.WriteMode FS.MustBeNew) $ \targetHandle -> do
-          bs <- FSL.hGetAll hfs sourceHandle
-          void $ FSL.hPutAll hfs targetHandle bs
+    sequenceA_ (FS.hardLink hfs hbio reg <$> sourcePaths <*> targetPaths)
+    FS.hardLink hfs hbio reg (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)

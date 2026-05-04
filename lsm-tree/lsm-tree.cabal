@@ -574,6 +574,7 @@ library core
     Database.LSMTree.Internal.CRC32C
     Database.LSMTree.Internal.Cursor
     Database.LSMTree.Internal.Entry
+    Database.LSMTree.Internal.FS
     Database.LSMTree.Internal.IncomingRun
     Database.LSMTree.Internal.Index
     Database.LSMTree.Internal.Index.Compact
