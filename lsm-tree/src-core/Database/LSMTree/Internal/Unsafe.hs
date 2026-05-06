@@ -963,7 +963,7 @@ tableSessionId :: TableEnv m h -> SessionId
 tableSessionId env = sessionId (tableSessionEnv env)
 
 {-# INLINE tableSessionSalt #-}
- -- | Inherited from session for easenve of access.
+ -- | Inherited from session for ease of access.
 tableSessionSalt :: TableEnv m h -> Bloom.Salt
 tableSessionSalt env = sessionSalt (tableSessionEnv env)
 
@@ -1220,8 +1220,8 @@ lookups resolve ks t = do
           (tableSessionSalt tEnv)
           runs
           (V.mapStrict (\(DeRef r) -> r.bloomFilter) runs)
-          (V.mapStrict (\(DeRef r) -> r.index    ) runs)
-          (V.mapStrict (\(DeRef r) -> r.kOpsFile) runs)
+          (V.mapStrict (\(DeRef r) -> r.index      ) runs)
+          (V.mapStrict (\(DeRef r) -> r.kOpsFile   ) runs)
           ks
 
 {-# SPECIALISE rangeLookup ::
@@ -1497,7 +1497,7 @@ newCursor !resolve !offsetKey t = withKeepTableOpen t $ \tEnv -> do
           let !wb      = tableWriteBuffer content
               !wbblobs = tableWriteBufferBlobs content
           wbblobs' <- withRollback reg (dupRef wbblobs) releaseRef
-          let runs = cachedRuns(tableCache content)
+          let runs = cachedRuns (tableCache content)
           runs' <- V.forM runs $ \r ->
                      withRollback reg (dupRef r) releaseRef
           unionCache <- case tableUnionLevel content of
@@ -1969,7 +1969,7 @@ unions ts = do
 
     childTableId <- uniqueToTableId <$> incrUniqCounter sesh.sessionUniqCounter
     let childTableTracer = TraceTable childTableId `contramap` sesh.lsmTreeTracer
-    traceWith childTableTracer $ TraceIncrementalUnions (NE.map (\t -> t.tableId) ts)
+    traceWith childTableTracer $ TraceIncrementalUnions (NE.map (.tableId) ts)
 
     -- The TableConfig for the new table is taken from the last table in the
     -- union. This corresponds to the "Data.Map.union updates baseMap" order,

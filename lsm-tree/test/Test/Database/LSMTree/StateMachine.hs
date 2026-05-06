@@ -1550,7 +1550,7 @@ runIO action lookUp = ReaderT $ \ !env -> do
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "SaveSnapshot" env merrs
             (do Class.saveSnapshot name label table
-                forM_ mcorr $ \corr -> Class.corruptSnapshot (corr.bitChoice) name table)
+                forM_ mcorr $ \corr -> Class.corruptSnapshot corr.bitChoice name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
@@ -1661,7 +1661,7 @@ runIOSim action lookUp = ReaderT $ \ !env -> do
           let table = unwrapTable $ lookUp' tableVar in
           runRealWithInjectedErrors "SaveSnapshot" env merrs
             (do Class.saveSnapshot name label table
-                forM_ mcorr $ \corr -> Class.corruptSnapshot (corr.bitChoice) name table)
+                forM_ mcorr $ \corr -> Class.corruptSnapshot corr.bitChoice name table)
             (\() -> Class.deleteSnapshot session name) -- TODO(err)
         OpenTableFromSnapshot _ name label ->
           runRealWithInjectedErrors "OpenTableFromSnapshot" env merrs
@@ -2332,10 +2332,10 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
 
     updSnapshotted stats = case (action', result) of
       (SaveSnapshot _ name _ _, MEither (Right (MUnit ()))) -> stats {
-          snapshotted = Set.insert name (stats.snapshotted)
+          snapshotted = Set.insert name stats.snapshotted
         }
       (DeleteSnapshot name, MEither (Right (MUnit ()))) -> stats {
-          snapshotted = Set.delete name (stats.snapshotted)
+          snapshotted = Set.delete name stats.snapshotted
         }
       _ -> stats
 
@@ -2351,7 +2351,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                   NotFound        -> (nf+1, f  , fwb  )
                   Found{}         -> (nf  , f+1, fwb  )
                   FoundWithBlob{} -> (nf  , f  , fwb+1)
-            in V.foldl' count (stats.numLookupsResults) lrs
+            in V.foldl' count stats.numLookupsResults lrs
         }
       _ -> stats
 
@@ -2380,7 +2380,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
                 R.Insert _ Just{}  -> (i  , iwb+1, d  , m  )
                 R.Delete{}         -> (i  , iwb  , d+1, m  )
                 R.Upsert{}         -> (i  , iwb  , d  , m+1)
-          in V.foldl' count (stats.numUpdates) upds
+          in V.foldl' count stats.numUpdates upds
 
     updSuccessActions stats = case result of
         MEither (Right _) -> stats {
@@ -2445,7 +2445,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
         initCount table =
           let tid = Model.tableID table
            in stats {
-                numActionsPerTable = Map.insert tid 0 (stats.numActionsPerTable)
+                numActionsPerTable = Map.insert tid 0 stats.numActionsPerTable
               }
 
         -- Note that batches (of inserts lookups etc) count as one action.
@@ -2466,7 +2466,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
             -- This lookup can fail if the table was already closed:
           , Just (_, table) <- Map.lookup tid (Model.tables modelBefore)
           -> stats {
-               closedTables = Map.insert tid table (stats.closedTables)
+               closedTables = Map.insert tid table stats.closedTables
              }
         _ -> stats
 
@@ -2489,7 +2489,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
       stats {
         parentTable = Map.insert (Model.tableID tbl)
                                  [Model.tableID tbl]
-                                 (stats.parentTable)
+                                 stats.parentTable
       }
 
     -- insert an entry into the parentTable for a table derived from a parent
@@ -2508,7 +2508,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
        in stats {
             parentTable = Map.insert (Model.tableID tbl)
                                      uptblIds
-                                     (stats.parentTable)
+                                     stats.parentTable
           }
 
     updDupTableActionLog stats | MEither (Right _) <- result =
@@ -2556,7 +2556,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
           stats {
             dupTableActionLog = List.foldl'
                                   (flip (Map.alter extendLog))
-                                  (stats.dupTableActionLog)
+                                  stats.dupTableActionLog
                                   (stats.parentTable Map.! thid)
           }
           where
@@ -2584,7 +2584,7 @@ updateStats action@(Action _merrs action') lookUp modelBefore modelAfter result 
           , Just (_,tbl) <- Map.lookup tid (Model.tables modelAfter)
           , let sz = Model.withSomeTable Model.size tbl
           = stats {
-              unionTables = Map.insert tid sz (stats.unionTables)
+              unionTables = Map.insert tid sz stats.unionTables
             }
           | otherwise
           = stats

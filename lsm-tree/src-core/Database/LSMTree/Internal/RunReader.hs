@@ -174,8 +174,8 @@ close ::
      (MonadSTM m, MonadMask m, PrimMonad m)
   => RunReader m h
   -> m ()
-close r = do -- Use 'r' instead of RunReader{..}
-    when (r.runDataCaching == Run.NoCacheRunData) $
+
+close r = do
       -- drop the file from the OS page cache
       FS.hDropCacheAll r.hasBlockIO r.kOpsHandle
     FS.hClose r.hasFS r.kOpsHandle

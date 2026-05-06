@@ -108,7 +108,6 @@ instance NFData h => NFData (Run m h) where
     rnf bloomFilter `seq` rnf index `seq` rnf kOpsFile `seq`
     rnf blobFile `seq` rnf dataCaching `seq` rwhnf hasFS `seq` rwhnf hasBlockIO
 
-
 instance RefCounted m (Run m h) where
     getRefCounter r = r.refCounter
 
@@ -233,9 +232,10 @@ fromBuilder refCtx builder = do
     newRef refCtx
            (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
            (\refCounter -> Run {
-                numEntries  =  runNumEntries
-              , refCounter  =  refCounter
-              , fsPaths     =  runRunFsPaths
+
+                numEntries  = runNumEntries
+              , refCounter  = refCounter
+              , fsPaths     = runRunFsPaths
               , bloomFilter = runFilter
               , index       = runIndex
               , kOpsFile    = runKOpsFile

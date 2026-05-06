@@ -92,9 +92,9 @@ benchSalt = 4
 benchLookups :: Config -> Benchmark
 benchLookups conf@Config{name} =
     withEnv $ \ ~(_dir, arenaManager, _hasFS, hasBlockIO, _refCtx, wbblobs, rs, ks) ->
-      env ( pure ( V.map (\(DeRef r) -> r.bloomFilter   ) rs
-                 , V.map (\(DeRef r) -> r.index    ) rs
-                 , V.map (\(DeRef r) -> r.kOpsFile ) rs
+      env ( pure ( V.map (\(DeRef r) -> r.bloomFilter) rs
+                 , V.map (\(DeRef r) -> r.index      ) rs
+                 , V.map (\(DeRef r) -> r.kOpsFile   ) rs
                  )
           ) $ \ ~(blooms, indexes, kopsFiles) ->
         bgroup name [
