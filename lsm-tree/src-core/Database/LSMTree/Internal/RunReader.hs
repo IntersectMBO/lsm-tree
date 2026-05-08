@@ -176,8 +176,8 @@ close ::
   -> m ()
 
 close r = do
-      -- drop the file from the OS page cache
-      FS.hDropCacheAll r.hasBlockIO r.kOpsHandle
+    -- drop the file from the OS page cache
+    FS.hDropCacheAll r.hasBlockIO r.kOpsHandle
     FS.hClose r.hasFS r.kOpsHandle
     releaseRef r.blobFile
     --TODO: arguably we should have distinct finish and close and require that
