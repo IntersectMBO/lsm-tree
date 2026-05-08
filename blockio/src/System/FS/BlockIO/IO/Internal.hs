@@ -42,18 +42,20 @@ import           System.IO.Error (ioeSetErrorString, mkIOError)
 --  them, see the @blockio-uring@ package.
 data IOCtxParams = IOCtxParams {
                      ioctxBatchSizeLimit   :: !Int,
-                     ioctxConcurrencyLimit :: !Int
+                     ioctxConcurrencyLimit :: !Int,
+                     ioctxIOWaitMetrics    :: !Bool
                    }
 
 instance NFData IOCtxParams where
-  rnf (IOCtxParams x y) = rnf x `seq` rnf y
+  rnf (IOCtxParams x y z) = rnf x `seq` rnf y `seq` rnf z
 
 -- | Default parameters. Some manual tuning of parameters might be required to
 -- achieve higher performance targets (see 'IOCtxParams').
 defaultIOCtxParams :: IOCtxParams
 defaultIOCtxParams = IOCtxParams {
       ioctxBatchSizeLimit   = 64,
-      ioctxConcurrencyLimit = 64 * 3
+      ioctxConcurrencyLimit = 64 * 3,
+      ioctxIOWaitMetrics    = True
     }
 
 {-------------------------------------------------------------------------------

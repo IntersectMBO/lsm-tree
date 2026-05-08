@@ -58,33 +58,34 @@ import           Text.Printf
 -- for more. Forwards compatibility is not provided at all: snapshots with a
 -- later version than the current version for the library release will always
 -- fail.
-data SnapshotVersion = V0 | V1
+data SnapshotVersion = V0 | V1 | V2
   deriving stock (Show, Eq, Ord)
 
 -- | Pretty-print a snapshot version
 --
 -- >>> prettySnapshotVersion currentSnapshotVersion
--- "v1"
+-- "v2"
 prettySnapshotVersion :: SnapshotVersion -> String
 prettySnapshotVersion V0 = "v0"
 prettySnapshotVersion V1 = "v1"
+prettySnapshotVersion V2 = "v2"
 
 -- | The current snapshot version
 --
 -- >>> currentSnapshotVersion
--- V1
+-- V2
 currentSnapshotVersion :: SnapshotVersion
-currentSnapshotVersion = V1
+currentSnapshotVersion = V2
 
--- | All snapshot versions that the current snapshpt version is compatible with.
+-- | All snapshot versions that the current snapshot version is compatible with.
 --
 -- >>> allCompatibleSnapshotVersions
--- [V0,V1]
+-- [V0,V1,V2]
 --
 -- >>> last allCompatibleSnapshotVersions == currentSnapshotVersion
 -- True
 allCompatibleSnapshotVersions :: [SnapshotVersion]
-allCompatibleSnapshotVersions = [V0, V1]
+allCompatibleSnapshotVersions = [V0, V1, V2]
 
 isCompatible :: SnapshotVersion -> Either String ()
 isCompatible otherVersion
@@ -216,6 +217,7 @@ instance Encode SnapshotVersion where
       <> case ver of
            V0 -> encodeWord 0
            V1 -> encodeWord 1
+           V2 -> encodeWord 2
 
 instance Decode SnapshotVersion where
   decode = do
@@ -224,6 +226,7 @@ instance Decode SnapshotVersion where
       case ver of
         0 -> pure V0
         1 -> pure V1
+        2 -> pure V2
         _ -> fail ("Unknown snapshot format version number: " <>  show ver)
 
 {-------------------------------------------------------------------------------
@@ -308,7 +311,9 @@ instance Encode TableConfig where
         <> encode mergeBatchSize
 
 instance DecodeVersioned TableConfig where
-  decodeVersioned v@V0 = do
+  decodeVersioned v
+    | v < V1 = do
+      -- For backwards compatibility. We added confMergeBatchSize in V1.
       decodeListLenOf 7
       confMergePolicy <- decodeVersioned v
       confMergeSchedule <- decodeVersioned v
@@ -321,8 +326,7 @@ instance DecodeVersioned TableConfig where
                                  AllocNumEntries n -> MergeBatchSize n
       pure TableConfig {..}
 
-  -- We introduced the confMergeBatchSize in V1
-  decodeVersioned v@V1 = do
+    | otherwise = do
       decodeListLenOf 8
       confMergePolicy <- decodeVersioned v
       confMergeSchedule <- decodeVersioned v
@@ -534,16 +538,30 @@ instance DecodeVersioned r => DecodeVersioned (SnapLevels r) where
 -- SnapLevel
 
 instance Encode r => Encode (SnapLevel r) where
-  encode (SnapLevel incomingRuns residentRuns) =
-         encodeListLen 2
-      <> encode incomingRuns
+  encode SnapEmptyLevel =
+         encodeListLen 1
+      <> encodeWord 0
+  encode (SnapLevel incomingRun residentRuns) =
+         encodeListLen 3
+      <> encodeWord 1
+      <> encode incomingRun
       <> encode residentRuns
 
 
 instance DecodeVersioned r => DecodeVersioned (SnapLevel r) where
-  decodeVersioned v = do
+  decodeVersioned v
+    | v < V2 = do
+      -- For backwards compatibility. There were no empty levels before V2.
       _ <- decodeListLenOf 2
       SnapLevel <$> decodeVersioned v <*> decodeVersioned v
+
+    | otherwise = do
+      n <- decodeListLen
+      tag <- decodeWord
+      case (n, tag) of
+        (1, 0) -> pure SnapEmptyLevel
+        (3, 1) -> SnapLevel <$> decodeVersioned v <*> decodeVersioned v
+        _ -> fail ("[SnapLevel] Unexpected combination of list length and tag: " <> show (n, tag))
 
 -- Vector
 

@@ -38,21 +38,23 @@ module Main (main) where
 
 import           Control.Applicative ((<**>))
 import           Control.Concurrent (getNumCapabilities)
-import           Control.Concurrent.Async
-import           Control.Concurrent.MVar
+import           Control.Concurrent.Async (waitBoth, withAsyncOn)
+import           Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, takeMVar)
 import           Control.DeepSeq (force)
-import           Control.Exception
+import           Control.Exception (evaluate)
 import           Control.Monad (forM_, unless, void, when)
 import           Control.Monad.Trans.State.Strict (runState, state)
-import           Control.Tracer
+import           Control.Tracer (Contravariant (contramap), Tracer, nullTracer,
+                     squelchUnless, stdoutTracer)
 import qualified Data.ByteString.Short as BS
 import qualified Data.Foldable as Fold
 import qualified Data.IntSet as IS
-import           Data.IORef
+import           Data.IORef (IORef, modifyIORef, modifyIORef', newIORef,
+                     readIORef, writeIORef)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Monoid
+import           Data.Monoid (Dual (Dual, getDual))
 import qualified Data.Primitive as P
 import qualified Data.Vector as V
 import           Data.Void (Void)
@@ -64,11 +66,13 @@ import           Prelude hiding (lookup)
 import qualified System.Clock as Clock
 import qualified System.FS.API as FS
 import qualified System.FS.BlockIO.IO as FsIO
-import           System.IO
+import           System.IO (BufferMode (NoBuffering), Handle,
+                     IOMode (WriteMode), hPutStr, hPutStrLn, hSetBuffering,
+                     stdout, withFile)
 import           System.Mem (performMajorGC)
 import qualified System.Random as Random
 import           Text.Printf (printf)
-import           Text.Show.Pretty
+import           Text.Show.Pretty (ppShow)
 
 import           Database.LSMTree.Extras (groupsOfN)
 

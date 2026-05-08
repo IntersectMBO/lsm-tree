@@ -51,10 +51,11 @@ asyncHasBlockIO hSetNoCache hAdvise hAllocate tryLockFile hSynchronise synchroni
     }
 
 ctxParamsConv :: IOI.IOCtxParams -> I.IOCtxParams
-ctxParamsConv IOI.IOCtxParams{IOI.ioctxBatchSizeLimit, IOI.ioctxConcurrencyLimit} =
+ctxParamsConv IOI.IOCtxParams{IOI.ioctxBatchSizeLimit, IOI.ioctxConcurrencyLimit, IOI.ioctxIOWaitMetrics} =
     I.IOCtxParams {
         I.ioctxBatchSizeLimit   = ioctxBatchSizeLimit
       , I.ioctxConcurrencyLimit = ioctxConcurrencyLimit
+      , I.ioctxIOWaitMetrics    = ioctxIOWaitMetrics
       }
 
 submitIO ::

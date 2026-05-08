@@ -3,7 +3,12 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
-module Test.ScheduledMergesQLS (tests) where
+module Test.ScheduledMergesQLS (
+    tests
+  , Model
+  , prop_LSM
+  , Action (..)
+  ) where
 
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.Monad.ST
@@ -404,7 +409,7 @@ runActionIO action lookUp = ReaderT $ \tidVar -> do
     AUnions vars        -> do
       tid <- incrTidVar tidVar
       stToIO $ unions tr tid (map lookUpVar vars)
-    ASupplyUnion var c  -> stToIO $ supplyUnionCredits (lookUpVar var) (getNonNegative c) >> pure ()
+    ASupplyUnion var c  -> stToIO $ supplyUnionCredits tr (lookUpVar var) (getNonNegative c) >> pure ()
     ADump      var      -> stToIO $ logicalValue (lookUpVar var)
   where
     lookUpVar :: ModelVar Model a -> a

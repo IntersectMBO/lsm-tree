@@ -2036,7 +2036,7 @@ UnionDebt: 2
 Leftovers: 3
 
 __NOTE:__
-The 'remainingUnionDebt' functions gets an /upper bound/ for the amount of remaning union debt.
+The 'remainingUnionDebt' functions gets an /upper bound/ for the amount of remaining union debt.
 In the example above, the second call to 'remainingUnionDebt' reports @2@, but the union debt is @1@.
 Therefore, the second call to 'supplyUnionCredits' returns more leftovers than expected.
 

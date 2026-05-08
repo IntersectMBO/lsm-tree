@@ -1,0 +1,78 @@
+TraceSession (SessionId session-dir) TraceOpenSession
+TraceSession (SessionId session-dir) TraceNewSession
+TraceSession (SessionId session-dir) TraceCreatedSession
+TraceTable (TableId 0) (TraceNewTable (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
+TraceTable (TableId 0) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
+TraceTable (TableId 0) (TraceUpdates 1)
+TraceTable (TableId 0) (TraceUpdated 1)
+TraceTable (TableId 0) (TraceUpdates 1)
+TraceTable (TableId 0) (TraceUpdated 1)
+TraceTable (TableId 0) (TraceUpdates 1)
+TraceTable (TableId 0) (TraceUpdated 1)
+TraceTable (TableId 0) (TraceUpdates 1)
+TraceTable (TableId 0) (TraceUpdated 1)
+TraceTable (TableId 0) (TraceUpdates 5001)
+TraceTable (TableId 0) (TraceUpdated 5001)
+TraceTable (TableId 0) (TraceLookups 1)
+TraceTable (TableId 0) (TraceLookups 1)
+TraceTable (TableId 0) (TraceRangeLookup (FromToExcluding (SerialisedKey [0,0,0,0,0,0,0,0]) (SerialisedKey [0,0,0,0,0,0,0,3])))
+TraceCursor (CursorId 8) (TraceNewCursor (TableId 0) (Just [0,0,0,0,0,0,0,0]))
+TraceCursor (CursorId 8) (TraceCreatedCursor (SessionId session-dir))
+TraceCursor (CursorId 8) (TraceReadingCursor 500)
+TraceCursor (CursorId 8) (TraceReadCursor 500 2)
+TraceCursor (CursorId 8) TraceCloseCursor
+TraceCursor (CursorId 8) TraceClosedCursor
+TraceCursor (CursorId 9) (TraceNewCursor (TableId 0) (Just [0,0,0,0,0,0,0,1]))
+TraceCursor (CursorId 9) (TraceCreatedCursor (SessionId session-dir))
+TraceCursor (CursorId 9) (TraceReadingCursor 2)
+TraceCursor (CursorId 9) (TraceReadCursor 2 1)
+TraceCursor (CursorId 9) (TraceReadingCursor 1)
+TraceCursor (CursorId 9) (TraceReadCursor 1 1)
+TraceSession (SessionId session-dir) (TraceRetrieveBlobs 1)
+TraceCursor (CursorId 9) TraceCloseCursor
+TraceCursor (CursorId 9) TraceClosedCursor
+TraceTable (TableId 0) (TraceSaveSnapshot "snapshot_a")
+TraceTable (TableId 0) (TraceSavedSnapshot "snapshot_a")
+TraceTable (TableId 0) (TraceSaveSnapshot "snapshot_b")
+TraceTable (TableId 0) (TraceSavedSnapshot "snapshot_b")
+TraceSession (SessionId session-dir) TraceListSnapshots
+TraceSession (SessionId session-dir) (TraceDeleteSnapshot "snapshot_b")
+TraceSession (SessionId session-dir) (TraceDeletedSnapshot "snapshot_b")
+TraceTable (TableId 12) (TraceOpenTableFromSnapshot "snapshot_a" (TableConfigOverride {overrideDiskCachePolicy = Nothing, overrideMergeBatchSize = Nothing}))
+TraceTable (TableId 12) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
+TraceTable (TableId 20) (TraceDuplicate (TableId 0))
+TraceTable (TableId 20) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
+TraceTable (TableId 21) (TraceIncrementalUnions (TableId 0 :| [TableId 12,TableId 20]))
+TraceTable (TableId 21) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
+TraceTable (TableId 21) TraceRemainingUnionDebt
+TraceTable (TableId 21) (TraceSupplyUnionCredits 42019)
+TraceTable (TableId 21) (TraceSuppliedUnionCredits 42019 4005)
+TraceTable (TableId 21) TraceCloseTable
+TraceTable (TableId 21) TraceClosedTable
+TraceTable (TableId 30) (TraceIncrementalUnions (TableId 0 :| [TableId 12,TableId 20]))
+TraceTable (TableId 30) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
+TraceTable (TableId 30) TraceRemainingUnionDebt
+TraceTable (TableId 30) (TraceSupplyUnionCredits 30027)
+TraceTable (TableId 30) (TraceSuppliedUnionCredits 30027 3)
+TraceTable (TableId 30) TraceRemainingUnionDebt
+TraceTable (TableId 30) (TraceSupplyUnionCredits 1)
+TraceTable (TableId 30) (TraceSuppliedUnionCredits 1 1)
+TraceTable (TableId 30) TraceRemainingUnionDebt
+TraceTable (TableId 30) TraceCloseTable
+TraceTable (TableId 30) TraceClosedTable
+TraceTable (TableId 20) TraceCloseTable
+TraceTable (TableId 20) TraceClosedTable
+TraceTable (TableId 12) TraceCloseTable
+TraceTable (TableId 12) TraceClosedTable
+TraceTable (TableId 0) TraceCloseTable
+TraceTable (TableId 0) TraceClosedTable
+TraceTable (TableId 39) (TraceNewTable (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 20000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 20000}))
+TraceTable (TableId 39) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 20000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 20000}))
+TraceCursor (CursorId 41) (TraceNewCursor (TableId 39) Nothing)
+TraceCursor (CursorId 41) (TraceCreatedCursor (SessionId session-dir))
+TraceSession (SessionId session-dir) TraceCloseSession
+TraceCursor (CursorId 41) TraceCloseCursor
+TraceCursor (CursorId 41) TraceClosedCursor
+TraceTable (TableId 39) TraceCloseTable
+TraceTable (TableId 39) TraceClosedTable
+TraceSession (SessionId session-dir) TraceClosedSession

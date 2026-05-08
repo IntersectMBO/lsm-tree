@@ -1,8 +1,6 @@
-{-# LANGUAGE DataKinds       #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE UnboxedTuples   #-}
 
-{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-partial-fields #-}
 
 -- | A prototype of an LSM with explicitly scheduled incremental merges.
@@ -106,7 +104,7 @@ import           Data.Foldable (for_, toList, traverse_)
 import           Data.Functor.Contravariant
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, maybeToList)
 import           Data.Primitive.Types
 import           Data.STRef
 
@@ -150,7 +148,7 @@ type Counter = Int
 -- | The levels of the table, from most to least recently inserted.
 data LSMContent s =
     LSMContent
-      Buffer          -- ^ write buffer is level 0 of the table, in-memory
+      WriteBuffer     -- ^ write buffer is level 0 of the table, in-memory
       (Levels s)      -- ^ \"regular\" levels 1+, on disk in real implementation
       (UnionLevel s)  -- ^ a potential last level
 
@@ -163,7 +161,11 @@ type LevelNo = Int
 -- | A level is a sequence of resident runs at this level, prefixed by an
 -- incoming run, which is usually multiple runs that are being merged. Once
 -- completed, the resulting run will become a resident run at this level.
+--
+-- Levels can also be empty, although we currently never create empty levels.
+-- We plan to make use of them when migrating a completed union level.
 data Level s = Level !(IncomingRun s) ![Run]
+             | EmptyLevel
 
 -- | We represent single runs specially, rather than putting them in as a
 -- 'CompletedMerge'. This is for two reasons: to see statically that it's a
@@ -173,7 +175,16 @@ data Level s = Level !(IncomingRun s) ![Run]
 data IncomingRun s = Merging !MergePolicyForLevel
                              !NominalDebt !(STRef s NominalCredit)
                              !(MergingRun LevelMergeType s)
-                   | Single  !Run
+                   | Single  !SingleRunOrigin !Run
+
+-- | Additional information about the origin of a 'Single' run. This allows us
+-- to have stronger invariants.
+data SingleRunOrigin = FromWriteBuffer
+                     | FromLevellingLevel
+                       -- | A former union level that was completed (merged down
+                       -- to a single run) and became the last regular level.
+                     | FromMigratedUnion
+  deriving stock (Eq, Show)
 
 -- | The merge policy for a LSM level can be either tiering or levelling.
 -- In this design we use levelling for the last level, and tiering for
@@ -288,17 +299,33 @@ pattern PendingMerge :: TreeMergeType
                      -> PendingMerge s
 pattern PendingMerge mt prs ts <- (pendingContent -> (mt, prs, ts))
 
-type Run    = Map Key Entry
-type Buffer = Map Key Entry
-
-bufferToRun :: Buffer -> Run
-bufferToRun = id
+newtype Run = Run { runEntries :: Map Key Entry }
+  deriving newtype Show
 
 runSize :: Run -> Int
-runSize = Map.size
+runSize = Map.size . runEntries
 
-bufferSize :: Buffer -> Int
-bufferSize = Map.size
+lookupRun :: Key -> Run -> Maybe Entry
+lookupRun k = Map.lookup k . runEntries
+
+newtype WriteBuffer = WriteBuffer { bufferEntries :: Map Key Entry }
+
+emptyWriteBuffer :: WriteBuffer
+emptyWriteBuffer = WriteBuffer Map.empty
+
+writeBufferSize :: WriteBuffer -> Int
+writeBufferSize = Map.size . bufferEntries
+
+insertWriteBuffer :: Key -> Entry -> WriteBuffer -> WriteBuffer
+insertWriteBuffer k e = WriteBuffer . Map.insertWith combine k e . bufferEntries
+
+lookupWriteBuffer :: Key -> WriteBuffer -> Maybe Entry
+lookupWriteBuffer k = Map.lookup k . bufferEntries
+
+-- | Flush a write buffer. In the real implementation, this involves IO.
+-- Note that we should never flush an empty write buffer.
+flushWriteBuffer :: WriteBuffer -> Run
+flushWriteBuffer (WriteBuffer m) = assert (not (null m)) (Run m)
 
 type Entry = Update Value Blob
 
@@ -340,9 +367,12 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
     levelsInvariant :: Int -> Levels s -> ST s ()
     levelsInvariant !_ [] = pure ()
 
+    levelsInvariant !_ (EmptyLevel : ls) = do
+      assertST $ not (null ls)  -- last level shouldn't be empty
+
     levelsInvariant !ln (Level ir rs : ls) = do
       mrs <- case ir of
-        Single r ->
+        Single _ r ->
           pure (CompletedMerge r)
         Merging mp _ _ (MergingRun mt _ ref) -> do
           assertST $ ln > 1  -- no merges on level 1
@@ -356,24 +386,35 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
 
       levelsInvariant (ln+1) ls
 
-    -- All runs within a level "proper" (as opposed to the incoming runs
+    -- All regular runs within a level "proper" (as opposed to the incoming runs
     -- being merged) should be of the correct size for the level.
     expectedRunLengths :: Int -> [Run] -> [Level s] -> ST s ()
     expectedRunLengths ln rs ls =
       case mergePolicyForLevel ln ls ul of
-        -- Levels using levelling have only one (incoming) run, which almost
-        -- always consists of an ongoing merge. The exception is when a
-        -- levelling run becomes too large and is promoted, in that case
-        -- initially there's no merge, but it is still represented as an
-        -- 'IncomingRun', using 'Single'. Thus there are no other resident runs.
-        LevelLevelling -> assertST $ null rs && null ls
-        -- Runs in tiering levels usually fit that size, but they can be one
-        -- larger, if a run has been held back (creating a (T+1)-way merge).
-        LevelTiering   -> assertST $ all (\r -> runToLevelNumber LevelTiering conf r `elem` [ln, ln+1]) rs
-        -- (This is actually still not really true, but will hold in practice.
-        -- In the pathological case, all runs passed to the next level can be
-        -- factor ((T+1)/T) too large, and there the same holding back can lead to
-        -- factor ((T+2)/T) etc., until at level 12 a run is two levels too large.
+        LevelLevelling -> do
+          -- Levelling can only occur on the last level.
+          assertST $ null ls
+          -- Levels using levelling have only one (incoming) run, which almost
+          -- always consists of an ongoing merge. The exception is when a
+          -- levelling run becomes too large and is promoted, in that case
+          -- initially there's no merge, but it is still represented as an
+          -- 'IncomingRun', using 'Single'. Thus there are no other resident
+          -- runs.
+          assertST $ null rs
+        LevelTiering -> do
+          -- There are no empty runs in tiering levels, as they are either:
+          -- 1. a mid-level, so deletes can't be dropped and merges can't result
+          --    in empty runs
+          -- 2. the first level, so their runs come directly from flushing the
+          --    write buffer.
+          assertST $ all (\r -> runSize r > 0) rs
+          -- Runs in tiering levels usually fit that level's size, but they can
+          -- be slightly larger if a run has been held back (creating a
+          -- (T+1)-way merge).
+          --
+          -- TODO: Holding back runs can theoretically result in runs that are
+          -- more than one size too large. See issue #829.
+          assertST $ all (\r -> runToLevelNumber LevelTiering conf r `elem` [ln, ln+1]) rs
 
     -- Incoming runs being merged also need to be of the right size, but the
     -- conditions are more complicated.
@@ -383,12 +424,23 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
       case mergePolicyForLevel ln ls ul of
         LevelLevelling -> do
           case (ir, mrs) of
-            -- A single incoming run (which thus didn't need merging) must be
-            -- of the expected size range already
-            (Single r, m) -> do
+            -- A single incoming run (which didn't need merging) in a levelling
+            -- level can be created one of two ways:
+            -- 1. when a levelling level is full, so the run gets promoted to
+            --    the new last level
+            -- 2. when the union level gets migrated.
+            --
+            -- In the latter case, it can be arbitrarily small.
+            (Single origin r, m) -> do
               assertST $ case m of CompletedMerge{} -> True
                                    OngoingMerge{}   -> False
-              assertST $ runToLevelNumber LevelLevelling conf r == ln
+              case origin of
+                FromWriteBuffer ->
+                  assertST False  -- we don't flush to levelling levels
+                FromLevellingLevel ->
+                  assertST $ runToLevelNumber LevelLevelling conf r == ln
+                FromMigratedUnion ->
+                  assertST $ runToLevelNumber LevelLevelling conf r <= ln
 
             -- A completed merge for levelling can be of almost any size at all!
             -- It can be smaller, due to deletions in the last level. But it
@@ -415,9 +467,10 @@ invariant conf@LSMConfig{..} (LSMContent _ levels ul) = do
           case (ir, mrs, mergeTypeForLevel ls ul) of
             -- A single incoming run (which thus didn't need merging) must be
             -- of the expected size already
-            (Single r, m, _) -> do
+            (Single origin r, m, _) -> do
               assertST $ case m of CompletedMerge{} -> True
                                    OngoingMerge{}   -> False
+              assertST $ origin == FromWriteBuffer
               assertST $ runToLevelNumber LevelTiering conf r == ln
 
             -- A completed last level run can be of almost any smaller size due
@@ -891,7 +944,7 @@ newMergingRun mergeType runs = do
     assertST $ length runs > 1
     -- in some cases, no merging is required at all
     (debt, state) <- case filter (\r -> runSize r > 0) runs of
-      []  -> let (r:_) = runs -- just reuse the empty input
+      []  -> let r = head runs -- just reuse the empty input
               in pure (runSize r, CompletedMerge r)
       [r] -> pure (runSize r, CompletedMerge r)
       rs  -> do
@@ -904,8 +957,10 @@ newMergingRun mergeType runs = do
 
 mergek :: IsMergeType t => t -> [Run] -> Run
 mergek t =
-      (if isLastLevel t then Map.filter (/= Delete) else id)
+      Run
+    . (if isLastLevel t then Map.filter (/= Delete) else id)
     . Map.unionsWith (if isUnion t then combineUnion else combine)
+    . map runEntries
 
 -- | Combines two entries that have been performed after another. Therefore, the
 -- newer one overwrites the old one (or modifies it for 'Mupsert'). Only take a
@@ -992,7 +1047,7 @@ newWith tr tid conf
   | otherwise = do
       traceWith tr $ NewTableEvent tid conf
       c   <- newSTRef 0
-      lsm <- newSTRef (LSMContent Map.empty [] NoUnion)
+      lsm <- newSTRef (LSMContent emptyWriteBuffer [] NoUnion)
       pure (LSMHandle tid c conf lsm)
 
 inserts :: Tracer (ST s) Event -> LSM s -> [(Key, Value, Maybe Blob)] -> ST s ()
@@ -1026,19 +1081,23 @@ update :: Tracer (ST s) Event -> LSM s -> Key -> Entry -> ST s ()
 update tr (LSMHandle tid scr conf lsmr) k entry = do
     traceWith tr $ UpdateEvent tid k entry
     sc <- readSTRef scr
-    content@(LSMContent wb ls unionLevel) <- readSTRef lsmr
+    content@(LSMContent wb ls ul) <- readSTRef lsmr
     modifySTRef' scr (+1)
     supplyCreditsLevels (NominalCredit 1) ls
     invariant conf content
-    let wb' = Map.insertWith combine k entry wb
-    if bufferSize wb' >= maxWriteBufferSize conf
+    let wb' = insertWriteBuffer k entry wb
+    if writeBufferSize wb' >= maxWriteBufferSize conf
       then do
-        ls' <- increment (LevelEvent tid >$< tr) sc conf (bufferToRun wb') ls unionLevel
-        let content' = LSMContent Map.empty ls' unionLevel
+        -- The merging tree might have become completed. If so, we want to
+        -- migrate it now, so it can become part of new merges.
+        (ls', ul') <- migrateUnionLevel (LevelEvent tid >$< tr) sc conf ls ul
+        let r = flushWriteBuffer wb'
+        ls'' <- increment (LevelEvent tid >$< tr) sc conf r ls' ul'
+        let content' = LSMContent emptyWriteBuffer ls'' ul'
         invariant conf content'
         writeSTRef lsmr content'
       else
-        writeSTRef lsmr (LSMContent wb' ls unionLevel)
+        writeSTRef lsmr (LSMContent wb' ls ul)
 
 supplyMergeCredits :: LSM s -> NominalCredit -> ST s ()
 supplyMergeCredits (LSMHandle _ scr conf lsmr) credits = do
@@ -1099,7 +1158,7 @@ unions tr childTid lsms = do
       Just tree -> do
         debt <- fst <$> remainingDebtMergingTree tree
         Union tree <$> newSTRef debt
-    lsmr <- newSTRef (LSMContent Map.empty [] unionLevel)
+    lsmr <- newSTRef (LSMContent emptyWriteBuffer [] unionLevel)
     c    <- newSTRef 0
     pure (LSMHandle childTid c conf lsmr)
 
@@ -1116,12 +1175,17 @@ newtype UnionDebt = UnionDebt Debt
 
 -- | Return the current union debt. This debt can be reduced until it is paid
 -- off using 'supplyUnionCredits'.
+--
+-- As long as there is a union level, there is a non-zero debt. This makes it
+-- clear that 'supplyUnionCredits' should still be called to trigger migration,
+-- even if the merging tree itself has been completed. This becomes necessary
+-- when the tree has been completed by operations on another table via sharing.
 remainingUnionDebt :: LSM s -> ST s UnionDebt
 remainingUnionDebt (LSMHandle _ _ _conf lsmr) = do
     LSMContent _ _ ul <- readSTRef lsmr
     UnionDebt <$> case ul of
       NoUnion      -> pure 0
-      Union tree d -> checkedUnionDebt tree d
+      Union tree d -> (+1) <$> checkedUnionDebt tree d
 
 -- | Credits are used to pay off 'UnionDebt', completing a 'union' in the
 -- process.
@@ -1142,43 +1206,31 @@ newtype UnionCredits = UnionCredits Credit
 -- This function returns any surplus of union credits as /leftover/ credits when
 -- a union has finished. In particular, if the returned number of credits is
 -- non-negative, then the union is finished.
-supplyUnionCredits :: LSM s -> UnionCredits -> ST s UnionCredits
-supplyUnionCredits (LSMHandle _ scr conf lsmr) (UnionCredits credits)
-  | credits <= 0 = pure (UnionCredits 0)
-  | otherwise = do
-    content@(LSMContent _ _ ul) <- readSTRef lsmr
-    UnionCredits <$> case ul of
-      NoUnion ->
-        pure credits
-      Union tree debtRef -> do
-        modifySTRef' scr (+1)
-        _debt <- checkedUnionDebt tree debtRef  -- just to make sure it's checked
-        c' <- supplyCreditsMergingTree credits tree
-        debt' <- checkedUnionDebt tree debtRef
-        when (debt' > 0) $
-          assertST $ c' == 0  -- should have spent these credits
-        invariant conf content
-        pure c'
-
--- TODO: At some point the completed merging tree should to moved into the
--- regular levels, so it can be merged with other runs and last level merges can
--- happen again to drop deletes. Also, lookups then don't need to handle the
--- merging tree any more. There are two possible strategies:
---
--- 1. As soon as the merging tree completes, move the resulting run to the
---    regular levels. However, its size does generally not fit the last level,
---    which requires relaxing 'invariant' and adjusting 'increment'.
---
---    If the run is much larger than the resident and incoming runs of the last
---    level, it should also not be included into a merge yet, as that merge
---    would be expensive, but offer very little potential for compaction (the
---    run from the merging tree is already compacted after all). So it needs to
---    be bumped to the next level instead.
---
--- 2. Initially leave the completed run in the union level. Then every time a
---    new last level merge is created in 'increment', check if there is a
---    completed run in the union level with a size that fits the new merge. If
---    yes, move it over.
+supplyUnionCredits :: Tracer (ST s) Event -> LSM s -> UnionCredits -> ST s UnionCredits
+supplyUnionCredits tr (LSMHandle tid scr conf lsmr) (UnionCredits credits) = do
+    traceWith tr $ SupplyUnionCreditsEvent tid credits
+    if credits <= 0
+      then
+        pure (UnionCredits 0)
+      else do
+        content@(LSMContent wb ls ul) <- readSTRef lsmr
+        UnionCredits <$> case ul of
+          NoUnion ->
+            pure credits
+          Union tree debtRef -> do
+            invariant conf content
+            sc <- readSTRef scr
+            modifySTRef' scr (+1)
+            _debt <- checkedUnionDebt tree debtRef  -- make sure it's checked
+            c' <- supplyCreditsMergingTree credits tree
+            debt' <- checkedUnionDebt tree debtRef
+            when (debt' > 0) $
+              assertST $ c' == 0  -- we should have spent these credits
+            (ls', ul') <- migrateUnionLevel (LevelEvent tid >$< tr) sc conf ls ul
+            let content' = LSMContent wb ls' ul'
+            invariant conf content'
+            writeSTRef lsmr content'
+            pure c'
 
 -- | Like 'remainingDebtMergingTree', but additionally asserts that the debt
 -- never increases.
@@ -1189,6 +1241,53 @@ checkedUnionDebt tree debtRef = do
     assertST $ debt <= storedDebt
     writeSTRef debtRef debt
     pure debt
+
+-- | At some point the completed merging tree should become part of the regular
+-- levels, so it can be merged with other runs. Otherwise, we could never
+-- perform a last level merge, which is especially important for compaction, as
+-- it allows us to drop deletes. Also, lookups then don't need to consider the
+-- merging tree any more.
+--
+-- We can do this as soon as the tree is completed by appending a new regular
+-- level containing only the run that resulted from the tree merge. If the
+-- run is too large to fit into the level directly after the existing ones, we
+-- first add empty levels.
+migrateUnionLevel :: forall s. Tracer (ST s) (EventAt EventDetail)
+                  -> Counter -> LSMConfig -> Levels s -> UnionLevel s
+                  -> ST s (Levels s, UnionLevel s)
+migrateUnionLevel _ _ _ ls NoUnion = do
+    -- nothing to do
+    pure (ls, NoUnion)
+migrateUnionLevel tr sc conf ls ul@(Union t _) =
+    getCompletedMergingTree t >>= \case
+      Nothing ->
+        -- Still in progress, leave it.
+        pure (ls, ul)
+      Just r -> do
+        -- Before migration, there is usually a last regular (i.e. non-union)
+        -- level, which uses tiering. We could potentially add the completed
+        -- union (or rather the run it resulted in) directly to the resident
+        -- tiering runs of that last regular level, but that would clash with
+        -- some invariants. Instead, we always create a new last level, which
+        -- only makes a small difference, but keeps the invariants simpler.
+        --
+        -- Also note even empty runs get migrated. This doesn't violate any
+        -- invariants, as levelling levels can already contain empty runs.
+        -- Dropping the run would be more complicated since the previous level
+        -- then suddenly becomes the last one while potentially still containing
+        -- midlevel merges.
+        let levelNo = maximum
+              [ 2              -- First level is tiering, don't migrate there.
+              , length ls + 1  -- Must come after existing levels.
+              , runToLevelNumber LevelLevelling conf r
+                               -- Run must not be too large for the level.
+              ]
+        let emptyLevels = replicate (levelNo - 1 - length ls) EmptyLevel
+        let level = Level (Single FromMigratedUnion r) []
+        let levels = ls ++ emptyLevels ++ [level]
+        assertST $ length levels == levelNo
+        traceWith tr $ EventAt sc levelNo $ UnionLevelMigratedEvent r
+        pure (levels, NoUnion)
 
 -------------------------------------------------------------------------------
 -- Lookups
@@ -1212,9 +1311,9 @@ mergeAcc mt = foldl (updateAcc com) Nothing . catMaybes
 --
 -- In the real implementation, this is done not on an individual 'LookupAcc',
 -- but one for each key, i.e. @Vector (Maybe Entry)@.
-doLookup :: Buffer -> [Run] -> UnionLevel s -> Key -> ST s (LookupResult Value Blob)
+doLookup :: WriteBuffer -> [Run] -> UnionLevel s -> Key -> ST s (LookupResult Value Blob)
 doLookup wb runs ul k = do
-    let acc0 = lookupBatch (Map.lookup k wb) k runs
+    let acc0 = lookupBatch (lookupWriteBuffer k wb) k runs
     case ul of
       NoUnion ->
         pure (convertAcc acc0)
@@ -1222,7 +1321,7 @@ doLookup wb runs ul k = do
         treeBatches <- buildLookupTree tree
         let treeResults = lookupBatch Nothing k <$> treeBatches
         pure $ convertAcc $ foldLookupTree $
-          if null wb && null runs
+          if writeBufferSize wb == 0 && null runs
           then treeResults
           else LookupNode MergeLevel [LookupBatch acc0, treeResults ]
   where
@@ -1239,7 +1338,7 @@ doLookup wb runs ul k = do
 -- In a real implementation, this would take all keys at once and be in IO.
 lookupBatch :: LookupAcc -> Key -> [Run] -> LookupAcc
 lookupBatch acc k rs =
-    let entries = [entry | r <- rs, Just entry <- [Map.lookup k r]]
+    let entries = [entry | r <- rs, Just entry <- [lookupRun k r]]
     in foldl (updateAcc combine) acc entries
 
 data LookupTree a = LookupBatch a
@@ -1333,11 +1432,12 @@ newtype NominalDebt = NominalDebt Credit
 -- inserting without calling 'supplyUnionCredits'.
 supplyCreditsLevels :: NominalCredit -> Levels s -> ST s ()
 supplyCreditsLevels nominalDeposit =
-  traverse_ $ \(Level ir _rs) -> do
-    case ir of
-      Single{} -> pure ()
-      Merging _mp nominalDebt nominalCreditVar
-              mr@(MergingRun _  physicalDebt _) -> do
+  traverse_ $ \lvl -> do
+    case lvl of
+      EmptyLevel -> pure ()
+      Level Single{} _ -> pure ()
+      Level (Merging _mp nominalDebt nominalCreditVar
+                     mr@(MergingRun _  physicalDebt _)) _ -> do
 
         nominalCredit       <- depositNominalCredit
                                  nominalDebt nominalCreditVar nominalDeposit
@@ -1438,9 +1538,17 @@ increment tr sc conf run0 ls0 ul = do
       where
         tr' = contramap (EventAt sc ln) tr
 
+    go !ln incoming (EmptyLevel : ls) = do
+        assertST $ mergePolicyForLevel ln ls ul == LevelTiering  -- mid level
+        traceWith tr' LevelWasEmptyEvent
+        ir <- newLevelMerge tr' conf ln LevelTiering (mergeTypeFor ls) incoming
+        pure (Level ir [] : ls)
+      where
+        tr' = contramap (EventAt sc ln) tr
+
     go !ln incoming (Level ir rs : ls) = do
       r <- case ir of
-        Single r -> do
+        Single _ r -> do
           traceWith tr' $ SingleRunCompletedEvent r
           pure r
         Merging mergePolicy _ _ mr -> do
@@ -1511,10 +1619,18 @@ newLevelMerge :: Tracer (ST s) EventDetail
               -> LSMConfig
               -> Int -> MergePolicyForLevel -> LevelMergeType
               -> [Run] -> ST s (IncomingRun s)
-newLevelMerge tr _ _ _ _ [r] =  do
+newLevelMerge tr _ ln mergePolicy _ [r] = do
+    origin <-
+      if ln <= 1
+        then do
+          assertST $ ln == 1
+          pure FromWriteBuffer
+        else do
+          assertST $ mergePolicy == LevelLevelling
+          pure FromLevellingLevel
     traceWith tr $ NewSingleRunEvent r
-    pure (Single r)
-newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
+    pure (Single origin r)
+newLevelMerge tr conf@LSMConfig{..} ln mergePolicy mergeType rs = do
     mergingRun@(MergingRun _ physicalDebt _) <- newMergingRun mergeType rs
     traceWith tr NewLevelMergeEvent {
                    mergePolicy,
@@ -1530,7 +1646,7 @@ newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
     -- The nominal debt equals the minimum of credits we will supply before we
     -- expect the merge to complete. This is the same as the number of updates
     -- in a run that gets moved to this level.
-    nominalDebt = NominalDebt (levelNumberToMaxRunSize LevelTiering conf level)
+    nominalDebt = NominalDebt (levelNumberToMaxRunSize LevelTiering conf ln)
 
     -- The physical debt is the number of actual merge steps we will need to
     -- perform before the merge is complete. This is always the sum of the
@@ -1548,16 +1664,16 @@ newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
         LevelLevelling ->
           -- Incoming runs, which may be slightly overfull with respect to the
           -- previous level
-          configSizeRatio * levelNumberToMaxRunSize LevelTiering conf level
+          configSizeRatio * levelNumberToMaxRunSize LevelTiering conf ln
               -- The single run that was already on this level
-            + levelNumberToMaxRunSize LevelLevelling conf level
+            + levelNumberToMaxRunSize LevelLevelling conf ln
         LevelTiering   ->
           -- Incoming runs, which may be slightly overfull with respect to the
           -- previous level
-          configSizeRatio * levelNumberToMaxRunSize LevelTiering conf level
+          configSizeRatio * levelNumberToMaxRunSize LevelTiering conf ln
               -- Held back run that is underfull with respect to the current
               -- level
-            + levelNumberToMaxRunSize LevelTiering conf (level - 1)
+            + levelNumberToMaxRunSize LevelTiering conf (ln - 1)
 
 -------------------------------------------------------------------------------
 -- MergingTree abstraction
@@ -1600,24 +1716,19 @@ newLevelMerge tr conf@LSMConfig{..} level mergePolicy mergeType rs = do
 
 -- | Ensures that the merge contains more than one input, avoiding creating a
 -- pending merge where possible.
-newPendingLevelMerge :: [IncomingRun s]
+newPendingLevelMerge :: [PreExistingRun s]
                      -> Maybe (MergingTree s)
                      -> ST s (Maybe (MergingTree s))
 newPendingLevelMerge [] t = pure t
-newPendingLevelMerge [Single r] Nothing =
+newPendingLevelMerge [PreExistingRun r] Nothing =
     Just . MergingTree <$> newSTRef (CompletedTreeMerge r)
-newPendingLevelMerge [Merging{}] Nothing =
+newPendingLevelMerge [PreExistingMergingRun{}] Nothing =
     -- This case should never occur. If there is a single entry in the list,
     -- there can only be one level in the input table. At level 1 there are no
-    -- merging runs, so it must be a PreExistingRun.
+    -- merging runs, it must be a Single run flushed from a write buffer.
     error "newPendingLevelMerge: singleton Merging run"
-newPendingLevelMerge irs tree = do
-    let prs = map incomingToPreExistingRun irs
-        st  = PendingTreeMerge (PendingLevelMerge prs tree)
-    Just . MergingTree <$> newSTRef st
-  where
-    incomingToPreExistingRun (Single         r) = PreExistingRun r
-    incomingToPreExistingRun (Merging _ _ _ mr) = PreExistingMergingRun mr
+newPendingLevelMerge prs t = do
+    Just . MergingTree <$> newSTRef (PendingTreeMerge (PendingLevelMerge prs t))
 
 -- | Ensures that the merge contains more than one input.
 newPendingUnionMerge :: [MergingTree s] -> ST s (Maybe (MergingTree s))
@@ -1629,14 +1740,19 @@ newPendingUnionMerge trees = do
 
 contentToMergingTree :: LSMContent s -> ST s (Maybe (MergingTree s))
 contentToMergingTree (LSMContent wb ls ul) =
-    newPendingLevelMerge (buffers ++ levels) trees
+    newPendingLevelMerge (maybeToList buffer ++ levels) trees
   where
     -- flush the write buffer (but this should not modify the content)
-    buffers
-      | bufferSize wb == 0 = []
-      | otherwise          = [Single (bufferToRun wb)]
+    buffer
+      | writeBufferSize wb == 0 = Nothing
+      | otherwise               = Just (PreExistingRun (flushWriteBuffer wb))
 
-    levels = flip concatMap ls $ \(Level ir rs) -> ir : map Single rs
+    levels = flip concatMap ls $ \case
+               EmptyLevel  -> []
+               Level ir rs -> toPreExisting ir : map PreExistingRun rs
+
+    toPreExisting (Single  _      r) = PreExistingRun r
+    toPreExisting (Merging _ _ _ mr) = PreExistingMergingRun mr
 
     trees = case ul of
         NoUnion   -> Nothing
@@ -1791,6 +1907,12 @@ expectCompletedChildren (PendingMerge mt prs trees) = do
 expectCompletedMergingTree :: HasCallStack => MergingTree s -> ST s Run
 expectCompletedMergingTree = expectInvariant . isCompletedMergingTree
 
+getCompletedMergingTree :: MergingTree s -> ST s (Maybe Run)
+getCompletedMergingTree t =
+    evalInvariant (isCompletedMergingTree t) >>= \case
+      Left _  -> pure Nothing
+      Right r -> pure (Just r)
+
 -------------------------------------------------------------------------------
 -- Measurements
 --
@@ -1799,7 +1921,7 @@ data MTree r = MLeaf r
              | MNode TreeMergeType [MTree r]
   deriving stock (Eq, Foldable, Functor, Show)
 
-allLevels :: LSM s -> ST s (Buffer, [[Run]], Maybe (MTree Run))
+allLevels :: LSM s -> ST s (WriteBuffer, [[Run]], Maybe (MTree Run))
 allLevels (LSMHandle _ _ _conf lsmr) = do
     LSMContent wb ls ul <- readSTRef lsmr
     rs <- flattenLevels ls
@@ -1812,11 +1934,12 @@ flattenLevels :: Levels s -> ST s [[Run]]
 flattenLevels = mapM flattenLevel
 
 flattenLevel :: Level s -> ST s [Run]
+flattenLevel EmptyLevel    = pure []
 flattenLevel (Level ir rs) = (++ rs) <$> flattenIncomingRun ir
 
 flattenIncomingRun :: IncomingRun s -> ST s [Run]
 flattenIncomingRun = \case
-    Single r         -> pure [r]
+    Single _ r       -> pure [r]
     Merging _ _ _ mr -> flattenMergingRun mr
 
 flattenMergingRun :: MergingRun t s -> ST s [Run]
@@ -1851,8 +1974,9 @@ logicalValue lsm = do
     (wb, levels, tree) <- allLevels lsm
     let r = mergek
               MergeLevel
-              (wb : concat levels ++ toList (mergeTree <$> tree))
-    pure (Map.mapMaybe justInsert r)
+              (Run (bufferEntries wb)  -- we don't flush, but treat wb as a run
+                : concat levels ++ toList (mergeTree <$> tree))
+    pure (Map.mapMaybe justInsert (runEntries r))
   where
     mergeTree :: MTree Run -> Run
     mergeTree (MLeaf r)     = r
@@ -1862,7 +1986,7 @@ logicalValue lsm = do
     justInsert  Delete      = Nothing
     justInsert (Mupsert v)  = Just (v, Nothing)
 
-type Representation = (Run, [LevelRepresentation], Maybe (MTree Run))
+type Representation = (WriteBuffer, [LevelRepresentation], Maybe (MTree Run))
 
 type LevelRepresentation =
     (Maybe (MergePolicyForLevel, NominalDebt, NominalCredit,
@@ -1879,7 +2003,9 @@ dumpRepresentation (LSMHandle _ _ _conf lsmr) = do
     pure (wb, levels, tree)
 
 dumpLevel :: Level s -> ST s LevelRepresentation
-dumpLevel (Level (Single r) rs) =
+dumpLevel EmptyLevel =
+    pure (Nothing, [])
+dumpLevel (Level (Single _ r) rs) =
     pure (Nothing, (r:rs))
 dumpLevel (Level (Merging mp nd ncv (MergingRun mt _ ref)) rs) = do
     mrs <- readSTRef ref
@@ -1892,31 +2018,30 @@ dumpLevel (Level (Merging mp nd ncv (MergingRun mt _ ref)) rs) = do
 representationShape :: Representation
                     -> (Int, [([Int], [Int])], Maybe (MTree Int))
 representationShape (wb, levels, tree) =
-    (summaryRun wb, map summaryLevel levels, fmap (fmap summaryRun) tree)
+    (writeBufferSize wb, map summaryLevel levels, fmap (fmap runSize) tree)
   where
     summaryLevel (mmr, rs) =
       let (ongoing, complete) = summaryMR mmr
-      in (ongoing, complete <> map summaryRun rs)
-
-    summaryRun = runSize
+      in (ongoing, complete <> map runSize rs)
 
     summaryMR = \case
       Nothing                          -> ([], [])
-      Just (_, _, _, _, CompletedMerge r)    -> ([], [summaryRun r])
-      Just (_, _, _, _, OngoingMerge _ rs _) -> (map summaryRun rs, [])
+      Just (_, _, _, _, CompletedMerge r)    -> ([], [runSize r])
+      Just (_, _, _, _, OngoingMerge _ rs _) -> (map runSize rs, [])
 
 -------------------------------------------------------------------------------
 -- Tracing
 --
 
 -- TODO: these events are incomplete, in particular we should also trace what
--- happens in the union level.
+-- happens in the union level. Somewhat related: issue #445.
 data Event =
     NewTableEvent TableId LSMConfig
   | UpdateEvent TableId Key Entry
   | LookupEvent TableId Key
   | DuplicateEvent TableId TableId
   | UnionsEvent TableId [TableId]
+  | SupplyUnionCreditsEvent TableId Credit
   | LevelEvent TableId (EventAt EventDetail)
   deriving stock Show
 
@@ -1946,9 +2071,12 @@ data EventDetail =
       }
   | SingleRunCompletedEvent Run
 
+  | UnionLevelMigratedEvent Run
+
   | RunTooSmallForLevelEvent MergePolicyForLevel Run
   | LevelIsFullEvent MergePolicyForLevel
   | LevelIsNotFullEvent MergePolicyForLevel
+  | LevelWasEmptyEvent
   deriving stock Show
 
 -------------------------------------------------------------------------------
@@ -1974,8 +2102,26 @@ instance (QC.Arbitrary v, QC.Arbitrary b) => QC.Arbitrary (Update v b) where
       , (1, pure Delete)
       ]
 
+instance QC.Arbitrary Run where
+  arbitrary = Run <$> QC.arbitrary
+  shrink = map Run . QC.shrink . runEntries
+
 instance QC.Arbitrary LevelMergeType where
   arbitrary = QC.elements [MergeMidLevel, MergeLastLevel]
 
 instance QC.Arbitrary TreeMergeType where
   arbitrary = QC.elements [MergeLevel, MergeUnion]
+
+instance QC.Arbitrary LSMConfig where
+  arbitrary = do
+      configMaxWriteBufferSize <- QC.chooseInt (1, 10)
+      configSizeRatio <- QC.chooseInt (2, 8)
+      pure LSMConfig {configMaxWriteBufferSize, configSizeRatio}
+  shrink (LSMConfig size ratio) =
+      [ LSMConfig size' ratio'
+      | (size', ratio') <- QC.liftShrink2 QC.shrink shrinkSizeRatio (size, ratio)
+      , size' >= 1
+      ]
+    where
+      shrinkSizeRatio 4 = []
+      shrinkSizeRatio _ = [4]  -- try shrinking to four, the default ratio

@@ -107,7 +107,7 @@ countNoisyErrors = getSum . bfoldMapC @IsNoisy (Sum . length . Prelude.filter is
 
 -- | Like 'simErrorHasFSLogged', but also produces a simulated 'HasBlockIO'.
 simErrorHasBlockIOLogged ::
-     forall m. (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
+     forall m. (MonadMask m, MonadMVar m, PrimMonad m, MonadSTM m)
   => StrictTMVar m MockFS
   -> StrictTVar m Errors
   -> StrictTVar m (HKD [])
@@ -123,7 +123,7 @@ simErrorHasBlockIOLogged fsVar errorsVar logVar = do
 -- Every time a 'HasFS' primitive is used and an error from 'Errors' is used, it
 -- will be logged in 'ErrorsLog'.
 simErrorHasFSLogged ::
-     forall m. (MonadSTM m, MonadThrow m, PrimMonad m)
+     forall m. (MonadSTM m, MonadMask m, PrimMonad m)
   => StrictTMVar m MockFS
   -> StrictTVar m Errors
   -> StrictTVar m ErrorsLog

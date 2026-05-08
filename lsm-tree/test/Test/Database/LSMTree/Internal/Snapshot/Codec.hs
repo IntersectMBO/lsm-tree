@@ -9,6 +9,8 @@ import           Codec.CBOR.Read
 import           Codec.CBOR.Write
 import           Control.DeepSeq (NFData)
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.List as List
+import           Data.Ord (comparing)
 import           Data.Proxy
 import qualified Data.Text as Text
 import           Data.Typeable
@@ -29,7 +31,12 @@ import           Test.Util.Arbitrary
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
       testGroup "SnapshotVersion" [
-          testProperty "roundtripCBOR" $ roundtripCBOR (Proxy @SnapshotVersion)
+          testProperty "lastVersionIsCurrent" $
+            currentSnapshotVersion === last allCompatibleSnapshotVersions
+        , testProperty "versionOrderingCorrect" $
+            List.sort allCompatibleSnapshotVersions
+              === List.sortBy (comparing show) allCompatibleSnapshotVersions
+        , testProperty "roundtripCBOR" $ roundtripCBOR (Proxy @SnapshotVersion)
         , testProperty "roundtripFlatTerm" $ roundtripFlatTerm (Proxy @SnapshotVersion)
         ]
     , testGroup "Versioned SnapshotMetaData" [
@@ -191,9 +198,10 @@ testAll test = [
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotVersion where
-  arbitrary = elements [V0, V1]
+  arbitrary = elements [V0, V1, V2]
   shrink V0 = []
   shrink V1 = [V0]
+  shrink V2 = [V0, V1]
 
 deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 
@@ -288,7 +296,9 @@ instance Arbitrary r => Arbitrary (SnapLevels r) where
 
 instance Arbitrary r => Arbitrary (SnapLevel r) where
   arbitrary = SnapLevel <$> arbitrary <*> arbitraryShortVector
-  shrink (SnapLevel a b) = [SnapLevel a' b' | (a', b') <- shrink (a, b)]
+  shrink SnapEmptyLevel  = []
+  shrink (SnapLevel a b) = SnapEmptyLevel
+                         : [SnapLevel a' b' | (a', b') <- shrink (a, b)]
 
 arbitraryShortVector :: Arbitrary a => Gen (V.Vector a)
 arbitraryShortVector = V.fromList <$> vectorOfUpTo 5 arbitrary

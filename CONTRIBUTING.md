@@ -117,8 +117,8 @@ To publish a release for a package, follow the steps below:
 
 * Changelog checks (`CHANGELOG.md`):
   * Check that all user-facing changes have been recorded.
-  * Check that each changelog entry has a `BREAKING`, `NON-BREAKING`, or `PATCH`
-    level.
+  * Check that each changelog entry is in one of these sections: `Breaking
+    changes`, `New features`, `Minor changes`, or `Bug fixes`.
   * Check that each changelog entry links to a PR, if applicable.
   * Add or update the changelog's section header with the package version that
     is going to be released, and the date of the release. The version should be

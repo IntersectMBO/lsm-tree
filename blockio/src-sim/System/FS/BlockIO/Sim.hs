@@ -207,7 +207,7 @@ simCreateHardLink hfs sourcePath targetPath =
 -- If you want to have access to the current state of the mocked file system,
 -- use 'simHasBlockIO' instead.
 runSimHasBlockIO ::
-     (MonadSTM m, PrimMonad m, MonadCatch m, MonadMVar m)
+     (MonadSTM m, PrimMonad m, MonadMask m, MonadMVar m)
   => MockFS
   -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m a)
   -> m (a, MockFS)
@@ -230,7 +230,7 @@ runSimHasBlockIO mockFS k = do
 -- If you want to have access to the current state of the mocked file system
 -- or stream of errors, use 'simErrorHasBlockIO' instead.
 runSimErrorHasBlockIO ::
-     (MonadSTM m, PrimMonad m, MonadCatch m, MonadMVar m)
+     (MonadSTM m, PrimMonad m, MonadMask m, MonadMVar m)
   => MockFS
   -> Errors
   -> (HasFS m HandleMock -> HasBlockIO m HandleMock -> m a)
@@ -256,7 +256,7 @@ runSimErrorHasBlockIO mockFS errs k = do
 -- the user by reading @mockFsVar@, but note that the user should not leave
 -- @mockFsVar@ empty.
 simHasBlockIO ::
-     (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
+     (MonadMask m, MonadMVar m, PrimMonad m, MonadSTM m)
   => StrictTMVar m MockFS
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simHasBlockIO var = do
@@ -273,7 +273,7 @@ simHasBlockIO var = do
 -- If you want to have access to the current state of the mocked file system,
 -- use 'simHasBlockIO' instead.
 simHasBlockIO' ::
-     (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
+     (MonadMask m, MonadMVar m, PrimMonad m, MonadSTM m)
   => MockFS
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
 simHasBlockIO' mockFS = do
@@ -293,7 +293,7 @@ simHasBlockIO' mockFS = do
 -- @errorsVar@. The current state of the stream of errors can be accessed by the
 -- user by reading @errorsVar@.
 simErrorHasBlockIO ::
-     forall m. (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
+     forall m. (MonadMask m, MonadMVar m, PrimMonad m, MonadSTM m)
   => StrictTMVar m MockFS
   -> StrictTVar m Errors
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)
@@ -314,7 +314,7 @@ simErrorHasBlockIO fsVar errorsVar = do
 -- If you want to have access to the current state of the mocked file system
 -- or stream of errors, use 'simErrorHasBlockIO' instead.
 simErrorHasBlockIO' ::
-     (MonadCatch m, MonadMVar m, PrimMonad m, MonadSTM m)
+     (MonadMask m, MonadMVar m, PrimMonad m, MonadSTM m)
   => MockFS
   -> Errors
   -> m (HasFS m HandleMock, HasBlockIO m HandleMock)

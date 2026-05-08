@@ -1,6 +1,6 @@
 cabal-version:   3.4
 name:            lsm-tree
-version:         1.0.0.1
+version:         1.0.0.2
 synopsis:        Log-structured merge-trees
 description:
   This package contains an efficient implementation of on-disk key–value storage, implemented as a log-structured merge-tree, LSM-tree or LSMT.
@@ -502,7 +502,7 @@ source-repository this
   type:     git
   location: https://github.com/IntersectMBO/lsm-tree
   subdir:   lsm-tree
-  tag:      lsm-tree-1.0.0.1
+  tag:      lsm-tree-1.0.0.2
 
 common warnings
   ghc-options:
@@ -528,6 +528,7 @@ common language
     ExplicitNamespaces
     GADTs
     LambdaCase
+    OverloadedRecordDot
     RecordWildCards
     RoleAnnotations
     ViewPatterns
@@ -540,12 +541,12 @@ library
     Database.LSMTree.Simple
 
   build-depends:
-    , base                    >=4.16   && <4.22
+    , base                    >=4.16   && <4.23
     , blockio                 ^>=0.1
     , contra-tracer           ^>=0.1   || ^>=0.2
     , deepseq                 ^>=1.4   || ^>=1.5
     , fs-api                  ^>=0.4
-    , io-classes              ^>=1.6   || ^>=1.7 || ^>=1.8.0.1
+    , io-classes              ^>=1.6   || ^>=1.7 || ^>=1.8.0.1 || ^>=1.9 || ^>=1.10
     , io-classes:strict-mvar
     , lsm-tree:control
     , lsm-tree:core
@@ -617,19 +618,19 @@ library core
     Database.LSMTree.Internal.WriteBufferWriter
 
   build-depends:
-    , base                    >=4.16      && <4.22
+    , base                    >=4.16      && <4.23
     , bitvec                  ^>=1.1
     , blockio                 ^>=0.1
     , bloomfilter-blocked     ^>=0.1
     , bytestring              ^>=0.11.4.0 || ^>=0.12.1.0
     , cborg                   ^>=0.2.10.0
-    , containers              ^>=0.6      || ^>=0.7
+    , containers              ^>=0.6      || ^>=0.7      || ^>=0.8
     , contra-tracer           ^>=0.1      || ^>=0.2
     , crc32c                  ^>=0.2.1
     , deepseq                 ^>=1.4      || ^>=1.5
     , filepath                ^>=1.4      || ^>=1.5
     , fs-api                  ^>=0.4
-    , io-classes              ^>=1.6      || ^>=1.7      || ^>=1.8.0.1
+    , io-classes              ^>=1.6      || ^>=1.7      || ^>=1.8.0.1 || ^>=1.9 || ^>=1.10
     , io-classes:strict-mvar
     , lsm-tree:control
     , lsm-tree:kmerge
@@ -663,7 +664,7 @@ library extras
     Database.LSMTree.Extras.UTxO
 
   build-depends:
-    , base                    >=4.16 && <4.22
+    , base                    >=4.16 && <4.23
     , bitvec
     , blockio
     , bytestring
@@ -780,7 +781,7 @@ test-suite lsm-tree-test
     , io-classes
     , io-classes:strict-mvar
     , io-classes:strict-stm
-    , io-sim
+    , io-sim                  <1.10
     , lsm-tree
     , lsm-tree:control
     , lsm-tree:core
@@ -798,7 +799,7 @@ test-suite lsm-tree-test
     , safe-wild-cards
     , semialign
     , split
-    , tasty
+    , tasty                   <1.5.3.0
     , tasty-golden
     , tasty-hunit
     , tasty-quickcheck
@@ -1026,7 +1027,7 @@ test-suite kmerge-test
   hs-source-dirs: test
   main-is:        kmerge-test.hs
   build-depends:
-    , base              >=4.16 && <4.22
+    , base              >=4.16 && <4.23
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -1045,7 +1046,7 @@ benchmark kmerge-bench
   main-is:        kmerge-test.hs
   cpp-options:    -DKMERGE_BENCHMARKS
   build-depends:
-    , base              >=4.16 && <4.22
+    , base              >=4.16 && <4.23
     , deepseq
     , heaps
     , lsm-tree:kmerge
@@ -1063,7 +1064,7 @@ test-suite map-range-test
   hs-source-dirs: test
   main-is:        map-range-test.hs
   build-depends:
-    , base              >=4.16 && <4.22
+    , base              >=4.16 && <4.23
     , bytestring
     , containers
     , lsm-tree:core
@@ -1099,6 +1100,7 @@ test-suite prototypes-test
     Test.FormatPage
     Test.ScheduledMerges
     Test.ScheduledMerges.RunSizes
+    Test.ScheduledMergesDL
     Test.ScheduledMergesQLS
 
   build-depends:
@@ -1127,9 +1129,9 @@ library control
     Control.RefCount
 
   build-depends:
-    , base                   >=4.16 && <4.22
+    , base                   >=4.16 && <4.23
     , deepseq                ^>=1.4 || ^>=1.5
-    , io-classes             ^>=1.6 || ^>=1.7 || ^>=1.8.0.1
+    , io-classes             ^>=1.6 || ^>=1.7 || ^>=1.8.0.1 || ^>=1.9 || ^>=1.10
     , io-classes:strict-stm
     , primitive              ^>=0.9
 
