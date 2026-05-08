@@ -386,9 +386,10 @@ toSnapLevel ::
      (PrimMonad m, MonadMVar m)
   => Level m h
   -> m (SnapLevel (Ref (Run m h)))
-toSnapLevel level = do
-    sir <- toSnapIncomingRun level.incomingRun
-    pure (SnapLevel sir level.residentRuns)
+toSnapLevel EmptyLevel = pure SnapEmptyLevel
+toSnapLevel (Level incomingRun residentRuns) = do
+      sir <- toSnapIncomingRun incomingRun
+      pure (SnapLevel sir residentRuns)
 
 {-# SPECIALISE toSnapIncomingRun :: IncomingRun IO h -> IO (SnapIncomingRun (Ref (Run IO h))) #-}
 toSnapIncomingRun ::
