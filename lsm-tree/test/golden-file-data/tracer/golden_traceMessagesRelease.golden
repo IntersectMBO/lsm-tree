@@ -45,15 +45,15 @@ TraceTable (TableId 20) (TraceCreatedTable (SessionId session-dir) (TableConfig 
 TraceTable (TableId 21) (TraceIncrementalUnions (TableId 0 :| [TableId 12,TableId 20]))
 TraceTable (TableId 21) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
 TraceTable (TableId 21) TraceRemainingUnionDebt
-TraceTable (TableId 21) (TraceSupplyUnionCredits 42019)
-TraceTable (TableId 21) (TraceSuppliedUnionCredits 42019 4005)
+TraceTable (TableId 21) (TraceSupplyUnionCredits 42020)
+TraceTable (TableId 21) (TraceSuppliedUnionCredits 42020 4006)
 TraceTable (TableId 21) TraceCloseTable
 TraceTable (TableId 21) TraceClosedTable
 TraceTable (TableId 30) (TraceIncrementalUnions (TableId 0 :| [TableId 12,TableId 20]))
 TraceTable (TableId 30) (TraceCreatedTable (SessionId session-dir) (TableConfig {confMergePolicy = LazyLevelling, confMergeSchedule = Incremental, confSizeRatio = Four, confWriteBufferAlloc = AllocNumEntries 1000, confBloomFilterAlloc = AllocRequestFPR 1.0e-3, confFencePointerIndex = OrdinaryIndex, confDiskCachePolicy = DiskCacheAll, confMergeBatchSize = MergeBatchSize 1000}))
 TraceTable (TableId 30) TraceRemainingUnionDebt
-TraceTable (TableId 30) (TraceSupplyUnionCredits 30027)
-TraceTable (TableId 30) (TraceSuppliedUnionCredits 30027 3)
+TraceTable (TableId 30) (TraceSupplyUnionCredits 30028)
+TraceTable (TableId 30) (TraceSuppliedUnionCredits 30028 4)
 TraceTable (TableId 30) TraceRemainingUnionDebt
 TraceTable (TableId 30) (TraceSupplyUnionCredits 1)
 TraceTable (TableId 30) (TraceSuppliedUnionCredits 1 1)

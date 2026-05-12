@@ -1141,8 +1141,15 @@ incrementalUnions tables = do
     Table <$> LSMT.unions (coerce tables)
 
 {- |
-Get the amount of remaining union debt.
+Get an /upper bound/ for the amount of remaining union debt.
 This includes the union debt of any table that was part of the union's input.
+
+The exact amount of debt returned for a given table is an implementation detail
+and not guaranteed to be stable across versions of @lsm-tree@.
+Within the same version, the union debt of a table can never increase. However,
+it can get decreased by operations on /another/ table if these tables share part
+of their internal structure (e.g. due to one being a union input or duplicate of
+the other).
 
 The worst-case disk I\/O complexity of this operation is \(O(0)\).
 -}
