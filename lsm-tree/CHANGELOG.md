@@ -1,6 +1,6 @@
 # Revision history for `lsm-tree`
 
-## Unreleased
+## 1.1.0.0 -- 2026-05-13
 
 ### Breaking changes
 
@@ -12,7 +12,7 @@
 
 ### New features
 
-### Full API
+#### Full API
 
 * Add a new `importSnapshot` function for importing snapshots from outside a
   session into that session. See [PR
@@ -33,12 +33,10 @@
 
 ### Minor changes
 
-* Update to `fs-sim ^>=0.5`. See PR
-  [#845](https://github.com/IntersectMBO/lsm-tree/pull/845).
 * Optimise internal structure of tables containing a completed union.
   See [PR #838](https://github.com/IntersectMBO/lsm-tree/pull/838).
 
-### Full API
+#### Full API
 
 * Deprecate `withOpenSessionIO` in favour of `withOpenMountedSessionIO`.
   `withOpenSessionIO` is generally unsafe to use with the new `importSnapshot`

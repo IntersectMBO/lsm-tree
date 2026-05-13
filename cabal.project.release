@@ -1,7 +1,7 @@
 index-state:
   -- Bump this if you need newer packages from Hackage
-  -- current date: blockio-uring-0.2.0.0
-  , hackage.haskell.org 2026-04-30T10:58:23Z
+  -- current date: release lsm-tree-1.1.0.0 and blockio-0.2.0.0
+  , hackage.haskell.org 2026-05-13T00:00:00Z
 
 packages:
   ./lsm-tree

@@ -1,6 +1,6 @@
 # Revision history for blockio
 
-## Next version -- unreleased
+## 0.2.0.0 -- 2026-05-13
 
 ### Breaking changes
 
