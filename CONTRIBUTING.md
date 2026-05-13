@@ -113,7 +113,9 @@ like `A.B.C.D`.
 * `D` is the *patch* version number. A bump indicates a small, non-breaking
   patch.
 
-To publish a release for a package, follow the steps below:
+To publish a release for a package, follow the steps below. If you want to
+release multiple packages, it is best follow the steps for each package
+separately, publishing a package before publising its dependent packages.
 
 * Changelog checks (`CHANGELOG.md`):
   * Check that all user-facing changes have been recorded.
@@ -132,3 +134,25 @@ To publish a release for a package, follow the steps below:
   * Update the `index-state` in the `cabal.project.release` file to the current
     date-time, or the closest valid date-time to the current date-time, so that
     CI builds and tests the libraries with the newest versions of dependencies.
+
+* Pull requests:
+  * Open a PR with the changes from previous steps.
+  * Get the PR approved and merge it into `main`.
+
+* Push git tags:
+  * Tag the resulting merge commit on `main` with a tag of the form
+    `foo-A.B.C.D` where `foo` is the package name.
+  * Push the tag to the repository.
+  * When a tag of this form is pushed, a workflow run of [CI - Check release
+    builds](./.github/workflows/) is triggered. If multiple tags are pushed at
+    the same time, then each tag will trigger a separate workflow run.
+  * Check that this workflow run succeeds before proceeding. If the workflow run
+    fails, troubleshoot and retry tagging.
+
+* Publish:
+  * Run `cabal sdist foo` where `foo` is the package name.
+  * [Upload](https://hackage.haskell.org/upload) the resulting archive to
+  `Hackage`. It might be useful to first upload a [package
+  *candidate*](https://hackage.haskell.org/upload#candidates) before publishing
+  the package once and for all.
+  * Manually upload Haddock documentation for the package if necessary.
