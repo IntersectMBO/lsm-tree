@@ -198,7 +198,7 @@ readKOps offset run = do
       Reader.next reader >>= \case
         Reader.Empty -> pure []
         Reader.ReadEntry key e -> do
-          let fs = Reader.readerHasFS reader
+          let fs = reader.hasFS
           e' <- traverse (readRawBlobRef fs) $ Reader.toFullEntry e
           ((key, e') :) <$> go reader
 

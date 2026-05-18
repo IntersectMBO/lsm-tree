@@ -220,9 +220,9 @@ mkLevelsCache reg lvls = do
       lvls
     pure $! LevelsCache_ {
         cachedRuns      = rs
-      , cachedFilters   = mapStrict (\(DeRef r) -> Run.runFilter   r) rs
-      , cachedIndexes   = mapStrict (\(DeRef r) -> Run.runIndex    r) rs
-      , cachedKOpsFiles = mapStrict (\(DeRef r) -> Run.runKOpsFile r) rs
+      , cachedFilters   = mapStrict (\(DeRef r) -> r.bloomFilter) rs
+      , cachedIndexes   = mapStrict (\(DeRef r) -> r.index      ) rs
+      , cachedKOpsFiles = mapStrict (\(DeRef r) -> r.kOpsFile   ) rs
       }
   where
     dupRun r = withRollback reg (dupRef r) releaseRef

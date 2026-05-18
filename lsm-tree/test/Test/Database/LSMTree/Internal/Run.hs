@@ -223,8 +223,8 @@ prop_WriteAndOpen fs hbio wb =
       Run.size written @=? Run.size loaded
       withRef written $ \written' ->
         withRef loaded $ \loaded' -> do
-          runFilter written' @=? runFilter loaded'
-          runIndex  written' @=? runIndex  loaded'
+          written'.bloomFilter @=? loaded'.bloomFilter
+          written'.index       @=? loaded'.index
 
       writtenKOps <- readKOps Nothing written
       loadedKOps  <- readKOps Nothing loaded

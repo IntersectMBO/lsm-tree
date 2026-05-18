@@ -1,6 +1,6 @@
-{-# LANGUAGE CPP                 #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE CPP       #-}
+{-# LANGUAGE DataKinds #-}
+
 {-# OPTIONS_HADDOCK not-home #-}
 
 -- | This module brings together the internal parts to provide an API in terms
@@ -1235,9 +1235,9 @@ lookups resolve ks t = do
           resolve
           (tableSessionSalt tEnv)
           runs
-          (V.mapStrict (\(DeRef r) -> Run.runFilter   r) runs)
-          (V.mapStrict (\(DeRef r) -> Run.runIndex    r) runs)
-          (V.mapStrict (\(DeRef r) -> Run.runKOpsFile r) runs)
+          (V.mapStrict (\(DeRef r) -> r.bloomFilter) runs)
+          (V.mapStrict (\(DeRef r) -> r.index      ) runs)
+          (V.mapStrict (\(DeRef r) -> r.kOpsFile   ) runs)
           ks
 
 {-# SPECIALISE rangeLookup ::

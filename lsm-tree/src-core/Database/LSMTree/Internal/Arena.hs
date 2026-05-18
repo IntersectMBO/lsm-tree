@@ -2,7 +2,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NoFieldSelectors      #-}
-{-# LANGUAGE OverloadedRecordDot   #-}
 {-# OPTIONS_HADDOCK not-home #-}
 module Database.LSMTree.Internal.Arena (
     ArenaManager,

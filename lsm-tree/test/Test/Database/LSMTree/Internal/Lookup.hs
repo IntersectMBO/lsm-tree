@@ -341,9 +341,9 @@ prop_roundtripFromWriteBufferLookupIO (SmallList dats) =
         testSalt
         wb wbblobs
         runs
-        (V.map (\(DeRef r) -> Run.runFilter   r) runs)
-        (V.map (\(DeRef r) -> Run.runIndex    r) runs)
-        (V.map (\(DeRef r) -> Run.runKOpsFile r) runs)
+        (V.map (\(DeRef r) -> r.bloomFilter) runs)
+        (V.map (\(DeRef r) -> r.index) runs)
+        (V.map (\(DeRef r) -> r.kOpsFile) runs)
         keys
     pure $ modelres === realres
   where
