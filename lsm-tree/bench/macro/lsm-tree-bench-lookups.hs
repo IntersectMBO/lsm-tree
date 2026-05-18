@@ -384,9 +384,9 @@ lookupsEnv runSizes keyRng0 hfs hbio refCtx caching = do
 
     -- return runs
     runs <- V.fromList <$> mapM (Run.fromBuilder refCtx) rbs
-    let blooms  = V.map (\(DeRef r) -> Run.runFilter   r) runs
-        indexes = V.map (\(DeRef r) -> Run.runIndex    r) runs
-        handles = V.map (\(DeRef r) -> Run.runKOpsFile r) runs
+    let blooms  = V.map (\(DeRef r) -> r.bloomFilter) runs
+        indexes = V.map (\(DeRef r) -> r.index      ) runs
+        handles = V.map (\(DeRef r) -> r.kOpsFile   ) runs
     pure $!! (runs, blooms, indexes, handles)
 
 genLookupBatch :: StdGen -> Int -> (V.Vector SerialisedKey, StdGen)

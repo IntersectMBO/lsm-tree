@@ -127,20 +127,15 @@ prop_MergeDistributes fs hbio mergeType stepSize (SmallList rds) = withRefCtx $ 
     vals = concatMap (bifoldMap pure mempty . snd) kops
     isLarge = not . uncurry entryWouldFitInPage
 
-    getRunContent run@(DeRef Run.Run {
-                         Run.runFilter,
-                         Run.runIndex,
-                         Run.runKOpsFile,
-                         Run.runBlobFile
-                       }) = do
+    getRunContent run@(DeRef r) = do
       runSize         <- evaluate (Run.size run)
       runKOps         <- readKOps Nothing run
-      kopsFileContent <- FS.hGetAll fs runKOpsFile
-      blobFileContent <- withRef runBlobFile $
+      kopsFileContent <- FS.hGetAll fs r.kOpsFile
+      blobFileContent <- withRef r.blobFile $
                          FS.hGetAll fs . BlobFile.blobFileHandle
       pure ( runSize
-             , runFilter
-             , runIndex
+             , r.bloomFilter
+             , r.index
              , runKOps
              , kopsFileContent
              , blobFileContent
