@@ -2009,6 +2009,12 @@ exportSnapshot sesh snap destinationPath = do
         -- Create hard links for all files in the destination directory
         FS.hardLinkDirectoryRecursive hfs hbio reg sourcePath destinationPath
 
+        -- Copy the session's salt (stored in the session metadata file) into
+        -- the exported snapshot, so that the snapshot is self-contained.
+        let saltSource = Paths.metadataFile (sessionRoot seshEnv)
+            saltDest = Paths.exportedSnapshotSaltFile destinationPath
+        FS.copyFile hfs reg saltSource saltDest
+
         -- Make the directory and its contents durable.
         FS.synchroniseDirectoryRecursive hfs hbio destinationPath
 
