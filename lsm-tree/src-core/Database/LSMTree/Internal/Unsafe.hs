@@ -84,6 +84,7 @@ module Database.LSMTree.Internal.Unsafe (
   , listSnapshots
   , importSnapshot
   , exportSnapshot
+  , newSessionImportingSnapshot
     -- * Multiple writable tables
   , duplicate
     -- * Table union
@@ -1965,6 +1966,48 @@ importSnapshot sesh snap sourcePath = do
         -- succesfully performed
         delayedCommit reg $
           traceWith sesh.sessionTracer $ TraceImportedSnapshot snap
+
+{-# SPECIALISE newSessionImportingSnapshot ::
+     Tracer IO LSMTreeTrace
+  -> HasFS IO h
+  -> HasBlockIO IO h
+  -> FsPath
+  -> SnapshotName
+  -> FsPath
+  -> IO (Session IO h) #-}
+-- | Create a new session and import a snapshot into it. Unlike 'newSession', this
+-- does not take a 'Bloom.Salt': instead, the salt is read from the @salt@ file
+-- that 'exportSnapshot' wrote alongside the exported snapshot, so that the
+-- imported snapshot's Bloom filters are validated against the salt they were
+-- built with.
+newSessionImportingSnapshot ::
+     forall m h.
+     (MonadSTM m, MonadMVar m, PrimMonad m, MonadMask m, MonadEvaluate m)
+  => Tracer m LSMTreeTrace
+  -> HasFS m h
+  -> HasBlockIO m h
+  -> FsPath -- ^ Path to the (new) session directory
+  -> SnapshotName -- ^ The name to import the snapshot as
+  -> FsPath -- ^ Path to the exported snapshot directory
+  -> m (Session m h)
+newSessionImportingSnapshot tr hfs hbio dir snap sourcePath = do
+    -- Read the salt that 'exportSnapshot' copied alongside the snapshot.
+    sourceExists <- FS.doesDirectoryExist hfs sourcePath
+    unless sourceExists $ throwIO (SnapshotImportDirDoesNotExistError sourcePath)
+    let saltPath = Paths.exportedSnapshotSaltFile sourcePath
+    saltExists <- FS.doesFileExist hfs saltPath
+    unless saltExists $ throwIO (SnapshotImportDirDoesNotExistError sourcePath)
+    salt <-
+      FS.withFile hfs saltPath FS.ReadMode $ \h -> do
+        bs <- FS.hGetAll hfs h
+        evaluate $ S.deserialise bs
+
+    -- Create the new session with that salt, then import the snapshot into it.
+    -- If importing fails, close the freshly-created session before re-throwing.
+    sesh <- newSession tr hfs hbio salt dir
+    flip onException (closeSession sesh) $
+      importSnapshot sesh snap sourcePath
+    pure sesh
 
 -- | A snapshot was intended to be exported, but the destination directory
 -- already exists.
