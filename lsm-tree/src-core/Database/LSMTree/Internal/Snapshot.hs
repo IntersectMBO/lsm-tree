@@ -48,6 +48,7 @@ import           Data.String (IsString)
 import           Data.Text (Text)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
+import           Database.LSMTree.Internal.BloomFilter.Acc (RunBloomFilterAlloc)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
@@ -545,12 +546,13 @@ openWriteBuffer reg resolve hfs hbio refCtx uc activeDir snapWriteBufferPaths = 
 data SnapshotRun = SnapshotRun {
        snapRunNumber  :: !RunNumber,
        snapRunCaching :: !Run.RunDataCaching,
+       filterAlloc    :: !RunBloomFilterAlloc,
        snapRunIndex   :: !Run.IndexType
      }
   deriving stock Eq
 
 instance NFData SnapshotRun where
-  rnf (SnapshotRun a b c) = rnf a `seq` rnf b `seq` rnf c
+  rnf (SnapshotRun a b c d) = rnf a `seq` rnf b `seq` rnf c `seq` rnf d
 
 {-# SPECIALISE snapshotRun ::
      HasFS IO h
@@ -580,6 +582,7 @@ snapshotRun hfs hbio snapUc reg (NamedSnapshotDir targetDir) run = do
     pure SnapshotRun {
            snapRunNumber  = runNumber targetPaths,
            snapRunCaching = Run.runDataCaching run,
+           filterAlloc    = Run.runFilterAlloc run,
            snapRunIndex   = Run.runIndexType run
          }
 
@@ -619,6 +622,7 @@ openRun hfs hbio refCtx uc reg
         SnapshotRun {
           snapRunNumber  = runNum,
           snapRunCaching = caching,
+          filterAlloc    = filterAlloc,
           snapRunIndex   = indexType
         } = do
     let sourcePaths = RunFsPaths sourceDir runNum
@@ -627,7 +631,7 @@ openRun hfs hbio refCtx uc reg
     hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
 
     withRollback reg
-      (Run.openFromDisk hfs hbio refCtx caching indexType expectedSalt targetPaths)
+      (Run.openFromDisk hfs hbio refCtx caching filterAlloc indexType expectedSalt targetPaths)
       releaseRef
 
 {-------------------------------------------------------------------------------
