@@ -1,23 +1,9 @@
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
-import           Control.DeepSeq (deepseq)
-import           Control.Exception (Exception (..), displayException)
-import           Control.Monad (void)
-import qualified Control.Monad.IOSim as IOSim
-import           Data.Bits ((.&.))
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as BS.Builder
-import qualified Data.ByteString.Builder.Extra as BS.Builder
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.List as List
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
-import           Data.Word (Word32, Word64, byteSwap32)
-import qualified System.FS.API as FS
-import qualified System.FS.API.Strict as FS
-import qualified System.FS.Sim.MockFS as MockFS
-import qualified System.FS.Sim.STM as FSSim
+import           Data.Word (Word64)
 
 import           Test.QuickCheck.Gen (genDouble)
 import           Test.QuickCheck.Instances ()
@@ -26,8 +12,6 @@ import           Test.Tasty.QuickCheck hiding ((.&.))
 
 import qualified Data.BloomFilter.Blocked as Bloom
 import           Database.LSMTree.Internal.BloomFilter
-import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
-                     FileFormat (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
 
@@ -35,14 +19,7 @@ import           Database.LSMTree.Internal.Serialise (SerialisedKey,
 -- to ensure we don't change the format without conciously bumping the version.
 tests :: TestTree
 tests = testGroup "Database.LSMTree.Internal.BloomFilter"
-    [ testProperty "roundtrip" roundtrip_prop
-      -- a specific case: 300 bits is just under 5x 64 bit words
-    , testProperty "roundtrip-3-300" $ roundtrip_prop (Positive (Small 3)) (Positive 300)
-    , testProperty "total-deserialisation" $ withMaxSuccess 10000 $
-        prop_total_deserialisation
-    , testProperty "total-deserialisation-whitebox" $ withMaxSuccess 10000 $
-        prop_total_deserialisation_whitebox
-    , testProperty "bloomQueries (bulk)" $
+    [ testProperty "bloomQueries (bulk)" $
         prop_bloomQueries
     , testProperty "prop_packUnpack_RunIxKeyIx" prop_packUnpack_RunIxKeyIx
     , testProperty "prop_packUnpack_RunIxKeyIx_limits" prop_packUnpack_RunIxKeyIx_limits
@@ -50,74 +27,6 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
 
 testSalt :: Bloom.Salt
 testSalt = 4
-
-roundtrip_prop :: Positive (Small Int) -> Positive Int ->  [Word64] -> Property
-roundtrip_prop (Positive (Small hfN)) (Positive bits) ws =
-    counterexample (show bs) $
-    case bloomFilterFromBS bs of
-      Left  err -> counterexample (displayException err) $ property False
-      Right rhs -> lhs === rhs
-  where
-    sz  = Bloom.BloomSize { sizeBits   = limitBits bits,
-                         sizeHashes = hfN }
-    lhs = Bloom.create sz testSalt (\b -> mapM_ (Bloom.insert b) ws)
-    bs  = LBS.toStrict (bloomFilterToLBS lhs)
-
-limitBits :: Int -> Int
-limitBits b = b .&. 0xffffff
-
-prop_total_deserialisation :: BS.ByteString -> Property
-prop_total_deserialisation bs =
-    case bloomFilterFromBS bs of
-      Left err ->
-        label (mkLabel err) $ property True
-      Right bf -> label "parsed successfully" $ property $
-        bf `deepseq` True
-  where
-    mkLabel err = case err of
-        IOSim.FailureException e
-          | Just (ErrFileFormatInvalid fsep FormatBloomFilterFile msg) <- fromException e
-          , let msg' = "Expected salt does not match actual salt"
-          , msg' `List.isPrefixOf` msg
-          -> displayException $ ErrFileFormatInvalid fsep FormatBloomFilterFile msg'
-        _ -> displayException err
-
--- | Write the bytestring to a file in the mock file system and then use
--- 'bloomFilterFromFile'.
-bloomFilterFromBS :: BS.ByteString -> Either IOSim.Failure (Bloom a)
-bloomFilterFromBS bs =
-    IOSim.runSim $ do
-      hfs <- FSSim.simHasFS' MockFS.empty
-      let file = FS.mkFsPath ["filter"]
-      -- write the bytestring
-      FS.withFile hfs file (FS.WriteMode FS.MustBeNew) $ \h -> do
-        void $ FS.hPutAllStrict hfs h bs
-      -- deserialise from file
-      FS.withFile hfs file FS.ReadMode $ \h ->
-        bloomFilterFromFile hfs testSalt h
-
--- Length is in bits. A large length would require significant amount of
--- memory, so we make it 'Small'.
-prop_total_deserialisation_whitebox :: Word32 -> Small Word64 -> Property
-prop_total_deserialisation_whitebox hsn (Small nbits) =
-      forAll genBytes $ \bytes ->
-      forAll genVersion $ \version ->
-        prop_total_deserialisation (prefix version <> BS.pack bytes)
-  where
-    genBytes   = do n <- choose (-1,1)
-                    vector (nbytes' + n)
-    nbytes     = (fromIntegral nbits+7) `div` 8
-    nbytes'    = ((nbytes + 63) `div` 64) * 64 -- rounded to nearest 64 bytes
-    genVersion = frequency [
-                   (6, pure bloomFilterVersion),
-                   (1, pure (byteSwap32 bloomFilterVersion)),
-                   (1, arbitrary)
-                 ]
-    prefix version =
-      LBS.toStrict $ BS.Builder.toLazyByteString $
-          BS.Builder.word32Host version
-       <> BS.Builder.word32Host hsn
-       <> BS.Builder.word64Host nbits
 
 newtype FPR = FPR Double deriving stock Show
 

@@ -24,6 +24,8 @@ import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import           Database.LSMTree.Internal.Snapshot.Codec.Monad (Env (Env),
+                     runDec)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Arbitrary
@@ -83,11 +85,15 @@ explicitRoundtripCBOR enc dec x = case back (there x) of
 
 -- | See 'explicitRoundtripCBOR'.
 roundtripCBOR :: (Encode a, Decode a, Eq a, Show a) => Proxy a -> a -> Property
-roundtripCBOR _ = explicitRoundtripCBOR encode decode
+roundtripCBOR _ = explicitRoundtripCBOR encode dec
+  where
+    dec = runDec decode (Env False (Just defaultTableConfig))
 
 -- | See 'explicitRoundtripCBOR'.
 roundtripCBOR' :: (Encode a, DecodeVersioned a, Eq a, Show a) => Proxy a -> a -> Property
-roundtripCBOR' _ = explicitRoundtripCBOR encode (decodeVersioned currentSnapshotVersion)
+roundtripCBOR' _ = explicitRoundtripCBOR encode dec
+  where
+    dec = runDec (decodeVersioned currentSnapshotVersion) (Env False (Just defaultTableConfig))
 
 -- | @fromFlatTerm . toFlatTerm = id@
 --
@@ -122,7 +128,9 @@ roundtripFlatTerm ::
   => Proxy a
   -> a
   -> Property
-roundtripFlatTerm _ = explicitRoundtripFlatTerm encode decode
+roundtripFlatTerm _ = explicitRoundtripFlatTerm encode dec
+  where
+    dec = runDec decode (Env False (Just defaultTableConfig))
 
 -- | See 'explicitRoundtripFlatTerm'.
 roundtripFlatTerm' ::
@@ -130,7 +138,9 @@ roundtripFlatTerm' ::
   => Proxy a
   -> a
   -> Property
-roundtripFlatTerm' _ = explicitRoundtripFlatTerm encode (decodeVersioned currentSnapshotVersion)
+roundtripFlatTerm' _ = explicitRoundtripFlatTerm encode dec
+  where
+    dec = runDec (decodeVersioned currentSnapshotVersion) (Env False (Just defaultTableConfig))
 
 {-------------------------------------------------------------------------------
   Test and property runners
@@ -198,10 +208,11 @@ testAll test = [
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotVersion where
-  arbitrary = elements [V0, V1, V2]
+  arbitrary = elements [V0, V1, V2, V3]
   shrink V0 = []
   shrink V1 = [V0]
   shrink V2 = [V0, V1]
+  shrink V3 = [V0, V1, V2]
 
 deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 
@@ -228,10 +239,10 @@ instance Arbitrary SnapshotLabel where
   shrink (SnapshotLabel txt) = SnapshotLabel <$> shrink txt
 
 instance Arbitrary SnapshotRun where
-  arbitrary = SnapshotRun <$> arbitrary <*> arbitrary <*> arbitrary
-  shrink (SnapshotRun a b c) =
-      [ SnapshotRun a' b' c'
-      | (a', b', c') <- shrink (a, b, c)]
+  arbitrary = SnapshotRun <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+  shrink (SnapshotRun a b c d) =
+      [ SnapshotRun a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d)]
 
 {-------------------------------------------------------------------------------
   Arbitrary: TableConfig

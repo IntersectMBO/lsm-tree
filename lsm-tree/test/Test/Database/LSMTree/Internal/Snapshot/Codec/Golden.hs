@@ -18,7 +18,8 @@ import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config (BloomFilterAlloc (..),
                      DiskCachePolicy (..), FencePointerIndexType (..),
                      MergeBatchSize (..), MergePolicy (..), MergeSchedule (..),
-                     SizeRatio (..), TableConfig (..), WriteBufferAlloc (..))
+                     SizeRatio (..), TableConfig (..), WriteBufferAlloc (..),
+                     defaultTableConfig)
 import           Database.LSMTree.Internal.MergeSchedule
                      (MergePolicyForLevel (..), NominalCredits (..),
                      NominalDebt (..))
@@ -28,6 +29,8 @@ import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
 import           Database.LSMTree.Internal.RunNumber (RunNumber (..))
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import           Database.LSMTree.Internal.Snapshot.Codec.Monad (Env (Env),
+                     runDec)
 import           Paths_lsm_tree
 import qualified System.Directory as Dir
 import           System.FilePath
@@ -56,6 +59,7 @@ tests =
       , testGroup "Backwards compatibility" [
             testCase "test_compatTableConfigV0" test_compatTableConfigV0
           , testCase "test_compatSnapLevelV1" test_compatSnapLevelV1
+          , testCase "test_compatSnapshotRunV2" test_compatSnapshotRunV2
           ]
       ]
 
@@ -140,7 +144,7 @@ prop_noUnexpectedOrMissingGoldenFiles = once $ ioProperty $ do
 
 test_compatTableConfigV0 :: Assertion
 test_compatTableConfigV0 =
-    assertGoldenFileDecodesTo (Proxy @TableConfig) "A" V0 $
+    assertGoldenFileDecodesTo (Proxy @TableConfig) "A" V0 Nothing $
       TableConfig {
           confMergePolicy = singGolden V0
         , confMergeSchedule = singGolden V0
@@ -155,10 +159,23 @@ test_compatTableConfigV0 =
 
 test_compatSnapLevelV1 :: Assertion
 test_compatSnapLevelV1 =
-    assertGoldenFileDecodesTo (Proxy @(SnapLevel SnapshotRun)) "A" V1 $
+    assertGoldenFileDecodesTo (Proxy @(SnapLevel SnapshotRun)) "A" V1 conf $
       -- Until V2, there was only a single constructor, so there was no tag
       -- in the serialisation format to distinguish constructors.
       SnapLevel (singGolden V1) (singGolden V1)
+  where
+    conf = Just $ defaultTableConfig {
+          confBloomFilterAlloc = singGolden V1
+        }
+
+test_compatSnapshotRunV2 :: Assertion
+test_compatSnapshotRunV2 =
+    assertGoldenFileDecodesTo (Proxy @(SnapshotRun)) "A" V2 conf $
+      singGolden V2
+  where
+    conf = Just $ defaultTableConfig {
+          confBloomFilterAlloc = singGolden V2
+        }
 
 -- | For types that changed their snapshot format between versions, we should
 -- also test that we can in fact still decode the old format.
@@ -167,12 +184,13 @@ assertGoldenFileDecodesTo ::
   => Proxy a
   -> String
   -> SnapshotVersion
+  -> Maybe TableConfig
   -> a
   -> Assertion
-assertGoldenFileDecodesTo proxy ann v expected = do
+assertGoldenFileDecodesTo proxy ann v conf expected = do
     let fp = goldenDataFilePath </> filePathGolden proxy ann v
     lbs <- BSL.readFile fp
-    case deserialiseFromBytes (decodeVersioned v) lbs of
+    case deserialiseFromBytes (runDec (decodeVersioned v) (Env False conf)) lbs of
       Left err ->
         assertFailure $ "Error decoding " ++ fp ++ ": " ++ displayException err
       Right (_, decoded) ->
@@ -560,7 +578,7 @@ instance EnumGolden RunDataCaching where
         NoCacheRunData{} -> ()
 
 instance EnumGolden SnapshotRun where
-  singGolden v = SnapshotRun (singGolden v) (singGolden v) (singGolden v)
+  singGolden v = SnapshotRun (singGolden v) (singGolden v) (singGolden v) (singGolden v)
     where
       _coveredAllCases = \case
         SnapshotRun{} -> ()

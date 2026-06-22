@@ -114,11 +114,9 @@ testSingleInsert sessionRoot key val mblob =
       let activeDir = sessionRoot
       bsKOps <- BS.readFile (activeDir </> "42.keyops")
       bsBlobs <- BS.readFile (activeDir </> "42.blobs")
-      bsFilter <- BS.readFile (activeDir </> "42.filter")
       bsIndex <- BS.readFile (activeDir </> "42.index")
       not (BS.null bsKOps) @? "k/ops file is empty"
       null mblob @=? BS.null bsBlobs  -- blob file might be empty
-      not (BS.null bsFilter) @? "filter file is empty"
       not (BS.null bsIndex) @? "index file is empty"
       -- checksums
       checksums <- CRC.readChecksumsFile fs (FS.mkFsPath ["42.checksums"])
@@ -126,8 +124,6 @@ testSingleInsert sessionRoot key val mblob =
         @=? Just (CRC.updateCRC32C bsKOps CRC.initialCRC32C)
       Map.lookup (CRC.ChecksumsFileName "blobs") checksums
         @=? Just (CRC.updateCRC32C bsBlobs CRC.initialCRC32C)
-      Map.lookup (CRC.ChecksumsFileName "filter") checksums
-        @=? Just (CRC.updateCRC32C bsFilter CRC.initialCRC32C)
       Map.lookup (CRC.ChecksumsFileName "index") checksums
         @=? Just (CRC.updateCRC32C bsIndex CRC.initialCRC32C)
       -- check page
@@ -217,8 +213,8 @@ prop_WriteAndOpen fs hbio wb =
           paths' = paths { runNumber = RunNumber 17}
       hardLinkRunFiles fs hbio reg paths paths'
       loaded <- openFromDisk fs hbio refCtx (runParamCaching runParams)
-                             (runParamIndex runParams) testSalt
-                             (simplePath 17)
+                             (runParamAlloc runParams) (runParamIndex runParams)
+                             testSalt (simplePath 17)
 
       Run.size written @=? Run.size loaded
       withRef written $ \written' ->

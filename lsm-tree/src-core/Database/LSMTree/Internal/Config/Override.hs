@@ -175,8 +175,8 @@ instance Override RunDataCaching RunParams where
 
 instance Override RunDataCaching SnapshotRun where
   override rdc
-    (SnapshotRun (rn :: RunNumber) (_rdc :: RunDataCaching) (it ::IndexType))
-    = SnapshotRun rn rdc it
+    (SnapshotRun (rn :: RunNumber) (_rdc :: RunDataCaching) (rbfa :: RunBloomFilterAlloc) (it ::IndexType))
+    = SnapshotRun rn rdc rbfa it
 
 instance Override RunDataCaching (SnapMergingTree SnapshotRun) where
   override rdc (SnapMergingTree (smts ::  SnapMergingTreeState SnapshotRun))

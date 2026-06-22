@@ -33,8 +33,14 @@ import           Data.Word (Word8)
 import           Database.LSMTree.Internal.Assertions
 import           GHC.Exts (Int (..))
 import           GHC.ST (runST)
+import           GHC.Stack (HasCallStack)
 
-mkPrimVector :: forall a. Prim a => Int -> Int -> ByteArray -> VP.Vector a
+mkPrimVector ::
+     forall a. (HasCallStack, Prim a)
+  => Int
+  -> Int
+  -> ByteArray
+  -> VP.Vector a
 mkPrimVector off len ba =
     assert (isValidSlice (off * sizeof) (len * sizeof) ba) $
     VP.Vector off len ba
