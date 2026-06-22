@@ -18,6 +18,7 @@ module Database.LSMTree.Internal.Run (
   , runFsPaths
   , runFsPathsNumber
   , runDataCaching
+  , runFilterAlloc
   , runIndexType
   , mkRawBlobRef
   , mkWeakBlobRef
@@ -33,20 +34,20 @@ module Database.LSMTree.Internal.Run (
   ) where
 
 import           Control.DeepSeq (NFData (..), rwhnf)
-import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadST (MonadST (stToIO))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive
 import           Control.RefCount
+import qualified Data.BloomFilter.Blocked as Bloom
 import qualified Data.ByteString.Short as SBS
 import           Data.Foldable (for_)
 import           Database.LSMTree.Internal.BlobFile
 import           Database.LSMTree.Internal.BlobRef hiding (mkRawBlobRef,
                      mkWeakBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
-import           Database.LSMTree.Internal.BloomFilter (Bloom,
-                     bloomFilterFromFile)
-import qualified Database.LSMTree.Internal.BloomFilter as Bloom
+import           Database.LSMTree.Internal.BloomFilter (Bloom)
+import           Database.LSMTree.Internal.BloomFilter.Acc
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexType (..))
@@ -57,6 +58,7 @@ import           Database.LSMTree.Internal.RunBuilder (RunBuilder,
                      RunDataCaching (..), RunParams (..))
 import qualified Database.LSMTree.Internal.RunBuilder as Builder
 import           Database.LSMTree.Internal.RunNumber
+import qualified Database.LSMTree.Internal.RunReader.Keys as Keys
 import           Database.LSMTree.Internal.Serialise
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
@@ -93,6 +95,7 @@ data Run m h = Run {
       -- I\/O, reading arbitrary file offset and length spans.
     , blobFile    :: !(Ref (BlobFile m h))
     , dataCaching :: !RunDataCaching
+    , filterAlloc :: !RunBloomFilterAlloc
     , hasFS       :: !(HasFS m h)
     , hasBlockIO  :: !(HasBlockIO m h)
     }
@@ -102,10 +105,10 @@ instance Show (Run m h) where
   showsPrec _ run = showString "Run { fsPaths = " . showsPrec 0 run.fsPaths .  showString " }"
 
 instance NFData h => NFData (Run m h) where
-  rnf (Run numEntries refCounter fsPaths bloomFilter index kOpsFile blobFile dataCaching hasFS hasBlockIO) =
+  rnf (Run numEntries refCounter fsPaths bloomFilter index kOpsFile blobFile dataCaching filterAlloc hasFS hasBlockIO) =
     rnf numEntries `seq` rwhnf refCounter `seq` rnf fsPaths `seq`
     rnf bloomFilter `seq` rnf index `seq` rnf kOpsFile `seq`
-    rnf blobFile `seq` rnf dataCaching `seq` rwhnf hasFS `seq` rwhnf hasBlockIO
+    rnf blobFile `seq` rnf dataCaching `seq` rnf filterAlloc `seq` rwhnf hasFS `seq` rwhnf hasBlockIO
 
 instance RefCounted m (Run m h) where
     getRefCounter r = r.refCounter
@@ -130,6 +133,9 @@ runIndexType (DeRef r) = Index.indexToIndexType r.index
 runDataCaching :: Ref (Run m h) -> RunDataCaching
 runDataCaching (DeRef r) = r.dataCaching
 
+-- | See 'openFromDisk'
+runFilterAlloc :: Ref (Run m h) -> RunBloomFilterAlloc
+runFilterAlloc (DeRef r) = r.filterAlloc
 
 -- | Helper function to make a 'WeakBlobRef' that points into a 'Run'.
 mkRawBlobRef :: Run m h -> BlobSpan -> RawBlobRef m h
@@ -160,7 +166,6 @@ finaliser hfs kopsFile blobFile fsPaths = do
     FS.hClose hfs kopsFile
     releaseRef blobFile
     FS.removeFile hfs (runKOpsPath fsPaths)
-    FS.removeFile hfs (runFilterPath fsPaths)
     FS.removeFile hfs (runIndexPath fsPaths)
     FS.removeFile hfs (runChecksumsPath fsPaths)
 
@@ -220,12 +225,12 @@ fromBuilder ::
 fromBuilder refCtx builder = do
     (runHasFS, runHasBlockIO,
      runRunFsPaths, runFilter, runIndex,
-     RunParams {runParamCaching = runRunDataCaching}, runNumEntries) <-
+     params, runNumEntries) <-
       Builder.unsafeFinalise builder
     runKOpsFile <- FS.hOpen runHasFS (runKOpsPath runRunFsPaths) FS.ReadMode
     -- TODO: openBlobFile should be called with exceptions masked
     runBlobFile <- openBlobFile runHasFS refCtx (runBlobPath runRunFsPaths) FS.ReadMode
-    setRunDataCaching runHasBlockIO runKOpsFile runRunDataCaching
+    setRunDataCaching runHasBlockIO runKOpsFile params.runParamCaching
     newRef refCtx
            (finaliser runHasFS runKOpsFile runBlobFile runRunFsPaths)
            (\refCounter -> Run {
@@ -236,7 +241,8 @@ fromBuilder refCtx builder = do
               , index       = runIndex
               , kOpsFile    = runKOpsFile
               , blobFile    = runBlobFile
-              , dataCaching = runRunDataCaching
+              , dataCaching = params.runParamCaching
+              , filterAlloc = params.runParamAlloc
               , hasFS       = runHasFS
               , hasBlockIO  = runHasBlockIO
             })
@@ -288,6 +294,7 @@ fromWriteBuffer fs hbio refCtx salt params fsPaths buffer blobs = do
   -> HasBlockIO IO h
   -> RefCtx
   -> RunDataCaching
+  -> RunBloomFilterAlloc
   -> IndexType
   -> Bloom.Salt
   -> RunFsPaths
@@ -310,17 +317,18 @@ fromWriteBuffer fs hbio refCtx salt params fsPaths buffer blobs = do
 --
 openFromDisk ::
      forall m h.
-     (MonadSTM m, MonadMask m, PrimMonad m)
+     (MonadSTM m, MonadMask m, MonadST m)
   => HasFS m h
   -> HasBlockIO m h
   -> RefCtx
   -> RunDataCaching
+  -> RunBloomFilterAlloc
   -> IndexType
-  -> Bloom.Salt -- ^ Expected salt
+  -> Bloom.Salt
   -> RunFsPaths
   -> m (Ref (Run m h))
 -- TODO: make exception safe
-openFromDisk fs hbio refCtx runRunDataCaching indexType expectedSalt runRunFsPaths = do
+openFromDisk fs hbio refCtx runRunDataCaching filterAlloc indexType salt runRunFsPaths = do
     expectedChecksums <-
        CRC.expectValidFile fs (runChecksumsPath runRunFsPaths) CRC.FormatChecksumsFile
            . fromChecksumsFile
@@ -332,15 +340,27 @@ openFromDisk fs hbio refCtx runRunDataCaching indexType expectedSalt runRunFsPat
     checkCRC runRunDataCaching (forRunBlobRaw expectedChecksums) (forRunBlobRaw paths)
 
     -- read and try parsing files
-    let filterPath = forRunFilterRaw paths
-    checkCRC CacheRunData (forRunFilterRaw expectedChecksums) filterPath
-    runFilter <- FS.withFile fs filterPath FS.ReadMode $
-                   bloomFilterFromFile fs expectedSalt
-
     (runNumEntries, runIndex) <-
       CRC.expectValidFile fs (forRunIndexRaw paths) CRC.FormatIndexFile
           . Index.fromSBS indexType
         =<< readCRC (forRunIndexRaw expectedChecksums) (forRunIndexRaw paths)
+
+    let runInfo = Keys.RunInfo {
+            hasFS = fs
+          , hasBlockIO = hbio
+          , kOpsPath = runKOpsPath runRunFsPaths
+          , index = runIndex
+          , dataCaching = runRunDataCaching
+          , numPages =  Index.sizeInPages runIndex
+          }
+    runFilter <- bracketOnError (Keys.unsafeNew Keys.NoOffsetKey runInfo) Keys.close $ \keys -> do
+      mbloom <- stToIO $ newMBloom runNumEntries filterAlloc salt
+      let loop = do
+            Keys.next keys >>= \case
+              Keys.Empty -> pure ()
+              Keys.Key k -> stToIO (Bloom.insert mbloom k) >> loop
+      loop
+      stToIO $ Bloom.unsafeFreeze mbloom
 
     runKOpsFile <- FS.hOpen fs (runKOpsPath runRunFsPaths) FS.ReadMode
     -- TODO: openBlobFile should be called with exceptions masked
@@ -356,6 +376,7 @@ openFromDisk fs hbio refCtx runRunDataCaching indexType expectedSalt runRunFsPat
         , kOpsFile    = runKOpsFile
         , blobFile    = runBlobFile
         , dataCaching = runRunDataCaching
+        , filterAlloc = filterAlloc
         , hasFS       = fs
         , hasBlockIO  = hbio
         }

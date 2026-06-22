@@ -27,7 +27,6 @@ module Database.LSMTree.Internal.Paths (
   , pathsForRunFiles
   , runKOpsPath
   , runBlobPath
-  , runFilterPath
   , runIndexPath
   , runChecksumsPath
     -- * Checksums for Run files
@@ -40,12 +39,10 @@ module Database.LSMTree.Internal.Paths (
     -- * ForRunFiles abstraction
   , ForKOps (..)
   , ForBlob (..)
-  , ForFilter (..)
   , ForIndex (..)
   , ForRunFiles (..)
   , forRunKOpsRaw
   , forRunBlobRaw
-  , forRunFilterRaw
   , forRunIndexRaw
     -- * WriteBuffer paths
   , WriteBufferFsPaths (WrapRunFsPaths, WriteBufferFsPaths, writeBufferDir, writeBufferNumber)
@@ -254,9 +251,6 @@ runKOpsPath = unForKOps . forRunKOps . pathsForRunFiles
 runBlobPath :: RunFsPaths -> FsPath
 runBlobPath = unForBlob . forRunBlob . pathsForRunFiles
 
-runFilterPath :: RunFsPaths -> FsPath
-runFilterPath = unForFilter . forRunFilter . pathsForRunFiles
-
 runIndexPath :: RunFsPaths -> FsPath
 runIndexPath = unForIndex . forRunIndex . pathsForRunFiles
 
@@ -271,7 +265,6 @@ runFileExts :: ForRunFiles String
 runFileExts = ForRunFiles {
       forRunKOps   = ForKOps "keyops"
     , forRunBlob   = ForBlob "blobs"
-    , forRunFilter = ForFilter "filter"
     , forRunIndex  = ForIndex "index"
     }
 
@@ -302,9 +295,6 @@ newtype ForKOps a = ForKOps {unForKOps :: a}
 newtype ForBlob a = ForBlob {unForBlob :: a}
   deriving stock (Show, Foldable, Functor, Traversable)
 
-newtype ForFilter a = ForFilter {unForFilter :: a}
-  deriving stock (Show, Foldable, Functor, Traversable)
-
 newtype ForIndex a = ForIndex {unForIndex :: a}
   deriving stock (Show, Foldable, Functor, Traversable)
 
@@ -315,10 +305,9 @@ newtype ForIndex a = ForIndex {unForIndex :: a}
 -- | Stores something for each run file (except the checksums file), allowing to
 -- easily do something for all of them without mixing them up.
 data ForRunFiles a = ForRunFiles {
-      forRunKOps   :: !(ForKOps a)
-    , forRunBlob   :: !(ForBlob a)
-    , forRunFilter :: !(ForFilter a)
-    , forRunIndex  :: !(ForIndex a)
+      forRunKOps  :: !(ForKOps a)
+    , forRunBlob  :: !(ForBlob a)
+    , forRunIndex :: !(ForIndex a)
     }
   deriving stock (Show, Foldable, Functor, Traversable)
 
@@ -328,16 +317,13 @@ forRunKOpsRaw = unForKOps . forRunKOps
 forRunBlobRaw :: ForRunFiles a -> a
 forRunBlobRaw = unForBlob . forRunBlob
 
-forRunFilterRaw :: ForRunFiles a -> a
-forRunFilterRaw = unForFilter . forRunFilter
-
 forRunIndexRaw :: ForRunFiles a -> a
 forRunIndexRaw = unForIndex . forRunIndex
 
 instance Applicative ForRunFiles where
-  pure x = ForRunFiles (ForKOps x) (ForBlob x) (ForFilter x) (ForIndex x)
-  ForRunFiles (ForKOps f1) (ForBlob f2) (ForFilter f3) (ForIndex f4) <*> ForRunFiles (ForKOps x1) (ForBlob x2) (ForFilter x3) (ForIndex x4) =
-    ForRunFiles (ForKOps $ f1 x1) (ForBlob $ f2 x2) (ForFilter $ f3 x3) (ForIndex $ f4 x4)
+  pure x = ForRunFiles (ForKOps x) (ForBlob x) (ForIndex x)
+  ForRunFiles (ForKOps f1) (ForBlob f2) (ForIndex f3) <*> ForRunFiles (ForKOps x1) (ForBlob x2) (ForIndex x3) =
+    ForRunFiles (ForKOps $ f1 x1) (ForBlob $ f2 x2) (ForIndex $ f3 x3)
 
 {-------------------------------------------------------------------------------
   WriteBuffer paths

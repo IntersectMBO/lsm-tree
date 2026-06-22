@@ -1792,7 +1792,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
         let SnapshotMetaDataFile contentPath = Paths.snapshotMetaDataFile snapDir
             SnapshotMetaDataChecksumFile checksumPath = Paths.snapshotMetaDataChecksumFile snapDir
 
-        snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath
+        snapMetaData <- readFileSnapshotMetaData hfs contentPath checksumPath True
 
         let SnapshotMetaData label' conf snapWriteBuffer snapLevels mTreeOpt
               = overrideTableConfig policyOveride snapMetaData
