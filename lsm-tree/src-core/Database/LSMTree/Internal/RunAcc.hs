@@ -33,7 +33,6 @@ module Database.LSMTree.Internal.RunAcc (
   , newMBloom
   ) where
 
-import           Control.DeepSeq (NFData (..))
 import           Control.Exception (assert)
 import           Control.Monad.ST.Strict
 import qualified Data.BloomFilter.Blocked as Bloom
@@ -41,6 +40,8 @@ import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (Bloom, MBloom)
+import           Database.LSMTree.Internal.BloomFilter.Acc
+                     (RunBloomFilterAlloc (..), bloomInserts, newMBloom)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexAcc, IndexType)
@@ -307,14 +308,6 @@ flushPageIfNonEmpty RunAcc{mpageacc, mindex, mbloom} = do
 
       else pure Nothing
 
--- An instance of insertMany specialised to SerialisedKey and indexKeyPageAcc.
--- This is a performance-sensitive function. It is marked NOINLINE so we can
--- easily inspect the core and check all the specialisations worked as expected.
-{-# NOINLINE bloomInserts #-}
-bloomInserts :: MBloom s SerialisedKey -> PageAcc s -> Int -> ST s ()
-bloomInserts !mbloom !mpageacc !nkeys =
-    Bloom.insertMany mbloom (PageAcc.indexKeyPageAcc mpageacc) nkeys
-
 -- | Internal helper for 'addLargeKeyOp' and 'addLargeSerialisedKeyOp'.
 -- Combine the result of 'flushPageIfNonEmpty' with extra pages and index
 -- chunks.
@@ -328,28 +321,3 @@ selectPagesAndChunks mpagemchunkPre page chunks =
     Nothing                       -> (         [page],          chunks)
     Just (pagePre, Nothing)       -> ([pagePre, page],          chunks)
     Just (pagePre, Just chunkPre) -> ([pagePre, page], chunkPre:chunks)
-
-{-------------------------------------------------------------------------------
-  Bloom filter allocation
--------------------------------------------------------------------------------}
-
--- | See 'Database.LSMTree.Internal.Config.BloomFilterAlloc'
-data RunBloomFilterAlloc =
-    -- | Bits per element in a filter
-    RunAllocFixed      !Double
-  | RunAllocRequestFPR !Double
-  deriving stock (Show, Eq)
-
-instance NFData RunBloomFilterAlloc where
-    rnf (RunAllocFixed a)      = rnf a
-    rnf (RunAllocRequestFPR a) = rnf a
-
-newMBloom :: NumEntries -> RunBloomFilterAlloc -> Bloom.Salt -> ST s (MBloom s a)
-newMBloom (NumEntries nentries) alloc salt =
-    Bloom.new (Bloom.sizeForPolicy (policy alloc) nentries) salt
-  where
-    --TODO: it'd be possible to turn the RunBloomFilterAlloc into a BloomPolicy
-    -- without the NumEntries, and cache the policy, avoiding recalculating the
-    -- policy every time.
-    policy (RunAllocFixed bitsPerEntry) = Bloom.policyForBits bitsPerEntry
-    policy (RunAllocRequestFPR fpr)     = Bloom.policyForFPR fpr
