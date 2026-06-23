@@ -20,6 +20,7 @@ module Database.LSMTree.Internal.Paths (
   , snapshotMetaDataFile
   , SnapshotMetaDataChecksumFile (..)
   , snapshotMetaDataChecksumFile
+  , exportedSnapshotSaltFile
     -- * Table paths
   , tableBlobPath
     -- * Run paths
@@ -207,6 +208,13 @@ newtype SnapshotMetaDataChecksumFile = SnapshotMetaDataChecksumFile FsPath
 snapshotMetaDataChecksumFile :: NamedSnapshotDir -> SnapshotMetaDataChecksumFile
 snapshotMetaDataChecksumFile (NamedSnapshotDir dir) =
     SnapshotMetaDataChecksumFile (dir </> mkFsPath ["metadata.checksum"])
+
+-- | The file holding the session salt that is copied alongside an /exported/
+-- snapshot, given the path to the exported snapshot directory.
+--
+-- See 'Database.LSMTree.Internal.Unsafe.exportSnapshot'.
+exportedSnapshotSaltFile :: FsPath -> FsPath
+exportedSnapshotSaltFile dir = dir </> mkFsPath ["salt"]
 
 {-------------------------------------------------------------------------------
   Table paths

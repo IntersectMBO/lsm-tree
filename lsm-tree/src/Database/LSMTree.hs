@@ -25,6 +25,7 @@ module Database.LSMTree (
   withRestoreSession,
   openSession,
   newSession,
+  newSessionImportingSnapshot,
   restoreSession,
   closeSession,
 
@@ -759,6 +760,70 @@ restoreSession ::
   m (Session m)
 restoreSession tracer hasFS hasBlockIO sessionDir =
   Session <$> Internal.restoreSession tracer hasFS hasBlockIO sessionDir
+
+{- |
+Create a new session and import a snapshot into it.
+
+The session directory must be empty.
+
+Unlike 'newSession', this does not take a 'Salt'. Instead, the salt is read from
+the @salt@ file that 'exportSnapshot' wrote alongside the exported snapshot, so
+that the imported snapshot's Bloom filters are validated against the salt they
+were originally built with. This is equivalent to calling 'newSession' followed
+by 'importSnapshot', but it sources the salt from the export rather than
+requiring the caller to supply it.
+
+The 'FsPath' to the exported snapshot directory is a relative path that is
+interpreted relative to a /root/. What the root is depends on which function was
+used to create the session. See 'withOpenSession', 'withOpenSessionIO', and
+'withOpenMountedSessionIO' for more information about the root.
+
+The worst-case disk I\/O complexity of this operation depends on the merge policy
+of the imported table:
+
+['LazyLevelling']:
+    \(O(T \log_T \frac{n}{B})\).
+
+__Warning:__ Sessions hold open resources and must be closed using 'closeSession'.
+
+Throws the following exceptions:
+
+['SessionDirDoesNotExistError']:
+    If the session directory does not exist.
+['SessionDirLockedError']:
+    If the session directory is locked by another process.
+['SessionDirCorruptedError']:
+    If the session directory is malformed.
+['SnapshotImportDirDoesNotExistError']:
+    If the source directory for the to-be-imported snapshot does not exist, or
+    does not contain the exported salt.
+-}
+{-# SPECIALISE
+  newSessionImportingSnapshot ::
+    Tracer IO LSMTreeTrace ->
+    HasFS IO HandleIO ->
+    HasBlockIO IO HandleIO ->
+    FsPath ->
+    SnapshotName ->
+    FsPath ->
+    IO (Session IO)
+  #-}
+newSessionImportingSnapshot ::
+  forall m h.
+  (IOLike m, Typeable h) =>
+  Tracer m LSMTreeTrace ->
+  HasFS m h ->
+  HasBlockIO m h ->
+  -- | The session directory.
+  FsPath ->
+  -- | The name to import the snapshot as.
+  SnapshotName ->
+  -- | The exported snapshot directory.
+  FsPath ->
+  m (Session m)
+newSessionImportingSnapshot tracer hasFS hasBlockIO sessionDir snap sourceDir =
+  Session <$>
+    Internal.newSessionImportingSnapshot tracer hasFS hasBlockIO sessionDir snap sourceDir
 
 {- |
 Close a session.

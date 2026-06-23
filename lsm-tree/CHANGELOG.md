@@ -1,5 +1,13 @@
 # Revision history for `lsm-tree`
 
+## next version
+
+### Non-breaking changes
+
+* Copy the salt when exporting a snapshot as `<exportedSnap>/salt`.
+* Expose new function `newSessionImportingSnapshot` that reads the salt from the
+  exported snapshot when creating a new session.
+
 ## 1.1.0.0 -- 2026-05-13
 
 ### Breaking changes
