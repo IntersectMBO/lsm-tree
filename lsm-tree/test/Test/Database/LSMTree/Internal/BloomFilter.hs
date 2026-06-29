@@ -30,6 +30,7 @@ import           Database.LSMTree.Internal.CRC32C (FileCorruptedError (..),
                      FileFormat (..))
 import           Database.LSMTree.Internal.Serialise (SerialisedKey,
                      serialiseKey)
+import           Test.Util.QC.Compat (withNumTests_compat)
 
 --TODO: add a golden test for the BloomFilter format vs the 'formatVersion'
 -- to ensure we don't change the format without conciously bumping the version.
@@ -38,9 +39,9 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
     [ testProperty "roundtrip" roundtrip_prop
       -- a specific case: 300 bits is just under 5x 64 bit words
     , testProperty "roundtrip-3-300" $ roundtrip_prop (Positive (Small 3)) (Positive 300)
-    , testProperty "total-deserialisation" $ withMaxSuccess 10000 $
+    , testProperty "total-deserialisation" $ withNumTests_compat 10000 $
         prop_total_deserialisation
-    , testProperty "total-deserialisation-whitebox" $ withMaxSuccess 10000 $
+    , testProperty "total-deserialisation-whitebox" $ withNumTests_compat 10000 $
         prop_total_deserialisation_whitebox
     , testProperty "bloomQueries (bulk)" $
         prop_bloomQueries

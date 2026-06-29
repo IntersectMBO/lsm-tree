@@ -22,11 +22,12 @@ import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.FS
+import           Test.Util.QC.Compat (withNumTests_compat)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal" [
       testGroup "Cursor" [
-          testProperty "prop_roundtripCursor" $ withMaxSuccess 500 $
+          testProperty "prop_roundtripCursor" $ withNumTests_compat 500 $
             prop_roundtripCursor
         ]
     ]

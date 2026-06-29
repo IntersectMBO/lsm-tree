@@ -9,6 +9,7 @@ import           Database.LSMTree
 import           Database.LSMTree.Extras.Generators ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.QC.Compat (withNumTests_compat)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Resolve"
@@ -19,9 +20,9 @@ allProperties ::
      forall v. (Show v, Arbitrary v, NFData v, SerialiseValue v, ResolveValue v)
   => [TestTree]
 allProperties =
-    [ testProperty "prop_resolveValidOutput" $ withMaxSuccess 1000 $
+    [ testProperty "prop_resolveValidOutput" $ withNumTests_compat 1000 $
         prop_resolveValidOutput @v
-    , testProperty "prop_resolveAssociativity" $ withMaxSuccess 1000 $
+    , testProperty "prop_resolveAssociativity" $ withNumTests_compat 1000 $
         prop_resolveAssociativity @v
     ]
 

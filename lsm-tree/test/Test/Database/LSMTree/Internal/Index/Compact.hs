@@ -50,6 +50,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Arbitrary (noTags,
                      prop_arbitraryAndShrinkPreserveInvariant)
 import           Test.Util.Orphans ()
+import           Test.Util.QC.Compat (withNumTests_compat)
 import           Text.Printf (printf)
 
 tests :: TestTree
@@ -123,9 +124,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.Index.Compact" [
           prop_roundtrip_chunks
       , testProperty "prop_roundtrip" $
           prop_roundtrip @TestKey
-      , testProperty "prop_total_deserialisation" $ withMaxSuccess 10000
+      , testProperty "prop_total_deserialisation" $ withNumTests_compat 10000
           prop_total_deserialisation
-      , testProperty "prop_total_deserialisation_whitebox" $ withMaxSuccess 10000
+      , testProperty "prop_total_deserialisation_whitebox" $ withNumTests_compat 10000
           prop_total_deserialisation_whitebox
       ]
   ]

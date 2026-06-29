@@ -1,5 +1,25 @@
 # Revision history for `lsm-tree`
 
+## ?.?.?.? -- ????-??-??
+
+### Breaking changes
+
+None
+
+### New features
+
+None
+
+### Minor changes
+
+* Support `ghc-9.14`. See [issue
+  #813](https://github.com/IntersectMBO/lsm-tree/issues/813) and [PR
+  #859](https://github.com/IntersectMBO/lsm-tree/pull/859).
+
+### Bug fixes
+
+None
+
 ## 1.1.0.0 -- 2026-05-13
 
 ### Breaking changes

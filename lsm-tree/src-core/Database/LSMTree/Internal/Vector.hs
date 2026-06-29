@@ -16,6 +16,7 @@ module Database.LSMTree.Internal.Vector (
     binarySearchL,
     unsafeInsertWithMStrict,
     unfoldrNM',
+    singletonMStrict,
 ) where
 
 import           Control.Monad
@@ -136,3 +137,10 @@ unfoldrNM' len f = \b0 -> do
             (Just !a,  !b') -> do
               VM.unsafeWrite vec n a
               go vec (n+1) b'
+
+{-# INLINE singletonMStrict #-}
+singletonMStrict :: PrimMonad m => a -> m (V.Vector a)
+singletonMStrict !x = do
+  mv <- VM.unsafeNew 1
+  VM.unsafeWrite mv 0 $! x
+  V.unsafeFreeze mv
