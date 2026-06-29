@@ -496,7 +496,7 @@ data BlobRef b = BlobRef {
   , innerBlob :: !(Model.BlobRef b)
   }
 
-deriving stock instance Show b => Show (BlobRef b)
+deriving stock instance Show (BlobRef b)
 
 retrieveBlobs ::
      forall m b. ( MonadState Model m

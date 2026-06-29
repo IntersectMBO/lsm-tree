@@ -9,9 +9,10 @@ import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Internal.RawBytes (RawBytes (RawBytes))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Test.QuickCheck (Property, classify, collect, mapSize,
-                     withDiscardRatio, withMaxSuccess, (.||.), (===), (==>))
+                     withDiscardRatio, (.||.), (===), (==>))
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.QC.Compat (withNumTests_compat)
 
 -- * Tests
 
@@ -40,7 +41,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.RawBytes" $
 
 twoBlocksProp :: String -> RawBytes -> RawBytes -> Property -> Property
 twoBlocksProp msgAddition block1 block2
-    = withMaxSuccess 10000 .
+    = withNumTests_compat 10000 .
       classify (block1 == block2) ("equal blocks" ++ msgAddition)
 
 withFirstBlockSizeInfo :: RawBytes -> Property -> Property

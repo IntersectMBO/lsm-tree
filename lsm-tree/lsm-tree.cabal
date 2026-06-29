@@ -513,6 +513,10 @@ common warnings
 
   ghc-options: -Werror=missing-deriving-strategies
 
+  -- In ghc-9.14 the `pattern` namespace specifier is deprecated.
+  if impl(ghc >=9.14)
+    ghc-options: -Wno-pattern-namespace-specifier
+
 common wno-x-partial
   if impl(ghc >=9.8)
     -- No errors for x-partial functions. We might remove this in the future if
@@ -755,6 +759,7 @@ test-suite lsm-tree-test
     Test.Util.Orphans
     Test.Util.PrettyProxy
     Test.Util.QC
+    Test.Util.QC.Compat
     Test.Util.QLS
     Test.Util.RawPage
     Test.Util.TypeFamilyWrappers

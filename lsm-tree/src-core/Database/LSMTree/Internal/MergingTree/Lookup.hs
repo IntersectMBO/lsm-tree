@@ -109,15 +109,17 @@ buildLookupTree reg (DeRef mt) =
     -- dropped before we duplicated the reference.
     withMVar (MT.mergeState mt) $ \case
       MT.CompletedTreeMerge r ->
-        LookupBatch . V.singleton <$!> dupRun r
+        LookupBatch <$!> (dupRun r >>= V.singletonMStrict)
       MT.OngoingTreeMerge mr -> do
         !rs <- withRollback reg (MR.duplicateRuns mr) (V.mapM_ releaseRef)
         ty <- MR.mergeType mr
-        pure $ case ty of
-          Nothing            -> LookupBatch rs  -- just one run
-          Just MR.MergeLevel -> LookupBatch rs  -- combine runs
-          Just MR.MergeUnion -> mkLookupNode MR.MergeUnion  -- separate
-                                  (LookupBatch . V.singleton <$!> rs)
+        case ty of
+          Nothing            -> pure $ LookupBatch rs  -- just one run
+          Just MR.MergeLevel -> pure $ LookupBatch rs  -- combine runs
+          Just MR.MergeUnion -> do
+            !rs' <- mapM V.singletonMStrict rs
+            pure $ mkLookupNode MR.MergeUnion  -- separate
+                                  (LookupBatch <$!> rs')
       MT.PendingTreeMerge (MT.PendingLevelMerge prs Nothing) -> do
         LookupBatch . V.concatMap id <$!>  -- combine runs
           V.mapMStrict duplicatePreExistingRun prs
@@ -136,6 +138,6 @@ buildLookupTree reg (DeRef mt) =
     dupRun r = withRollback reg (dupRef r) releaseRef
 
     duplicatePreExistingRun (MT.PreExistingRun r) =
-        V.singleton <$!> dupRun r
+        (dupRun r >>= V.singletonMStrict)
     duplicatePreExistingRun (MT.PreExistingMergingRun mr) =
         withRollback reg (MR.duplicateRuns mr) (V.mapM_ releaseRef)
