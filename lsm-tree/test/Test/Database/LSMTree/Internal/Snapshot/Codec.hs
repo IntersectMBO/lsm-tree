@@ -51,12 +51,17 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
         propAll roundtripFlatTerm'
       -- Test generators and shrinkers
     , testGroup "Generators and shrinkers are finite" $
-        testAll $ \(pa :: Proxy a) (pc :: Proxy ctx) -> testGroup "aaa" [
-          testGroup (show $ typeRep pa) $
-              prop_arbitraryAndShrinkPreserveInvariant @a noTags deepseqInvariant
-          , testGroup (show $ typeRep pc) $
-            prop_arbitraryAndShrinkPreserveInvariant @ctx noTags deepseqInvariant
-        ]
+        testAll $ \(pa :: Proxy a) (pc :: Proxy ctx) ->
+          testGroup (show (typeRep pa, typeRep pc)) [
+              testGroup (show $ typeRep pa) $
+                prop_arbitraryAndShrinkPreserveInvariant @a noTags deepseqInvariant
+              -- TODO: tests for ctx are duplicated because multiple codec types
+              -- may have the same ctx type. We could remove this duplication,
+              -- but it is also not currently a problem because the tests are
+              -- quick to run.
+            , testGroup (show $ typeRep pc) $
+                prop_arbitraryAndShrinkPreserveInvariant @ctx noTags deepseqInvariant
+            ]
     ]
 
 {-------------------------------------------------------------------------------
@@ -87,13 +92,23 @@ explicitRoundtripCBOR enc dec x = case back (there x) of
     back = deserialiseFromBytes dec
 
 -- | See 'explicitRoundtripCBOR'.
-roundtripCBOR :: (Encode a, Decode a, Eq a, Show a) => Proxy a -> a -> Property
+roundtripCBOR ::
+     (Encode a, Decode a, Eq a, Show a)
+  => Proxy a
+  -> a
+  -> Property
 roundtripCBOR _ = explicitRoundtripCBOR encode dec
   where
     dec = runDec decode (Env False)
 
 -- | See 'explicitRoundtripCBOR'.
-roundtripCBOR' :: forall a ctx. (Encode a, DecodeVersioned ctx a, Eq a, Show a) => Proxy a -> Proxy ctx -> a -> ctx -> Property
+roundtripCBOR' ::
+     forall a ctx. (Encode a, DecodeVersioned ctx a, Eq a, Show a)
+  => Proxy a
+  -> Proxy ctx
+  -> a
+  -> ctx
+  -> Property
 roundtripCBOR' _ _ x ctx = explicitRoundtripCBOR encode dec x
   where
     dec :: forall s. Decoder s a

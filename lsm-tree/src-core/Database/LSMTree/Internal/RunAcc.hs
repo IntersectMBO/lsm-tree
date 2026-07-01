@@ -40,7 +40,7 @@ import           Data.Primitive.PrimVar (PrimVar, modifyPrimVar, newPrimVar,
                      readPrimVar)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..))
 import           Database.LSMTree.Internal.BloomFilter (Bloom, MBloom)
-import           Database.LSMTree.Internal.BloomFilter.Acc
+import           Database.LSMTree.Internal.BloomFilterAcc
                      (RunBloomFilterAlloc (..), bloomInserts, newMBloom)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import           Database.LSMTree.Internal.Entry (Entry (..), NumEntries (..))

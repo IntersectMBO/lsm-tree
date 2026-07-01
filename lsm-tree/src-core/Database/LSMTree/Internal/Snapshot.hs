@@ -48,7 +48,7 @@ import           Data.String (IsString)
 import           Data.Text (Text)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
-import           Database.LSMTree.Internal.BloomFilter.Acc (RunBloomFilterAlloc)
+import           Database.LSMTree.Internal.BloomFilterAcc (RunBloomFilterAlloc)
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
