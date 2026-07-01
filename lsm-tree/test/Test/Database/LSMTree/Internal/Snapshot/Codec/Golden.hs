@@ -144,7 +144,7 @@ prop_noUnexpectedOrMissingGoldenFiles = once $ ioProperty $ do
 
 test_compatTableConfigV0 :: Assertion
 test_compatTableConfigV0 =
-    assertGoldenFileDecodesTo (Proxy @TableConfig) "A" V0 Nothing $
+    assertGoldenFileDecodesTo (Proxy @TableConfig) (Proxy @NoCtx )"A" V0 NoCtx $
       TableConfig {
           confMergePolicy = singGolden V0
         , confMergeSchedule = singGolden V0
@@ -159,38 +159,39 @@ test_compatTableConfigV0 =
 
 test_compatSnapLevelV1 :: Assertion
 test_compatSnapLevelV1 =
-    assertGoldenFileDecodesTo (Proxy @(SnapLevel SnapshotRun)) "A" V1 conf $
+    assertGoldenFileDecodesTo (Proxy @(SnapLevel SnapshotRun)) (Proxy @TableConfig) "A" V1 conf $
       -- Until V2, there was only a single constructor, so there was no tag
       -- in the serialisation format to distinguish constructors.
       SnapLevel (singGolden V1) (singGolden V1)
   where
-    conf = Just $ defaultTableConfig {
+    conf = defaultTableConfig {
           confBloomFilterAlloc = singGolden V1
         }
 
 test_compatSnapshotRunV2 :: Assertion
 test_compatSnapshotRunV2 =
-    assertGoldenFileDecodesTo (Proxy @(SnapshotRun)) "A" V2 conf $
+    assertGoldenFileDecodesTo (Proxy @(SnapshotRun)) (Proxy @TableConfig) "A" V2 conf $
       singGolden V2
   where
-    conf = Just $ defaultTableConfig {
+    conf = defaultTableConfig {
           confBloomFilterAlloc = singGolden V2
         }
 
 -- | For types that changed their snapshot format between versions, we should
 -- also test that we can in fact still decode the old format.
 assertGoldenFileDecodesTo ::
-     (DecodeVersioned a, Eq a, Show a, Typeable a)
+     (DecodeVersioned ctx a, Eq a, Show a, Typeable a)
   => Proxy a
+  -> Proxy ctx
   -> String
   -> SnapshotVersion
-  -> Maybe TableConfig
+  -> ctx
   -> a
   -> Assertion
-assertGoldenFileDecodesTo proxy ann v conf expected = do
-    let fp = goldenDataFilePath </> filePathGolden proxy ann v
+assertGoldenFileDecodesTo pa _pc ann v ctx expected = do
+    let fp = goldenDataFilePath </> filePathGolden pa ann v
     lbs <- BSL.readFile fp
-    case deserialiseFromBytes (runDec (decodeVersioned v) (Env False conf)) lbs of
+    case deserialiseFromBytes (runDec (decodeVersionedWith v ctx) (Env False)) lbs of
       Left err ->
         assertFailure $ "Error decoding " ++ fp ++ ": " ++ displayException err
       Right (_, decoded) ->

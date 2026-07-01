@@ -7,15 +7,13 @@ module Database.LSMTree.Internal.Snapshot.Codec.Monad (
   , runDec
   , liftDecoder
   , liftST
-  , askConfig
   ) where
 
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
-import           Control.Monad.Reader (MonadReader (ask), MonadTrans (lift),
+import           Control.Monad.Reader (MonadReader, MonadTrans (lift),
                      ReaderT (..))
 import           Control.Monad.ST (ST)
-import           Database.LSMTree.Internal.Config (TableConfig)
 
 newtype Dec s a = Dec { unwrap :: ReaderT Env (Decoder s) a }
   deriving newtype (Functor, Applicative, Monad)
@@ -25,7 +23,6 @@ deriving newtype instance MonadFail (Dec s)
 
 data Env = Env {
     v3Assert :: Bool
-  , config   :: Maybe TableConfig
   }
 
 runDec :: Dec s a -> Env -> Decoder s a
@@ -36,11 +33,3 @@ liftDecoder = Dec . lift
 
 liftST :: ST s a -> Dec s a
 liftST = Dec . lift . CBOR.liftST
-
-askConfig :: Dec s TableConfig
-askConfig = do
-    env <- ask
-    case env.config of
-      Nothing     -> fail "[BUG] expected a config, but found none"
-      Just config -> pure config
-
