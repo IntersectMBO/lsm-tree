@@ -566,7 +566,7 @@ library core
     Database.LSMTree.Internal.BlobFile
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
-    Database.LSMTree.Internal.BloomFilter.Acc
+    Database.LSMTree.Internal.BloomFilterAcc
     Database.LSMTree.Internal.ByteString
     Database.LSMTree.Internal.ChecksumHandle
     Database.LSMTree.Internal.Chunk
@@ -638,7 +638,7 @@ library core
     , io-classes:strict-mvar
     , lsm-tree:control
     , lsm-tree:kmerge
-    , mtl
+    , mtl                     ^>=2.2      || ^>=2.3
     , primitive               ^>=0.9
     , serialise               ^>=0.2
     , text                    ^>=2.1.1

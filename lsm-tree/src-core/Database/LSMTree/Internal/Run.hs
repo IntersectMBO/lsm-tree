@@ -47,7 +47,7 @@ import           Database.LSMTree.Internal.BlobRef hiding (mkRawBlobRef,
                      mkWeakBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
 import           Database.LSMTree.Internal.BloomFilter (Bloom)
-import           Database.LSMTree.Internal.BloomFilter.Acc
+import           Database.LSMTree.Internal.BloomFilterAcc
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry (NumEntries (..))
 import           Database.LSMTree.Internal.Index (Index, IndexType (..))

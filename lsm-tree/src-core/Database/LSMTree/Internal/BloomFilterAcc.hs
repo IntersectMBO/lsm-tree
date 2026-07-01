@@ -3,12 +3,11 @@
 
 -- | Incremental (in-memory portion of) run construction
 --
-module Database.LSMTree.Internal.BloomFilter.Acc (
+module Database.LSMTree.Internal.BloomFilterAcc (
     -- * Bloom filter allocation
     RunBloomFilterAlloc (..)
-    -- ** Exposed for testing
+    -- * Incremental, in-memory bloom filter construction
   , newMBloom
-
   , bloomInserts
   ) where
 
@@ -36,6 +35,10 @@ instance NFData RunBloomFilterAlloc where
     rnf (RunAllocFixed a)      = rnf a
     rnf (RunAllocRequestFPR a) = rnf a
 
+{-------------------------------------------------------------------------------
+  Incremental, in-memory bloom filter construction
+-------------------------------------------------------------------------------}
+
 newMBloom :: NumEntries -> RunBloomFilterAlloc -> Bloom.Salt -> ST s (MBloom s a)
 newMBloom (NumEntries nentries) alloc salt =
     Bloom.new (Bloom.sizeForPolicy (policy alloc) nentries) salt
@@ -45,10 +48,6 @@ newMBloom (NumEntries nentries) alloc salt =
     -- policy every time.
     policy (RunAllocFixed bitsPerEntry) = Bloom.policyForBits bitsPerEntry
     policy (RunAllocRequestFPR fpr)     = Bloom.policyForFPR fpr
-
-{-------------------------------------------------------------------------------
-  Incremental, in-memory bloom filter construction
--------------------------------------------------------------------------------}
 
 -- An instance of insertMany specialised to SerialisedKey and indexKeyPageAcc.
 -- This is a performance-sensitive function. It is marked NOINLINE so we can
