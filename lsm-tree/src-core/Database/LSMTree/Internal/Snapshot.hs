@@ -618,7 +618,7 @@ openRun ::
   -> m (Ref (Run m h))
 openRun hfs hbio refCtx uc reg
         (NamedSnapshotDir sourceDir) (ActiveDir targetDir)
-        expectedSalt
+        salt
         SnapshotRun {
           snapRunNumber  = runNum,
           snapRunCaching = caching,
@@ -631,7 +631,7 @@ openRun hfs hbio refCtx uc reg
     hardLinkRunFiles hfs hbio reg sourcePaths targetPaths
 
     withRollback reg
-      (Run.openFromDisk hfs hbio refCtx caching filterAlloc indexType expectedSalt targetPaths)
+      (Run.openFromDisk hfs hbio refCtx caching filterAlloc indexType salt targetPaths)
       releaseRef
 
 {-------------------------------------------------------------------------------
