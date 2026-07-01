@@ -33,7 +33,7 @@ import           Data.Word (Word8)
 import           Database.LSMTree.Internal.Assertions
 import           GHC.Exts (Int (..))
 import           GHC.ST (runST)
-import           GHC.Stack (HasCallStack)
+import           GHC.Stack
 
 mkPrimVector ::
      forall a. (HasCallStack, Prim a)
@@ -46,6 +46,7 @@ mkPrimVector off len ba =
     VP.Vector off len ba
   where
     sizeof = I# (sizeOfType# (Proxy @a))
+    _unused = callStack
 {-# INLINE mkPrimVector #-}
 
 byteVectorFromPrim :: forall a. Prim a => a -> VP.Vector Word8
