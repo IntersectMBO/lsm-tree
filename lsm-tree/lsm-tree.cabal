@@ -644,7 +644,7 @@ library core
 
   if impl(ghc >=9.4)
     other-modules: Database.LSMTree.Internal.StrictArray
-    build-depends: data-elevator ^>=0.1.0.2 || ^>=0.2
+    build-depends: data-elevator ^>=0.1.0.2 || ^>=0.2 || ^>=0.3
     cpp-options:   -DHAVE_STRICT_ARRAY
 
 library extras
