@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_HADDOCK not-home #-}
 
--- | Incremental (in-memory portion of) run construction
+-- | Incremental (in-memory portion of) bloom filter construction
 --
 module Database.LSMTree.Internal.BloomFilterAcc (
     -- * Bloom filter allocation

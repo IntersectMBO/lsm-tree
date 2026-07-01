@@ -306,24 +306,35 @@ instance DecodeVersioned TableConfig SnapshotRun where
       n <- liftDecoder decodeListLen
       tag <- liftDecoder decodeWord
       case (v, n, tag) of
+        -- In older snapshot versions, we stored the serialised representation
+        -- of a bloom filter in a file. Since V3, we instead reconstruct the
+        -- bloom filter from the keys in the run's keyops file. For this
+        -- reconstruction, we store the @RunBloomFilterAlloc@ in the
+        -- 'SnapshotRun'.
         (V3, 5, 0) -> do
           snapRunNumber  <- decodeVersioned v
           snapRunCaching <- decodeVersioned v
           filterAlloc    <- decodeVersioned v
+          -- Sanity check: the synthesised filter allocation for snapshot
+          -- versions <=V2 should match the filter allocation stored in the
+          -- snapshot.
           when env.v3Assert $ do
-            assert (filterAlloc == runParams.runParamAlloc) $ pure ()
+            assert (filterAlloc == filterAllocSynthesised) $ pure ()
           snapRunIndex   <- decodeVersioned v
           pure SnapshotRun{..}
+        -- If we open a snapshot that was created with V2 or earlier, then the
+        -- snapshot format does not include @RunBloomFilterAlloc@ information.
+        -- We synthesise that information in @filterAllocSynthesised@. The bloom
+        -- filter that is serialised to file is ignored.
         (_, 4, 0) | v <= V2 -> do
           snapRunNumber  <- decodeVersioned v
           snapRunCaching <- decodeVersioned v
-          let filterAlloc = runParams.runParamAlloc
+          let filterAlloc = filterAllocSynthesised
           snapRunIndex   <- decodeVersioned v
           pure SnapshotRun{..}
         _ -> fail ("[SnapshotRun] Unexpected combination of list length and tag: " <> show (n, tag))
     where
-      levelNo = RegularLevel (LevelNo 1)
-      runParams = runParamsForLevel conf levelNo
+      filterAllocSynthesised = bloomFilterAllocForRun conf
 
 {-------------------------------------------------------------------------------
   Encoding and decoding: TableConfig
