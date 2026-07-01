@@ -17,16 +17,15 @@ module Database.LSMTree.Internal.RunReader (
   , appendOverflow
     -- * Exported for WriteBufferReader
   , mkEntryOverflow
-  , readDiskPage
   , readOverflowPages
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (guard, when)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadST (MonadST (..))
 import           Control.Monad.Class.MonadSTM (MonadSTM (..))
-import           Control.Monad.Class.MonadThrow (MonadCatch (..),
-                     MonadMask (..), MonadThrow (..))
+import           Control.Monad.Class.MonadThrow (MonadMask (..),
+                     MonadThrow (..))
 import           Control.Monad.Primitive (PrimMonad (..))
 import           Control.RefCount
 import           Data.Bifunctor (first)
@@ -44,7 +43,7 @@ import           Database.LSMTree.Internal.BlobRef as BlobRef
 import qualified Database.LSMTree.Internal.Entry as E
 import qualified Database.LSMTree.Internal.Index as Index (search)
 import           Database.LSMTree.Internal.Page (PageNo (..), PageSpan (..),
-                     getNumPages, nextPageNo)
+                     getNumPages, nextPageNo, readDiskPage)
 import           Database.LSMTree.Internal.Paths
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage,
@@ -299,30 +298,6 @@ seekToDiskPage fs pageNo h = do
     pageNoToByteOffset (PageNo n) =
         assert (n >= 0) $
           mulPageSize (fromIntegral n)
-
-{-# SPECIALISE readDiskPage ::
-     HasFS IO h
-  -> FS.Handle h
-  -> IO (Maybe RawPage) #-}
--- | Returns 'Nothing' on EOF.
-readDiskPage ::
-     (MonadCatch m, PrimMonad m)
-  => HasFS m h
-  -> FS.Handle h
-  -> m (Maybe RawPage)
-readDiskPage fs h = do
-    mba <- newPinnedByteArray pageSize
-    -- TODO: make sure no other exception type can be thrown
-    --
-    -- TODO: if FS.FsReachEOF is thrown as an injected disk fault, then we
-    -- incorrectly deduce that the file has no more contents. We should probably
-    -- use an explicit file pointer instead in the style of 'FilePointer'.
-    handleJust (guard . FS.isFsErrorType FS.FsReachedEOF) (\_ -> pure Nothing) $ do
-      bytesRead <- FS.hGetBufExactly fs h mba 0 (fromIntegral pageSize)
-      assert (fromIntegral bytesRead == pageSize) $ pure ()
-      ba <- unsafeFreezeByteArray mba
-      let !rawPage = unsafeMakeRawPage ba 0
-      pure (Just rawPage)
 
 pageSize :: Int
 pageSize = 4096

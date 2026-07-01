@@ -566,6 +566,7 @@ library core
     Database.LSMTree.Internal.BlobFile
     Database.LSMTree.Internal.BlobRef
     Database.LSMTree.Internal.BloomFilter
+    Database.LSMTree.Internal.BloomFilterAcc
     Database.LSMTree.Internal.ByteString
     Database.LSMTree.Internal.ChecksumHandle
     Database.LSMTree.Internal.Chunk
@@ -603,10 +604,12 @@ library core
     Database.LSMTree.Internal.RunBuilder
     Database.LSMTree.Internal.RunNumber
     Database.LSMTree.Internal.RunReader
+    Database.LSMTree.Internal.RunReader.Keys
     Database.LSMTree.Internal.Serialise
     Database.LSMTree.Internal.Serialise.Class
     Database.LSMTree.Internal.Snapshot
     Database.LSMTree.Internal.Snapshot.Codec
+    Database.LSMTree.Internal.Snapshot.Codec.Monad
     Database.LSMTree.Internal.Types
     Database.LSMTree.Internal.UniqCounter
     Database.LSMTree.Internal.Unsafe
@@ -635,6 +638,7 @@ library core
     , io-classes:strict-mvar
     , lsm-tree:control
     , lsm-tree:kmerge
+    , mtl                     ^>=2.2      || ^>=2.3
     , primitive               ^>=0.9
     , serialise               ^>=0.2
     , text                    ^>=2.1.1

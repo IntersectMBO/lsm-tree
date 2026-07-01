@@ -16,7 +16,7 @@ module Database.LSMTree.Internal.Config (
   , WriteBufferAlloc (..)
     -- * Bloom filter allocation
   , BloomFilterAlloc (..)
-  , bloomFilterAllocForLevel
+  , bloomFilterAllocForRun
     -- * Fence pointer index
   , FencePointerIndexType (..)
   , indexTypeForRun
@@ -153,7 +153,7 @@ runParamsForLevel :: TableConfig -> RunLevelNo -> RunParams
 runParamsForLevel conf@TableConfig {..} levelNo =
     RunParams
       { runParamCaching = diskCachePolicyForLevel confDiskCachePolicy levelNo
-      , runParamAlloc   = bloomFilterAllocForLevel conf levelNo
+      , runParamAlloc   = bloomFilterAllocForRun conf
       , runParamIndex   = indexTypeForRun confFencePointerIndex
       }
 
@@ -291,8 +291,8 @@ instance NFData BloomFilterAlloc where
   rnf (AllocFixed n)        = rnf n
   rnf (AllocRequestFPR fpr) = rnf fpr
 
-bloomFilterAllocForLevel :: TableConfig -> RunLevelNo -> RunBloomFilterAlloc
-bloomFilterAllocForLevel conf _levelNo =
+bloomFilterAllocForRun :: TableConfig -> RunBloomFilterAlloc
+bloomFilterAllocForRun conf =
     case confBloomFilterAlloc conf of
       AllocFixed n        -> RunAllocFixed n
       AllocRequestFPR fpr -> RunAllocRequestFPR fpr

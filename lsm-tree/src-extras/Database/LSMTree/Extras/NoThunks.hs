@@ -246,9 +246,6 @@ deriving anyclass instance NoThunks a => NoThunks (ForKOps a)
 deriving stock instance Generic (ForBlob a)
 deriving anyclass instance NoThunks a => NoThunks (ForBlob a)
 
-deriving stock instance Generic (ForFilter a)
-deriving anyclass instance NoThunks a => NoThunks (ForFilter a)
-
 deriving stock instance Generic (ForIndex a)
 deriving anyclass instance NoThunks a => NoThunks (ForIndex a)
 

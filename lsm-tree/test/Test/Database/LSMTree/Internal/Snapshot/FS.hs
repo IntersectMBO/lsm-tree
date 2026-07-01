@@ -53,7 +53,7 @@ prop_fsRoundtripSnapshotMetaData metadata =
     withTempIOHasFS "temp" $ \hfs -> do
       writeFileSnapshotMetaData hfs contentPath checksumPath metadata
       snapshotMetaData' <-
-        try @_ @FileCorruptedError (readFileSnapshotMetaData hfs contentPath checksumPath)
+        try @_ @FileCorruptedError (readFileSnapshotMetaData hfs contentPath checksumPath False)
       pure $ case snapshotMetaData' of
         Left e          -> counterexample (show e) False
         Right metadata' -> metadata === metadata'
@@ -83,7 +83,7 @@ prop_fault_fsRoundtripSnapshotMetaData testErrs metadata =
       readResult <-
         try @_ @SomeException $
           withErrors errsVar (readErrors testErrs) $
-            readFileSnapshotMetaData hfs metadataPath checksumPath
+            readFileSnapshotMetaData hfs metadataPath checksumPath False
 
       let
         -- Regardless of whether the write part failed with an exception, if

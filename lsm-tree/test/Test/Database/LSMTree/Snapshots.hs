@@ -24,6 +24,7 @@ import           Test.Util.FS (withTempIOHasBlockIO)
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Snapshots" [
       testProperty "prop_exportImportSnapshot" prop_exportImportSnapshot
+    , testProperty "prop_exportImportSnapshotSalted" prop_exportImportSnapshotSalted
     ]
 
 {-------------------------------------------------------------------------------
@@ -93,6 +94,63 @@ prop_exportImportSnapshot ins los =
 
     salt :: Salt
     salt = 17
+
+    conf :: TableConfig
+    conf = defaultTableConfig {
+        confWriteBufferAlloc = AllocNumEntries 3
+      }
+
+-- | Like 'prop_exportImportSnapshot', but import the exported snapshot into a
+-- new session with a different salt
+prop_exportImportSnapshotSalted ::
+     V.Vector (Key, Value)
+  -> V.Vector Key
+  -> Property
+prop_exportImportSnapshotSalted ins los =
+    checkCoverage $
+    ioProperty $
+    withTempIOHasBlockIO "prop_exportImportSnapshot" $ \hfs hbio -> do
+      FS.createDirectoryIfMissing hfs True sessionDir
+
+      -- Open a session and create a snapshot for some arbitrary table contents
+      lrs1 <-
+        withOpenSession nullTracer hfs hbio salt1 sessionDir $ \session ->
+          withTableWith conf session $ \(table1 :: Table IO Key Value Void) -> do
+            inserts table1 $ V.map (\(k, v) -> (k, v, Nothing)) ins
+            saveSnapshot "snap1" "KeyValueBlob" table1
+
+            -- Export then re-import the snapshot
+            exportSnapshot session "snap1" exportDir
+            V.map getValue <$> lookups table1 los
+
+      lrs2 <-
+        withOpenSession nullTracer hfs hbio salt2 sessionDir $ \session -> do
+          importSnapshot session "snap2" exportDir
+
+          -- Open a table from the re-imported snapshot. Any corruption of the
+          -- snapshot would be identified here.
+          withTableFromSnapshot session "snap2" "KeyValueBlob" $ \(table2 :: Table IO Key Value Void) -> do
+            V.map getValue <$> lookups table2 los
+
+      -- Check that lookups on both the original and re-imported table
+      -- match
+      pure $
+        tabulate "# of physical table entries" [ showRangesOf 5 $ V.length ins ] $
+        tabulate "# of lookups"                [ showRangesOf 5 $ V.length los ] $
+        tabulate "# of successful lookups"     [ showRangesOf 5 $ V.length $ V.catMaybes lrs1 ] $
+        tabulate "# of unsuccessful lookups"   [ showRangesOf 5 $ V.length $ V.filter (==Nothing) lrs1 ] $
+        lrs1 === lrs2
+  where
+    sessionDir = FS.mkFsPath ["session"]
+
+    -- | Directory for storing exported snapshots
+    exportDir = FS.mkFsPath ["export"]
+
+    salt1 :: Salt
+    salt1 = 17
+
+    salt2 :: Salt
+    salt2 = 19
 
     conf :: TableConfig
     conf = defaultTableConfig {

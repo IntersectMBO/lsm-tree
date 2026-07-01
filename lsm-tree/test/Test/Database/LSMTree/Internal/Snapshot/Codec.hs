@@ -24,6 +24,8 @@ import           Database.LSMTree.Internal.RunBuilder (IndexType (..),
 import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import           Database.LSMTree.Internal.Snapshot.Codec
+import           Database.LSMTree.Internal.Snapshot.Codec.Monad (Env (Env),
+                     runDec)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Arbitrary
@@ -49,9 +51,17 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
         propAll roundtripFlatTerm'
       -- Test generators and shrinkers
     , testGroup "Generators and shrinkers are finite" $
-        testAll $ \(p :: Proxy a) ->
-          testGroup (show $ typeRep p) $
-            prop_arbitraryAndShrinkPreserveInvariant @a noTags deepseqInvariant
+        testAll $ \(pa :: Proxy a) (pc :: Proxy ctx) ->
+          testGroup (show (typeRep pa, typeRep pc)) [
+              testGroup (show $ typeRep pa) $
+                prop_arbitraryAndShrinkPreserveInvariant @a noTags deepseqInvariant
+              -- TODO: tests for ctx are duplicated because multiple codec types
+              -- may have the same ctx type. We could remove this duplication,
+              -- but it is also not currently a problem because the tests are
+              -- quick to run.
+            , testGroup (show $ typeRep pc) $
+                prop_arbitraryAndShrinkPreserveInvariant @ctx noTags deepseqInvariant
+            ]
     ]
 
 {-------------------------------------------------------------------------------
@@ -82,12 +92,27 @@ explicitRoundtripCBOR enc dec x = case back (there x) of
     back = deserialiseFromBytes dec
 
 -- | See 'explicitRoundtripCBOR'.
-roundtripCBOR :: (Encode a, Decode a, Eq a, Show a) => Proxy a -> a -> Property
-roundtripCBOR _ = explicitRoundtripCBOR encode decode
+roundtripCBOR ::
+     (Encode a, Decode a, Eq a, Show a)
+  => Proxy a
+  -> a
+  -> Property
+roundtripCBOR _ = explicitRoundtripCBOR encode dec
+  where
+    dec = runDec decode (Env False)
 
 -- | See 'explicitRoundtripCBOR'.
-roundtripCBOR' :: (Encode a, DecodeVersioned a, Eq a, Show a) => Proxy a -> a -> Property
-roundtripCBOR' _ = explicitRoundtripCBOR encode (decodeVersioned currentSnapshotVersion)
+roundtripCBOR' ::
+     forall a ctx. (Encode a, DecodeVersioned ctx a, Eq a, Show a)
+  => Proxy a
+  -> Proxy ctx
+  -> a
+  -> ctx
+  -> Property
+roundtripCBOR' _ _ x ctx = explicitRoundtripCBOR encode dec x
+  where
+    dec :: forall s. Decoder s a
+    dec = runDec (decodeVersionedWith currentSnapshotVersion ctx ) (Env False)
 
 -- | @fromFlatTerm . toFlatTerm = id@
 --
@@ -122,86 +147,106 @@ roundtripFlatTerm ::
   => Proxy a
   -> a
   -> Property
-roundtripFlatTerm _ = explicitRoundtripFlatTerm encode decode
+roundtripFlatTerm _ = explicitRoundtripFlatTerm encode dec
+  where
+    dec = runDec decode (Env False)
 
 -- | See 'explicitRoundtripFlatTerm'.
 roundtripFlatTerm' ::
-     (Encode a, DecodeVersioned a, Eq a, Show a)
+     forall a ctx. (Encode a, DecodeVersioned ctx a, Eq a, Show a)
   => Proxy a
+  -> Proxy ctx
   -> a
+  -> ctx
   -> Property
-roundtripFlatTerm' _ = explicitRoundtripFlatTerm encode (decodeVersioned currentSnapshotVersion)
+roundtripFlatTerm' _ _ x ctx = explicitRoundtripFlatTerm encode dec x
+  where
+    dec :: forall s. Decoder s a
+    dec = runDec (decodeVersionedWith currentSnapshotVersion ctx) (Env False)
 
 {-------------------------------------------------------------------------------
   Test and property runners
 -------------------------------------------------------------------------------}
 
-type Constraints a = (
+type Constraints a ctx = (
       Eq a, Show a, Typeable a, Arbitrary a
-    , Encode a, DecodeVersioned a, NFData a
+    , NFData a
+    , Encode a, DecodeVersioned ctx a
+
+    , Eq ctx, Show ctx, Typeable ctx, Arbitrary ctx
+    , NFData ctx
     )
 
 -- | Run a property on all types in the snapshot metadata hierarchy.
 propAll ::
-     (forall a. Constraints a => Proxy a -> a -> Property)
+     (forall a ctx. Constraints a ctx => Proxy a -> Proxy ctx -> a -> ctx -> Property)
   -> [TestTree]
 propAll prop = testAll mkTest
   where
-    mkTest :: forall a. Constraints a => Proxy a -> TestTree
-    mkTest pa = testProperty (show $ typeRep pa) (prop pa)
+    mkTest :: forall a ctx. Constraints a ctx => Proxy a -> Proxy ctx -> TestTree
+    mkTest pa pc = testProperty (show (typeRep pa, typeRep pc)) (prop pa pc)
 
 -- | Run a test on all types in the snapshot metadata hierarchy.
 testAll ::
-     (forall a. Constraints a => Proxy a -> TestTree)
+     (forall a ctx. Constraints a ctx => Proxy a -> Proxy ctx -> TestTree)
   -> [TestTree]
 testAll test = [
       -- SnapshotMetaData
-      test (Proxy @SnapshotMetaData)
-    , test (Proxy @SnapshotLabel)
-    , test (Proxy @SnapshotRun)
+      test (Proxy @SnapshotMetaData) (Proxy @NoCtx)
+    , test (Proxy @SnapshotLabel) (Proxy @NoCtx)
+    , test (Proxy @SnapshotRun) (Proxy @TableConfig)
       -- TableConfig
-    , test (Proxy @TableConfig)
-    , test (Proxy @MergePolicy)
-    , test (Proxy @SizeRatio)
-    , test (Proxy @WriteBufferAlloc)
-    , test (Proxy @BloomFilterAlloc)
-    , test (Proxy @FencePointerIndexType)
-    , test (Proxy @DiskCachePolicy)
-    , test (Proxy @MergeSchedule)
+    , test (Proxy @TableConfig) (Proxy @NoCtx)
+    , test (Proxy @MergePolicy) (Proxy @NoCtx)
+    , test (Proxy @SizeRatio) (Proxy @NoCtx)
+    , test (Proxy @WriteBufferAlloc) (Proxy @NoCtx)
+    , test (Proxy @BloomFilterAlloc) (Proxy @NoCtx)
+    , test (Proxy @FencePointerIndexType) (Proxy @NoCtx)
+    , test (Proxy @DiskCachePolicy) (Proxy @NoCtx)
+    , test (Proxy @MergeSchedule) (Proxy @NoCtx)
       -- SnapLevels
-    , test (Proxy @(SnapLevels SnapshotRun))
-    , test (Proxy @(SnapLevel SnapshotRun))
-    , test (Proxy @(V.Vector SnapshotRun))
-    , test (Proxy @RunNumber)
-    , test (Proxy @(SnapIncomingRun SnapshotRun))
-    , test (Proxy @MergePolicyForLevel)
-    , test (Proxy @RunDataCaching)
-    , test (Proxy @RunBloomFilterAlloc)
-    , test (Proxy @IndexType)
-    , test (Proxy @RunParams)
-    , test (Proxy @(SnapMergingRun LevelMergeType SnapshotRun))
-    , test (Proxy @MergeDebt)
-    , test (Proxy @MergeCredits)
-    , test (Proxy @NominalDebt)
-    , test (Proxy @NominalCredits)
-    , test (Proxy @LevelMergeType)
-    , test (Proxy @TreeMergeType)
-    , test (Proxy @(SnapMergingTree SnapshotRun))
-    , test (Proxy @(SnapMergingTreeState SnapshotRun))
-    , test (Proxy @(SnapMergingRun TreeMergeType SnapshotRun))
-    , test (Proxy @(SnapPendingMerge SnapshotRun))
-    , test (Proxy @(SnapPreExistingRun SnapshotRun))
+    , test (Proxy @(SnapLevels SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @(SnapLevel SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @(V.Vector SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @RunNumber) (Proxy @NoCtx)
+    , test (Proxy @(SnapIncomingRun SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @MergePolicyForLevel) (Proxy @NoCtx)
+    , test (Proxy @RunDataCaching) (Proxy @NoCtx)
+    , test (Proxy @RunBloomFilterAlloc) (Proxy @NoCtx)
+    , test (Proxy @IndexType) (Proxy @NoCtx)
+    , test (Proxy @RunParams) (Proxy @NoCtx)
+    , test (Proxy @(SnapMergingRun LevelMergeType SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @MergeDebt) (Proxy @NoCtx)
+    , test (Proxy @MergeCredits) (Proxy @NoCtx)
+    , test (Proxy @NominalDebt) (Proxy @NoCtx)
+    , test (Proxy @NominalCredits) (Proxy @NoCtx)
+    , test (Proxy @LevelMergeType) (Proxy @NoCtx)
+    , test (Proxy @TreeMergeType) (Proxy @NoCtx)
+    , test (Proxy @(SnapMergingTree SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @(SnapMergingTreeState SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @(SnapMergingRun TreeMergeType SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @(SnapPendingMerge SnapshotRun)) (Proxy @TableConfig)
+    , test (Proxy @(SnapPreExistingRun SnapshotRun)) (Proxy @TableConfig)
     ]
+
+{-------------------------------------------------------------------------------
+  Arbitrary: context
+-------------------------------------------------------------------------------}
+
+instance Arbitrary NoCtx where
+  arbitrary = pure NoCtx
+  shrink NoCtx = []
 
 {-------------------------------------------------------------------------------
   Arbitrary: versioning
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SnapshotVersion where
-  arbitrary = elements [V0, V1, V2]
+  arbitrary = elements [V0, V1, V2, V3]
   shrink V0 = []
   shrink V1 = [V0]
   shrink V2 = [V0, V1]
+  shrink V3 = [V0, V1, V2]
 
 deriving newtype instance Arbitrary a => Arbitrary (Versioned a)
 
@@ -228,10 +273,10 @@ instance Arbitrary SnapshotLabel where
   shrink (SnapshotLabel txt) = SnapshotLabel <$> shrink txt
 
 instance Arbitrary SnapshotRun where
-  arbitrary = SnapshotRun <$> arbitrary <*> arbitrary <*> arbitrary
-  shrink (SnapshotRun a b c) =
-      [ SnapshotRun a' b' c'
-      | (a', b', c') <- shrink (a, b, c)]
+  arbitrary = SnapshotRun <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+  shrink (SnapshotRun a b c d) =
+      [ SnapshotRun a' b' c' d'
+      | (a', b', c', d') <- shrink (a, b, c, d)]
 
 {-------------------------------------------------------------------------------
   Arbitrary: TableConfig
