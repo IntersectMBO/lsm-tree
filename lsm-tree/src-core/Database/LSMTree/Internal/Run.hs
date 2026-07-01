@@ -349,11 +349,10 @@ openFromDisk fs hbio refCtx runRunDataCaching filterAlloc indexType salt runRunF
             hasFS = fs
           , hasBlockIO = hbio
           , kOpsPath = runKOpsPath runRunFsPaths
-          , index = runIndex
           , dataCaching = runRunDataCaching
           , numPages =  Index.sizeInPages runIndex
           }
-    runFilter <- bracketOnError (Keys.unsafeNew Keys.NoOffsetKey runInfo) Keys.close $ \keys -> do
+    runFilter <- bracketOnError (Keys.unsafeNew runInfo) Keys.close $ \keys -> do
       mbloom <- stToIO $ newMBloom runNumEntries filterAlloc salt
       let loop = do
             Keys.next keys >>= \case

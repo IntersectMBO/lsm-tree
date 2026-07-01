@@ -21,11 +21,11 @@ import           Database.LSMTree.Internal.BlobFile (BlobFile)
 import           Database.LSMTree.Internal.BlobRef (RawBlobRef (..),
                      mkRawBlobRef)
 import qualified Database.LSMTree.Internal.Entry as E
+import           Database.LSMTree.Internal.Page (readDiskPage)
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.RawPage
 import           Database.LSMTree.Internal.RunReader (Entry (..), Result (..),
-                     mkEntryOverflow, readDiskPage, readOverflowPages,
-                     toFullEntry)
+                     mkEntryOverflow, readOverflowPages, toFullEntry)
 import           Database.LSMTree.Internal.Serialise (ResolveSerialisedValue,
                      SerialisedValue)
 import           Database.LSMTree.Internal.WriteBuffer (WriteBuffer)
