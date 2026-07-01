@@ -1,5 +1,23 @@
 # Revision history for `lsm-tree`
 
+## ?.?.?.? -- ????-??-??
+
+### Breaking changes
+
+None
+
+### New features
+
+None
+
+### Minor changes
+
+* Support `data-elevator-0.3`. See [issue #856](https://github.com/IntersectMBO/lsm-tree/issues/856) and [PR #857](https://github.com/IntersectMBO/lsm-tree/pull/857).
+
+### Bug fixes
+
+None
+
 ## 1.1.0.0 -- 2026-05-13
 
 ### Breaking changes
