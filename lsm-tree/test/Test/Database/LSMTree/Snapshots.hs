@@ -10,12 +10,14 @@ import           Data.Word (Word64)
 import           Database.LSMTree (ResolveValue, Salt, SerialiseKey,
                      SerialiseValue, Table, TableConfig (confWriteBufferAlloc),
                      WriteBufferAlloc (AllocNumEntries), defaultTableConfig,
-                     exportSnapshot, getValue, importSnapshot, inserts, lookups,
-                     saveSnapshot, withOpenSession, withTableFromSnapshot,
-                     withTableWith)
+                     exportSnapshotToDisk, getValue, importSnapshotFromDisk,
+                     inserts, lookups, saveSnapshot, withOpenSession,
+                     withTableFromSnapshot, withTableWith)
 
 import           Database.LSMTree.Extras (showRangesOf)
+import qualified System.FilePath as FP
 import qualified System.FS.API as FS
+import           System.IO.Temp (withSystemTempDirectory)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (Arbitrary, Property, Small (Small),
                      checkCoverage, ioProperty, tabulate, testProperty, (===))
@@ -57,6 +59,7 @@ prop_exportImportSnapshot ::
 prop_exportImportSnapshot ins los =
     checkCoverage $
     ioProperty $
+    withSystemTempDirectory "prop_exportImportSnapshot" $ \tmp -> do
     withTempIOHasBlockIO "prop_exportImportSnapshot" $ \hfs hbio -> do
       FS.createDirectoryIfMissing hfs True sessionDir
 
@@ -67,8 +70,9 @@ prop_exportImportSnapshot ins los =
           saveSnapshot "snap1" "KeyValueBlob" table1
 
           -- Export then re-import the snapshot
-          exportSnapshot session "snap1" exportDir
-          importSnapshot session "snap2" exportDir
+          let exportDir = tmp FP.</> "export"
+          exportSnapshotToDisk session "snap1" exportDir
+          importSnapshotFromDisk session "snap2" exportDir
 
           -- Open a table from the re-imported snapshot. Any corruption of the
           -- snapshot would be identified here.
@@ -87,9 +91,6 @@ prop_exportImportSnapshot ins los =
               lrs1 === lrs2
   where
     sessionDir = FS.mkFsPath ["session"]
-
-    -- | Directory for storing exported snapshots
-    exportDir = FS.mkFsPath ["export"]
 
     salt :: Salt
     salt = 17

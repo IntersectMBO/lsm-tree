@@ -82,8 +82,8 @@ module Database.LSMTree.Internal.Unsafe (
   , deleteSnapshot
   , doesSnapshotExist
   , listSnapshots
-  , importSnapshot
-  , exportSnapshot
+  , importSnapshotFromDisk
+  , exportSnapshotToDisk
     -- * Multiple writable tables
   , duplicate
     -- * Table union
@@ -161,6 +161,7 @@ import           Database.LSMTree.Internal.UniqCounter
 import qualified Database.LSMTree.Internal.Vector as V
 import qualified Database.LSMTree.Internal.WriteBuffer as WB
 import qualified Database.LSMTree.Internal.WriteBufferBlobs as WBB
+import qualified System.Directory as Dir
 import qualified System.FS.API as FS
 import           System.FS.API (FsError, FsErrorPath (..), FsPath, HasFS)
 import qualified System.FS.API.Lazy as FS
@@ -251,13 +252,13 @@ data SessionTrace =
 
     -- | We are importing a snapshot. A 'TraceImportedSnapshot' message should
     -- follow if successful.
-  | TraceImportSnapshot SnapshotName FsPath
+  | TraceImportSnapshot SnapshotName FilePath
     -- | Importing a snapshot was successful.
   | TraceImportedSnapshot SnapshotName
 
     -- | We are exporting a snapshot. A 'TraceExportedSnapshot' message should
     -- follow if successful.
-  | TraceExportSnapshot SnapshotName FsPath
+  | TraceExportSnapshot SnapshotName FilePath
     -- | Exporting a snapshot was successful.
   | TraceExportedSnapshot SnapshotName
 
@@ -1915,39 +1916,40 @@ listSnapshots sesh = do
 
 -- | A snapshot was intended to be imported, but the source directory does not
 -- exist.
-data SnapshotImportDirDoesNotExistError
-    = SnapshotImportDirDoesNotExistError !FsPath
+newtype SnapshotImportDirDoesNotExistError
+    = SnapshotImportDirDoesNotExistError FilePath
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# SPECIALISE importSnapshot ::
+{-# SPECIALISE importSnapshotFromDisk ::
      Session IO h
   -> SnapshotName
-  -> FsPath
+  -> FilePath
   -> IO () #-}
--- |  See 'Database.LSMTree.importSnapshot'.
-importSnapshot ::
-     (MonadMask m, MonadSTM m, PrimMonad m)
+-- |  See 'Database.LSMTree.importSnapshotFromDisk'.
+importSnapshotFromDisk ::
+     (MonadMask m, MonadSTM m, PrimBase m, PrimState m ~ RealWorld)
   => Session m h
   -> SnapshotName
-  -> FsPath
+  -> FilePath
   -> m ()
-importSnapshot sesh snap sourcePath = do
+importSnapshotFromDisk sesh snap sourcePath = do
     traceWith sesh.sessionTracer $ TraceImportSnapshot snap sourcePath
     withKeepSessionOpen sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
         let hfs = seshEnv.sessionHasFS
             hbio = seshEnv.sessionHasBlockIO
 
-        -- Guard that the snapshot does not exist already
+        -- Guard that the internal snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
         snapshotExists <- doesSnapshotDirExist snap seshEnv
         when snapshotExists $ throwIO (ErrSnapshotExists snap)
 
-        let destinationPath = Paths.getNamedSnapshotDir snapDir
-
-        sourceExists <- FS.doesDirectoryExist hfs sourcePath
+        -- Guard that the external snapshot exists
+        sourceExists <- ioToPrim $ Dir.doesDirectoryExist sourcePath
         unless sourceExists $ throwIO (SnapshotImportDirDoesNotExistError sourcePath)
+
+        let destinationPath = Paths.getNamedSnapshotDir snapDir
 
         -- we assume the snapshots directory already exists, so we just have
         -- to create the directory for this specific snapshot.
@@ -1955,8 +1957,8 @@ importSnapshot sesh snap sourcePath = do
           (FS.createDirectory hfs destinationPath)
           (FS.removeDirectoryRecursive hfs destinationPath)
 
-        -- create hard links for all files in the destination directory
-        FS.hardLinkDirectoryRecursive hfs hbio reg sourcePath destinationPath
+        -- copy all files from the source directory
+        FS.copyDirectoryFromDiskRecursive hfs reg sourcePath destinationPath
 
         -- Make the destination directory and its contents durable
         FS.synchroniseDirectoryRecursive hfs hbio destinationPath
@@ -1968,29 +1970,28 @@ importSnapshot sesh snap sourcePath = do
 
 -- | A snapshot was intended to be exported, but the destination directory
 -- already exists.
-data SnapshotExportDirExistsError
-    = SnapshotExportDirExistsError !FsPath
+newtype SnapshotExportDirExistsError
+    = SnapshotExportDirExistsError FilePath
     deriving stock (Show, Eq)
     deriving anyclass (Exception)
 
-{-# SPECIALISE exportSnapshot ::
+{-# SPECIALISE exportSnapshotToDisk ::
      Session IO h
   -> SnapshotName
-  -> FsPath
+  -> FilePath
   -> IO () #-}
--- |  See 'Database.LSMTree.exportSnapshot'.
-exportSnapshot ::
-     (MonadMask m, MonadSTM m, PrimMonad m)
+-- |  See 'Database.LSMTree.exportSnapshotToDisk'.
+exportSnapshotToDisk ::
+     (MonadMask m, MonadSTM m, PrimBase m, PrimState m ~ RealWorld)
   => Session m h
   -> SnapshotName
-  -> FsPath
+  -> FilePath
   -> m ()
-exportSnapshot sesh snap destinationPath = do
+exportSnapshotToDisk sesh snap destinationPath = do
     traceWith (sessionTracer sesh) $ TraceExportSnapshot snap destinationPath
     withKeepSessionOpen sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
         let hfs = seshEnv.sessionHasFS
-            hbio = seshEnv.sessionHasBlockIO
 
         -- Guard that the snapshot exists already
         let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
@@ -1999,18 +2000,16 @@ exportSnapshot sesh snap destinationPath = do
 
         let sourcePath = Paths.getNamedSnapshotDir snapDir
 
-        destinationExists <- FS.doesDirectoryExist hfs destinationPath
-        when destinationExists $ throwIO (SnapshotExportDirExistsError sourcePath)
+        -- Guard that the external snapshot does not exist
+        destinationExists <- ioToPrim $ Dir.doesDirectoryExist destinationPath
+        when destinationExists $ throwIO (SnapshotExportDirExistsError destinationPath)
 
         withRollback_ reg
-          (FS.createDirectoryIfMissing hfs True destinationPath)
-          (FS.removeDirectoryRecursive hfs destinationPath)
+          (ioToPrim $ Dir.createDirectoryIfMissing True destinationPath)
+          (ioToPrim $ Dir.removeDirectoryRecursive destinationPath)
 
-        -- Create hard links for all files in the destination directory
-        FS.hardLinkDirectoryRecursive hfs hbio reg sourcePath destinationPath
-
-        -- Make the directory and its contents durable.
-        FS.synchroniseDirectoryRecursive hfs hbio destinationPath
+        -- copy all files from the source directory
+        FS.copyDirectoryToDiskRecursive hfs reg sourcePath destinationPath
 
         -- Note: trace the success message only after all side effects have been
         -- succesfully performed

@@ -102,8 +102,8 @@ module Database.LSMTree (
   doesSnapshotExist,
   deleteSnapshot,
   listSnapshots,
-  importSnapshot,
-  exportSnapshot,
+  importSnapshotFromDisk,
+  exportSnapshotToDisk,
   SnapshotName,
   isValidSnapshotName,
   toSnapshotName,
@@ -206,7 +206,7 @@ import           Control.Monad.Class.MonadAsync (MonadAsync)
 import           Control.Monad.Class.MonadST (MonadST)
 import           Control.Monad.Class.MonadThrow (MonadCatch (..), MonadEvaluate,
                      MonadMask, MonadThrow (..))
-import           Control.Monad.Primitive (PrimMonad)
+import           Control.Monad.Primitive (PrimBase, PrimMonad (..), RealWorld)
 import           Control.Tracer (Tracer)
 import           Data.Bifunctor (Bifunctor (..))
 import           Data.Coerce (coerce)
@@ -2882,26 +2882,14 @@ listSnapshots (Session session) =
 
 
 {- |
-Import a snapshot from an external directory.
+Import a snapshot from an on-disk directory.
 
 The source directory should exist.
-Snapshots should only be imported from a directory on the same volume as the session directory.
 
-Importing does not not check whether the external directory is a snapshot, and
-neither does importing verify the snapshot contents if it is a snapshot.
-Open the snapshot to verify that it is a snapshot and that it is not corrupted.
+Importing /always/ copies the external files.
 
-The 'FsPath' path to the source directory is a relative path that is interpreted
-relative to a /root/ (sometimes also called a mount point).
-What the root is depends on which function was used to create the session.
-See 'withOpenSession', 'withOpenSessionIO', and 'withOpenMountedSessionIO' for more
-information about the root.
-
-It is generally not advisable to use 'importSnapshot' and 'exportSnapshot' when the session is
-created using 'withOpenSessionIO'.
-Snapshots should only be exported to somewhere /outside/ the session directory, which is not possible
-when the session is created using 'withOpenSessionIO'.
-Use 'withOpenMountedSessionIO' or 'withOpenSession' instead.
+Importing does not check whether the source directory is a snapshot and does not verify the snapshot contents.
+To verify that the source directory is a valid snapshot, open the imported snapshot.
 
 >>> :{
 runExample $ \session table -> do
@@ -2910,9 +2898,9 @@ runExample $ \session table -> do
   LSMT.insert table 1 "World" Nothing
   LSMT.saveSnapshot "example" "Key Value Blob" table
   -- Export then import snapshot
-  let exportDir = mkFsPath ["export"]
-  LSMT.exportSnapshot session "example" exportDir
-  LSMT.importSnapshot session "example_new" exportDir
+  let exportDir = "export"
+  LSMT.exportSnapshotToDisk session "example" exportDir
+  LSMT.importSnapshotFromDisk session "example_new" exportDir
   -- Open the imported snapshot
   LSMT.withTableFromSnapshot @_ @_ @Value
     session "example_new" "Key Value Blob" $ \table' -> do
@@ -2937,40 +2925,27 @@ Throws the following exceptions:
     If the source directory for the to-be-imported snapshot does not exist.
 -}
 {-# SPECIALISE
-  importSnapshot ::
+  importSnapshotFromDisk ::
     Session IO ->
     SnapshotName ->
-    FsPath ->
+    FilePath ->
     IO ()
   #-}
-importSnapshot ::
+importSnapshotFromDisk ::
   forall m.
-  (IOLike m) =>
+  (IOLike m, PrimBase m, PrimState m ~ RealWorld) =>
   Session m ->
   SnapshotName ->
   -- | Source directory
-  FsPath ->
+  FilePath ->
   m ()
-importSnapshot (Session session) =
-    Internal.importSnapshot session
+importSnapshotFromDisk (Session session) =
+    Internal.importSnapshotFromDisk session
 
 {- |
 Export a snapshot to an external directory.
 
 The destination directory should not exist already.
-Snapshots should only be exported to a directory on the same volume as the session directory.
-
-The 'FsPath' path to the destination directory is a relative path that is interpreted
-relative to a /root/.
-What the root is depends on which function was used to create the session.
-See 'withOpenSession', 'withOpenSessionIO', and 'withOpenMountedSessionIO' for more
-information about the root.
-
-It is generally not advisable to use 'importSnapshot' and 'exportSnapshot' when the session is
-created using 'withOpenSessionIO'.
-Snapshots should only be exported to somewhere /outside/ the session directory, which is not possible
-when the session is created using 'withOpenSessionIO'.
-Use 'withOpenMountedSessionIO' or 'withOpenSession' instead.
 
 >>> :{
 runExample $ \session table -> do
@@ -2979,9 +2954,9 @@ runExample $ \session table -> do
   LSMT.insert table 1 "World" Nothing
   LSMT.saveSnapshot "example" "Key Value Blob" table
   -- Export then import snapshot
-  let exportDir = mkFsPath ["export"]
-  LSMT.exportSnapshot session "example" exportDir
-  LSMT.importSnapshot session "example_new" exportDir
+  let exportDir = "export"
+  LSMT.exportSnapshotToDisk session "example" exportDir
+  LSMT.importSnapshotFromDisk session "example_new" exportDir
   -- Open the imported snapshot
   LSMT.withTableFromSnapshot @_ @_ @Value
     session "example_new" "Key Value Blob" $ \table' -> do
@@ -3006,22 +2981,22 @@ Throws the following exceptions:
     If the destination directory for the to-be-exported snapshot already exists.
 -}
 {-# SPECIALISE
-  exportSnapshot ::
+  exportSnapshotToDisk ::
     Session IO ->
     SnapshotName ->
-    FsPath ->
+    FilePath ->
     IO ()
   #-}
-exportSnapshot ::
+exportSnapshotToDisk ::
   forall m.
-  (IOLike m) =>
+  (IOLike m, PrimBase m, PrimState m ~ RealWorld) =>
   Session m ->
   SnapshotName ->
   -- | Destination directory
-  FsPath ->
+  FilePath ->
   m ()
-exportSnapshot (Session session) =
-    Internal.exportSnapshot session
+exportSnapshotToDisk (Session session) =
+    Internal.exportSnapshotToDisk session
 
 -- | Internal helper. Get 'resolveSerialised' at type 'ResolveSerialisedValue'.
 _getResolveSerialisedValue ::
