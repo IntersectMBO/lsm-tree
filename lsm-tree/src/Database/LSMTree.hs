@@ -484,21 +484,8 @@ withOpenSession ::
 withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDir action = do
   Internal.withOpenSession tracer hasFS hasBlockIO sessionSalt sessionDir (action . Session)
 
-{-# DEPRECATED withOpenSessionIO "withOpenSessionIO is not compatible with importSnapshot and exportSnapshot. Use withOpenMountedSessionIO instead." #-}
 {- |
 Variant of 'withOpenSession' that is specialised to 'IO' using the real filesystem.
-
-Any 'FsPath' paths used with the session after the session is created are interpreted
-with respect to the session directory.
-'importSnapshot' and 'exportSnapshot' are currently the only two functions that take
-'FsPaths' as arguments.
-'FsPath's are subject to a number of constraints, which are mentioned in its Haddock documentation.
-
-It is generally not advisable to use 'importSnapshot' and 'exportSnapshot' when the session is
-created using 'withOpenSessionIO'.
-Snapshots should only be exported to somewhere /outside/ the session directory, which is not possible
-when the session is created using 'withOpenSessionIO'.
-Use 'withOpenMountedSessionIO' or 'withOpenSession' instead.
 -}
 withOpenSessionIO ::
   Tracer IO LSMTreeTrace ->
