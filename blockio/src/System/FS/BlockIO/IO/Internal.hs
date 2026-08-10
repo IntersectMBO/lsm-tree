@@ -37,6 +37,7 @@ import           System.IO.Error (ioeSetErrorString, mkIOError)
 --  * Linux: Pass the parameters to 'initIOCtx' in the @blockio-uring@ package
 --  * MacOS: Ignore the parameters
 --  * Windows: Ignore the parameters
+--  * FreeBSD: Ignore the parameters
 --
 --  For more information about what these parameters mean and how to configure
 --  them, see the @blockio-uring@ package.

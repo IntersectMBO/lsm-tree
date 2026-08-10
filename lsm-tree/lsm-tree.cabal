@@ -40,6 +40,8 @@ description:
   * This package only supports 64-bit, little-endian systems.
   * On Windows, the package has only been tested with NTFS filesystems.
   * On Linux, executables using this package, including test and benchmark suites, must be compiled with the [@-threaded@](https://downloads.haskell.org/ghc/latest/docs/users_guide/phases.html#ghc-flag-threaded) RTS option enabled.
+  * This package is supported and tested on Linux, MacOS and Windows.
+  * This package is supported with limited testing on FreeBSD
 
   == Concurrency #concurrency#
 

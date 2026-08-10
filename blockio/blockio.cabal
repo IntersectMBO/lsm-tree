@@ -115,6 +115,16 @@ library
     build-depends:  Win32 ^>=2.14
     other-modules:  System.FS.BlockIO.Internal
 
+  elif os(freebsd)
+    hs-source-dirs: src-freebsd
+    build-depends:  unix ^>=2.8.4
+    other-modules:
+      System.FS.BlockIO.Internal
+      System.FS.BlockIO.Internal.Fcntl
+
+  else
+    buildable: False
+
   if flag(serialblockio)
     cpp-options: -DSERIALBLOCKIO
 

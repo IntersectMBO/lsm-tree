@@ -59,6 +59,10 @@ the key is simply deleted.
   [`-threaded`](https://downloads.haskell.org/ghc/latest/docs/users_guide/phases.html#ghc-flag-threaded "https://downloads.haskell.org/ghc/latest/docs/users_guide/phases.html#ghc-flag-threaded")
   RTS option enabled.
 
+- This package is supported and tested on Linux, MacOS and Windows.
+
+- This package is supported with limited testing on FreeBSD
+
 ### Concurrency <span id="concurrency" class="anchor"></span>
 
 LSM-trees can be used concurrently, but with a few restrictions:

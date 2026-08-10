@@ -18,11 +18,12 @@ See the `System.FS.BlockIO` module for an example of how to use the library.
 On Linux systems the *real* implementation is backed by
 [blockio-uring](https://hackage.haskell.org/package/blockio-uring), a library
 for asynchronous I/O that achieves good performance when performing batches
-concurrently. On Windows and MacOS systems the *real* implementation currently
-simply performs each I/O operation sequentially, which should achieve about the
-same performance as using non-batched I/O, but the library could be extended
-with asynchronous I/O implementations for Windows and MacOS as well. The
-simulated implementation also performs each I/O operation sequentially.
+concurrently. On Windows, MacOS, and FreeBSD systems the *real* implementation
+currently simply performs each I/O operation sequentially, which should achieve
+about the same performance as using non-batched I/O, but the library could be
+extended with asynchronous I/O implementations for Windows, MacOS, and FreeBSD
+as well. The simulated implementation also performs each I/O operation
+sequentially.
 
 As mentioned before, the batched I/O functionality is separated into an
 *abstract interface* and *implementations* of that abstract interface. The
