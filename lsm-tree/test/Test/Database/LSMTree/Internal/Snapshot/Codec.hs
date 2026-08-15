@@ -39,6 +39,17 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
         , testProperty "roundtripCBOR" $ roundtripCBOR (Proxy @SnapshotVersion)
         , testProperty "roundtripFlatTerm" $ roundtripFlatTerm (Proxy @SnapshotVersion)
         ]
+     , testGroup "SnapshotVersionMismatchError" [
+          testProperty "unknown versions are incompatible" $ \(NonNegative n) ->
+            let versionNum = 3 + fromIntegral (n :: Int) in
+            case checkVersionCompatibility versionNum of
+              Left _  -> property True
+              Right v -> counterexample ("unexpectedly compatible: " <> show v) False
+        , testProperty "decodeVersionHeader agrees with encodeSnapshotMetaData" $ \metadata ->
+            case decodeVersionHeader (encodeSnapshotMetaData metadata) of
+              Left err     -> counterexample err False
+              Right (_, w) -> snapshotVersionFromWord w === Just currentSnapshotVersion
+        ]
     , testGroup "Versioned SnapshotMetaData" [
           testProperty "roundtripCBOR" $ roundtripCBOR (Proxy @(Versioned SnapshotMetaData))
         , testProperty "roundtripFlatTerm" $ roundtripFlatTerm (Proxy @(Versioned SnapshotMetaData))

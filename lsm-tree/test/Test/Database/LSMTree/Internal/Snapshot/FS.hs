@@ -3,10 +3,14 @@
 -- | Tests for snapshots and their interaction with the file system
 module Test.Database.LSMTree.Internal.Snapshot.FS (tests) where
 
+import           Codec.CBOR.Encoding (encodeListLen, encodeWord)
+import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer
 import           Data.Bifunctor (Bifunctor (..))
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Data.Word
 import           Database.LSMTree.Extras (showPowersOf10)
@@ -15,6 +19,7 @@ import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.Config.Override
                      (noTableConfigOverride)
+import           Database.LSMTree.Internal.CRC32C
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Paths
 import           Database.LSMTree.Internal.Serialise
@@ -39,6 +44,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.FS" [
     , testProperty "prop_fault_fsRoundtripSnapshotMetaData"
         prop_fault_fsRoundtripSnapshotMetaData
     , testProperty "prop_flipSnapshotBit" prop_flipSnapshotBit
+    , testProperty "prop_versionMismatch" prop_versionMismatch
     ]
 
 -- | @readFileSnapshotMetaData . writeFileSnapshotMetaData = id@
@@ -228,3 +234,37 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
         openTableFromSnapshot noTableConfigOverride s snapName snapLabel resolve
 
     getConstructorName e = takeWhile (/= ' ') (show e)
+
+-- | Reading snapshot metadata that declares an unknown (future) snapshot
+-- format version fails with a 'SnapshotVersionMismatchError', not with a
+-- generic 'FileCorruptedError'.
+prop_versionMismatch :: NonNegative Int -> Property
+prop_versionMismatch (NonNegative n) =
+    ioProperty $
+    withTempIOHasFS "temp" $ \hfs -> do
+      -- Write a metadata file that declares a future format version. The
+      -- payload does not matter: the version is checked before the payload is
+      -- decoded.
+      let lbs = toLazyByteString $
+                   encodeListLen 2 -- 'Versioned' wrapper
+                <> encodeListLen 1 -- 'SnapshotVersion' wrapper
+                <> encodeWord versionNum
+      (_, checksum) <-
+        FS.withFile hfs contentPath (FS.WriteMode FS.MustBeNew) $ \h ->
+          hPutAllChunksCRC32C hfs h lbs initialCRC32C
+      let checksumFileName = ChecksumsFileName (BSC.pack "metadata")
+      writeChecksumsFile hfs checksumPath
+        (Map.singleton checksumFileName checksum)
+
+      result <-
+        try @_ @SnapshotVersionMismatchError $
+          readFileSnapshotMetaData hfs contentPath checksumPath
+      pure $ case result of
+        Left (ErrSnapshotVersionMismatch found current _) ->
+          found === versionNum .&&. current === currentSnapshotVersion
+        Right _ ->
+          counterexample "expected SnapshotVersionMismatchError" False
+  where
+    versionNum   = 3 + fromIntegral n
+    contentPath  = mkFsPath ["content"]
+    checksumPath = mkFsPath ["checksum"]
