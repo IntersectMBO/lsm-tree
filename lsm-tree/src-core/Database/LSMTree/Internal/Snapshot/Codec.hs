@@ -8,6 +8,11 @@ module Database.LSMTree.Internal.Snapshot.Codec (
   , prettySnapshotVersion
   , currentSnapshotVersion
   , allCompatibleSnapshotVersions
+    -- * Errors
+  , SnapshotVersionMismatchError (..)
+  , snapshotVersionFromWord
+  , checkVersionCompatibility
+  , decodeVersionHeader
     -- * Writing and reading files
   , writeFileSnapshotMetaData
   , readFileSnapshotMetaData
@@ -94,6 +99,44 @@ isCompatible otherVersion
   = Right ()
   | otherwise = Left "forward compatibility not supported"
 
+-- | Convert a raw version number to a known snapshot version.
+--
+-- Returns 'Nothing' for version numbers that are not known to this version of
+-- the library.
+snapshotVersionFromWord :: Word -> Maybe SnapshotVersion
+snapshotVersionFromWord 0 = Just V0
+snapshotVersionFromWord 1 = Just V1
+snapshotVersionFromWord 2 = Just V2
+snapshotVersionFromWord _ = Nothing
+
+-- | Check whether a raw version number found in snapshot metadata is
+-- compatible with the current snapshot version of the library.
+--
+-- Returns an explanation of the incompatibility if the version number is
+-- unknown to this version of the library, or known but incompatible.
+checkVersionCompatibility :: Word -> Either String SnapshotVersion
+checkVersionCompatibility versionNum =
+  case snapshotVersionFromWord versionNum of
+    Nothing ->
+      Left ("unknown snapshot format version number: " <> show versionNum)
+    Just version ->
+      version <$ isCompatible version
+
+-- | The snapshot metadata declares a snapshot format version that is
+-- incompatible with the current snapshot version of the library.
+data SnapshotVersionMismatchError
+    = ErrSnapshotVersionMismatch
+        -- | The version number found in the snapshot metadata. This is a raw
+        -- number because it may not correspond to any 'SnapshotVersion' that
+        -- is known to this version of the library.
+        !Word
+        -- | The current snapshot version of the library.
+        !SnapshotVersion
+        -- | An explanation of the incompatibility.
+        !String
+    deriving stock (Show, Eq)
+    deriving anyclass (Exception)
+
 {-------------------------------------------------------------------------------
   Writing and reading files
 -------------------------------------------------------------------------------}
@@ -138,6 +181,10 @@ encodeSnapshotMetaData = toLazyByteString . encode . Versioned
   #-}
 -- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
 -- 'SnapshotMetaData'.
+--
+-- Throws a 'SnapshotVersionMismatchError' if the snapshot metadata declares a
+-- snapshot format version that is incompatible with the current snapshot
+-- version of the library.
 readFileSnapshotMetaData ::
      (MonadThrow m)
   => HasFS m h
@@ -156,10 +203,36 @@ readFileSnapshotMetaData hfs contentPath checksumPath = do
 
     expectChecksum hfs contentPath expectedChecksum actualChecksum
 
-    expectValidFile hfs contentPath FormatSnapshotMetaData (decodeSnapshotMetaData lbs)
+    -- Decode and check the version header before decoding the payload, so
+    -- that a version mismatch is reported as a 'SnapshotVersionMismatchError'
+    -- instead of a generic parse failure.
+    (rest, versionNum) <-
+      expectValidFile hfs contentPath FormatSnapshotMetaData (decodeVersionHeader lbs)
+    version <- case checkVersionCompatibility versionNum of
+      Right version -> pure version
+      Left errMsg   ->
+        throwIO (ErrSnapshotVersionMismatch versionNum currentSnapshotVersion errMsg)
+    expectValidFile hfs contentPath FormatSnapshotMetaData (decodeSnapshotMetaData version rest)
 
-decodeSnapshotMetaData :: ByteString -> Either String SnapshotMetaData
-decodeSnapshotMetaData lbs = bimap displayException (getVersioned . snd) (deserialiseFromBytes decode lbs)
+-- | Decode only the version header of versioned snapshot metadata: the
+-- 'Versioned' list wrapper and the version number. Returns the remaining,
+-- undecoded input, from which the metadata itself can be decoded using
+-- 'decodeSnapshotMetaData'.
+decodeVersionHeader :: ByteString -> Either String (ByteString, Word)
+decodeVersionHeader lbs =
+    first displayException (deserialiseFromBytes headerDecoder lbs)
+  where
+    headerDecoder = do
+      _ <- decodeListLenOf 2 -- 'Versioned' wrapper
+      _ <- decodeListLenOf 1 -- 'SnapshotVersion' wrapper
+      decodeWord
+
+-- | Decode 'SnapshotMetaData' using the versioned decoder for the given
+-- version. The input should be the remaining input as returned by
+-- 'decodeVersionHeader'.
+decodeSnapshotMetaData :: SnapshotVersion -> ByteString -> Either String SnapshotMetaData
+decodeSnapshotMetaData version rest =
+    bimap displayException snd (deserialiseFromBytes (decodeVersioned version) rest)
 
 {-------------------------------------------------------------------------------
   Encoding and decoding
@@ -223,11 +296,9 @@ instance Decode SnapshotVersion where
   decode = do
       _ <- decodeListLenOf 1
       ver <- decodeWord
-      case ver of
-        0 -> pure V0
-        1 -> pure V1
-        2 -> pure V2
-        _ -> fail ("Unknown snapshot format version number: " <>  show ver)
+      case snapshotVersionFromWord  ver of
+        Just version -> pure version
+        Nothing -> fail ("Unknown snapshot format version number: " <>  show ver)
 
 {-------------------------------------------------------------------------------
   Encoding and decoding: SnapshotMetaData

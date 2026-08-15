@@ -15,6 +15,10 @@
   `fallback` flag determines whether the import/export should fall back to
   copying if hard linking fails. If the `SnapshotMode` is `Copy extFS`, the
   `FsPath` is interpreted relative to the root of the `extFS` `HasFS` interface.
+* Opening a snapshot with an incompatible snapshot format version now throws
+  `SnapshotVersionMismatchError` instead of `SnapshotCorruptedError`. See
+  [issue #862](https://github.com/IntersectMBO/lsm-tree/issues/862) and [PR
+  #875](https://github.com/IntersectMBO/lsm-tree/pull/875).
 
 ### New features
 
