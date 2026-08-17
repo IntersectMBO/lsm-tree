@@ -1,0 +1,91 @@
+name: CI (FreeBSD)
+
+on:
+  push:
+    branches:
+    - "main"
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Set the default shell on all platforms.
+defaults:
+  run:
+    shell: sh
+
+jobs:
+  ################################################################################
+  # Build (FreeBSD)
+  ################################################################################
+  build:
+    name: ${{ 'Build (FreeBSD)' }}
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+
+    steps:
+    - name: 📥 Checkout repository
+      uses: actions/checkout@v7
+
+    # We are currently only testing blockio because that is where the
+    # FreeBSD-specific code lives, not in lsm-tree.
+
+    # TODO <https://github.com/IntersectMBO/lsm-tree/issues/874>: test blockio
+    # more extensively
+
+    # Note: The VM image and system dependencies are cached,
+    # but all Haskell dependencies are rebuilt on every run.
+    # It might be nice to cache those too at some point, but it is
+    # tricky because leaving and re-entering the VM also incurs a performance cost.
+    # Also, it is important not to cache too many VM images, since they are close to 1GB in size.
+
+    # Note: We are using the GHC and Cabal versions that come recommended with ghcup.
+
+    - name: 🧪 Build and test in FreeBSD VM
+      id: test
+      uses: vmactions/freebsd-vm@v1
+      env:
+        TASTY_TIMEOUT: "5m"
+      with:
+        release: "14"
+        envs: 'TASTY_TIMEOUT'
+        cache-after-prepare: true
+        prepare: |
+          pkg install -y curl gcc gmp gmake ncurses perl5 libffi libiconv
+
+          curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
+          . /root/.ghcup/env
+          ghc --version
+          cabal --version
+
+        run: |
+          . /root/.ghcup/env
+          ghc --version
+          cabal --version
+
+          cabal configure \
+            --enable-tests \
+            --enable-benchmarks \
+            --disable-documentation \
+            --ghc-options="-Werror" \
+          cat "cabal.project.local"
+
+          cabal build blockio \
+            --dry-run
+
+          cabal build blockio \
+            --only-dependencies
+
+          cabal build blockio
+
+          cabal test blockio \
+            -j1 \
+            --test-show-details=direct

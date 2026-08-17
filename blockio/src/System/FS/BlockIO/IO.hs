@@ -3,7 +3,7 @@
 -- The implementation of the 'HasBlockIO' interface provided in this module is
 -- platform-dependent. Most importantly, on Linux, the implementation of
 -- 'submitIO' is backed by @blockio-uring@: a library for asynchronous I\/O. On
--- Windows and MacOS, the implementation of 'submitIO' only supports serial
+-- Windows, MacOS, and FreeBSD, the implementation of 'submitIO' only supports serial
 -- I\/O.
 module System.FS.BlockIO.IO (
     -- * Implementation details #impl#
@@ -39,7 +39,7 @@ import           System.FS.IO (HandleIO, ioHasFS)
 
   Note: if the @serialblockio@ Cabal flag is enabled, then the Linux
   implementation uses a mocked context and serial I\/O for 'close' and
-  'submitIO', just like the MacOS and Windows implementations do.
+  'submitIO', just like the MacOS, Windows, and FreeBSD implementations do.
 
   [IO context]:  When an instance of the 'HasBlockIO' interface for Linux
     systems is initialised, an @io_uring@ context is created using the
@@ -50,61 +50,71 @@ import           System.FS.IO (HandleIO, ioHasFS)
 
     * Linux: an @io_uring@ context provided by the @blockio-uring@ package
     * MacOS: a mocked context using an @MVar@
-    * Windows: a mocked conext using an @MVar@
+    * Windows: a mocked context using an @MVar@
+    * FreeBSD: a mocked context using an @MVar@
 
   ['close']:
 
     * Linux: close the @io_uring@ context through the @blockio-uring@ package
     * MacOS: close the mocked context
     * Windows: close the mocked context
+    * FreeBSD: close the mocked context
 
   ['submitIO']: Submit a batch of I\/O operations using:
 
     * Linux: the @submitIO@ function from the @blockio-uring@ package
     * MacOS: serial I\/O using a 'HasFS'
     * Windows: serial I\/O using a 'HasFS'
+    * FreeBSD: serial I\/O using a 'HasFS'
 
   ['hSetNoCache']:
 
     * Linux: set the @O_DIRECT@ flag
     * MacOS: set the @F_NOCACHE@ flag
     * Windows: no-op
+    * FreeBSD: set the @O_DIRECT@ flag
 
   ['hAdvise']:
 
     * Linux: perform @posix_fadvise(2)@
     * MacOS: no-op
     * Windows: no-op
+    * FreeBSD: perform @posix_fadvise(2)@
 
   ['hAllocate']:
 
     * Linux: perform @posix_fallocate(2)@
     * MacOS: no-op
     * Windows: no-op
+    * FreeBSD: perform @posix_fallocate(2)@
 
   ['tryLockFile']: This uses different locking methods depending on the OS.
 
     * Linux: Open file descriptor (OFD)
     * MacOS: @flock@
     * Windows: @LockFileEx@
+    * FreeBSD: Open file descriptor (OFD)
 
   ['hSynchronise']:
 
     * Linux: perform @fsync(2)@
     * MacOS: perform @fsync(2)@
     * Windows: perform @flushFileBuffers@
+    * FreeBSD: perform @fsync(2)@
 
   ['synchroniseDirectory']:
 
     * Linux: perform @fsync(2)@
     * MacOS: perform @fsync(2)@
     * Windows: no-op
+    * FreeBSD: perform @fsync(2)@
 
   ['createHardLink']:
 
     * Linux: perform @link@
     * MacOS: perform @link@
     * Windows: perform @CreateHardLinkW@
+    * FreeBSD: perform @link@
 -}
 
 -- | An implementation of the 'HasBlockIO' interface using the real file system.

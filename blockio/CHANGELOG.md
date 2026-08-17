@@ -1,5 +1,27 @@
 # Revision history for blockio
 
+## ?.?.?.? -- ????-??-??
+
+### Breaking changes
+
+None
+
+### New features
+
+* Support FreeBSD with an implementation using serial I/O. See [PR
+  #873][pr-873].
+
+### Minor changes
+
+* Explicitly mark the main library with `buildable: False` on unsupported OS
+  distributions. See [PR #873][pr-873].
+
+### Bug fixes
+
+None
+
+[pr-873]: https://github.com/IntersectMBO/lsm-tree/pull/873
+
 ## 0.2.0.0 -- 2026-05-13
 
 ### Breaking changes
