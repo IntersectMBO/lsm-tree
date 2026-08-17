@@ -1,6 +1,8 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+{-# OPTIONS_GHC -Wno-orphans       #-}
 
 module Test.Database.LSMTree.Internal.Index.Compact (tests) where
 
@@ -315,9 +317,9 @@ prop_total_deserialisation word32s =
         -- Just forcing the index is not enough. The underlying vectors might
         -- point to outside of the byte array, so we check they are valid.
         (numEntries, ic) `deepseq`
-             vec64IsValid (icPrimary ic)
-          && bitVecIsValid (icClashes ic)
-          && bitVecIsValid (icLargerThanPage ic)
+             vec64IsValid ic.icPrimary
+          && bitVecIsValid ic.icClashes
+          && bitVecIsValid ic.icLargerThanPage
   where
     vec64IsValid (VU.V_Word64 (VP.Vector off len ba)) =
       off >= 0 && len >= 0 && mul8 (off + len) <= sizeofByteArray ba
@@ -385,7 +387,7 @@ labelIndex ic =
 
 multiPageValuesClash :: IndexCompact -> Bool
 multiPageValuesClash ic
-    | VU.length (icClashes ic) < 3 = False
+    | VU.length ic.icClashes < 3 = False
     | otherwise                   = VU.any p $ VU.zip4 v1 v2 v3 v4
   where
     -- note: @i = j - 1@ and @k = j + 1@. This gives us a local view of a
@@ -396,8 +398,8 @@ multiPageValuesClash ic
          unBit ltpi && not (unBit ltpj) && unBit ltpk
          -- and they clash
       && unBit cj
-    v1 = VU.tail (icClashes ic)
-    v2 = icLargerThanPage ic
+    v1 = VU.tail ic.icClashes
+    v2 = ic.icLargerThanPage
     v3 = VU.tail v2
     v4 = VU.tail v3
 
@@ -408,7 +410,7 @@ countContiguousClashes ic = actualContigClashes
   where
     -- filtered is a list of maximal sub-vectors that have only only contiguous
     -- clashes
-    zipped    = VU.zip (icClashes ic) (icLargerThanPage ic)
+    zipped    = VU.zip ic.icClashes ic.icLargerThanPage
     grouped   = VU.groupBy (\x y -> fst x == fst y) zipped
     filtered  = filter (VU.all (\(c, _ltp) -> c == Bit True)) grouped
     -- clashes that are part of a multi-page value shouldn't be counted towards
@@ -478,8 +480,8 @@ instance Arbitrary Chunks where
     -- shrink number of pages
     [ Chunks chunks' index
         { icPrimary = primary'
-        , icClashes = VU.slice 0 numPages' (icClashes index)
-        , icLargerThanPage = VU.slice 0 numPages' (icLargerThanPage index)
+        , icClashes = VU.slice 0 numPages' index.icClashes
+        , icLargerThanPage = VU.slice 0 numPages' index.icLargerThanPage
         }
     | chunks' <- shrink chunks
     , let primary' = mconcat chunks'
@@ -489,5 +491,5 @@ instance Arbitrary Chunks where
     [ Chunks chunks index
         { icTieBreaker = tieBreaker'
         }
-    | tieBreaker' <- shrink (icTieBreaker index)
+    | tieBreaker' <- shrink index.icTieBreaker
     ]

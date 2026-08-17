@@ -1,5 +1,8 @@
-{-# LANGUAGE CPP #-}
-{-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE CPP                   #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+{-# OPTIONS_HADDOCK not-home       #-}
 
 -- |
 -- Incremental construction of a compact index yields chunks of the primary array
@@ -129,15 +132,15 @@ newWithDefaults = new 1024
     type-agnostic version]('Database.LSMTree.Internal.Index.appendSingle').
 -}
 appendSingle :: forall s. (SerialisedKey, SerialisedKey) -> IndexCompactAcc s -> ST s (Maybe Chunk)
-appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
+appendSingle (minKey, maxKey) ica = do
 #ifdef NO_IGNORE_ASSERTS
-    lastMinKey <- readSTRef icaLastMinKey
+    lastMinKey <- readSTRef ica.icaLastMinKey
     assert (minKey <= maxKey && smaybe True (<= minKey) lastMinKey) $ pure ()  -- sorted
 #endif
-    pageNo <- readSTRef icaCurrentPageNumber
-    let ix = pageNo `mod` icaMaxChunkSize
+    pageNo <- readSTRef ica.icaCurrentPageNumber
+    let ix = pageNo `mod` ica.icaMaxChunkSize
     goAppend pageNo ix
-    writeSTRef icaCurrentPageNumber $! pageNo + 1
+    writeSTRef ica.icaCurrentPageNumber $! pageNo + 1
     yield ica
   where
     minPrimbits, maxPrimbits :: Word64
@@ -156,31 +159,31 @@ appendSingle (minKey, maxKey) ica@IndexCompactAcc{..} = do
         -- | Set value in primary vector
         writePrimary :: ST s ()
         writePrimary =
-            readSTRef icaPrimary >>= \cs -> VUM.write (NE.head cs) ix minPrimbits
+            readSTRef ica.icaPrimary >>= \cs -> VUM.write (NE.head cs) ix minPrimbits
 
         -- | Set value in clash vector, tie-breaker map and larger-than-page
         -- vector
         writeClashesAndLTP :: ST s ()
         writeClashesAndLTP = do
-            lastMaxPrimbits <- readSTRef icaLastMaxPrimbits
+            lastMaxPrimbits <- readSTRef ica.icaLastMaxPrimbits
             let clash = lastMaxPrimbits == SJust minPrimbits
-            writeSTRef icaLastMaxPrimbits $! SJust maxPrimbits
+            writeSTRef ica.icaLastMaxPrimbits $! SJust maxPrimbits
 
-            lastMinKey <- readSTRef icaLastMinKey
+            lastMinKey <- readSTRef ica.icaLastMinKey
             let ltp = SJust minKey == lastMinKey
-            writeSTRef icaLastMinKey $! SJust minKey
+            writeSTRef ica.icaLastMinKey $! SJust minKey
 
-            readSTRef icaClashes >>= \cs -> VUM.write (NE.head cs) ix (Bit clash)
-            readSTRef icaLargerThanPage >>= \cs -> VUM.write (NE.head cs) ix (Bit ltp)
+            readSTRef ica.icaClashes >>= \cs -> VUM.write (NE.head cs) ix (Bit clash)
+            readSTRef ica.icaLargerThanPage >>= \cs -> VUM.write (NE.head cs) ix (Bit ltp)
             when (clash && not ltp) $
-              modifySTRef' icaTieBreaker (Map.insert (makeUnslicedKey minKey) (PageNo pageNo))
+              modifySTRef' ica.icaTieBreaker (Map.insert (makeUnslicedKey minKey) (PageNo pageNo))
 
 {-|
     For a specification of this operation, see the documentation of [its
     type-agnostic version]('Database.LSMTree.Internal.Index.appendMulti').
 -}
 appendMulti :: forall s. (SerialisedKey, Word32) -> IndexCompactAcc s -> ST s [Chunk]
-appendMulti (k, n0) ica@IndexCompactAcc{..} =
+appendMulti (k, n0) ica =
     maybe id (:) <$> appendSingle (k, k) ica <*> overflows (fromIntegral n0)
   where
     minPrimbits :: Word64
@@ -192,16 +195,16 @@ appendMulti (k, n0) ica@IndexCompactAcc{..} =
     overflows n
       | n <= 0 = pure []
       | otherwise = do
-          pageNo <- readSTRef icaCurrentPageNumber
-          let ix = pageNo `mod` icaMaxChunkSize -- will be 0 in recursive calls
-              remInChunk = min n (icaMaxChunkSize - ix)
-          readSTRef icaPrimary >>= \cs ->
+          pageNo <- readSTRef ica.icaCurrentPageNumber
+          let ix = pageNo `mod` ica.icaMaxChunkSize -- will be 0 in recursive calls
+              remInChunk = min n (ica.icaMaxChunkSize - ix)
+          readSTRef ica.icaPrimary >>= \cs ->
             unsafeWriteRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) minPrimbits
-          readSTRef icaClashes >>= \cs ->
+          readSTRef ica.icaClashes >>= \cs ->
             unsafeWriteRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
-          readSTRef icaLargerThanPage >>= \cs ->
+          readSTRef ica.icaLargerThanPage >>= \cs ->
             unsafeWriteRange (NE.head cs) (BoundInclusive ix) (BoundExclusive $ ix + remInChunk) (Bit True)
-          writeSTRef icaCurrentPageNumber $! pageNo + remInChunk
+          writeSTRef ica.icaCurrentPageNumber $! pageNo + remInChunk
           res <- yield ica
           maybe id (:) res <$> overflows (n - remInChunk)
 
@@ -212,13 +215,13 @@ appendMulti (k, n0) ica@IndexCompactAcc{..} =
 --
 -- INVARIANTS: see [construction invariants](#construction-invariants).
 yield :: IndexCompactAcc s -> ST s (Maybe Chunk)
-yield IndexCompactAcc{..} = do
-    pageNo <- readSTRef icaCurrentPageNumber
-    if pageNo `mod` icaMaxChunkSize == 0 then do -- The current chunk is full
-      primaryChunk <- VU.unsafeFreeze . NE.head =<< readSTRef icaPrimary
-      modifySTRef' icaPrimary . NE.cons =<< newPinnedMVec64 icaMaxChunkSize
-      modifySTRef' icaClashes . NE.cons =<< VUM.new icaMaxChunkSize
-      modifySTRef' icaLargerThanPage . NE.cons =<< VUM.new icaMaxChunkSize
+yield ica = do
+    pageNo <- readSTRef ica.icaCurrentPageNumber
+    if pageNo `mod` ica.icaMaxChunkSize == 0 then do -- The current chunk is full
+      primaryChunk <- VU.unsafeFreeze . NE.head =<< readSTRef ica.icaPrimary
+      modifySTRef' ica.icaPrimary . NE.cons =<< newPinnedMVec64 ica.icaMaxChunkSize
+      modifySTRef' ica.icaClashes . NE.cons =<< VUM.new ica.icaMaxChunkSize
+      modifySTRef' ica.icaLargerThanPage . NE.cons =<< VUM.new ica.icaMaxChunkSize
       pure $ Just (word64VectorToChunk primaryChunk)
     else -- the current chunk is not yet full
       pure Nothing
@@ -228,16 +231,16 @@ yield IndexCompactAcc{..} = do
     type-agnostic version]('Database.LSMTree.Internal.Index.unsafeEnd').
 -}
 unsafeEnd :: IndexCompactAcc s -> ST s (Maybe Chunk, IndexCompact)
-unsafeEnd IndexCompactAcc{..} = do
-    pageNo <- readSTRef icaCurrentPageNumber
-    let ix = pageNo `mod` icaMaxChunkSize
+unsafeEnd ica = do
+    pageNo <- readSTRef ica.icaCurrentPageNumber
+    let ix = pageNo `mod` ica.icaMaxChunkSize
 
     chunksPrimary <-
-      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef icaPrimary
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef ica.icaPrimary
     chunksClashes <-
-      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef icaClashes
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef ica.icaClashes
     chunksLargerThanPage <-
-      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef icaLargerThanPage
+      traverse VU.unsafeFreeze . sliceCurrent ix =<< readSTRef ica.icaLargerThanPage
 
     -- Only slice out a chunk if there are entries in the chunk
     let mchunk = if ix == 0
@@ -247,9 +250,14 @@ unsafeEnd IndexCompactAcc{..} = do
     let icPrimary = VU.concat . reverse $ chunksPrimary
     let icClashes = VU.concat . reverse $ chunksClashes
     let icLargerThanPage = VU.concat . reverse $ chunksLargerThanPage
-    icTieBreaker <- readSTRef icaTieBreaker
+    icTieBreaker <- readSTRef ica.icaTieBreaker
 
-    pure (mchunk, IndexCompact {..})
+    pure (mchunk, IndexCompact {
+        icPrimary = icPrimary,
+        icClashes = icClashes,
+        icTieBreaker = icTieBreaker,
+        icLargerThanPage = icLargerThanPage
+    })
   where
     -- The current (most recent) chunk of the bitvectors is only partially
     -- constructed, so we need to only use the part that is already filled.

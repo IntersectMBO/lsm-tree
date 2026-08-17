@@ -1,4 +1,7 @@
-{-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors      #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
+{-# OPTIONS_HADDOCK not-home       #-}
 
 -- | A compact fence-pointer index for uniformly distributed keys.
 --
@@ -394,33 +397,33 @@ search :: SerialisedKey -> IndexCompact -> PageSpan
 -- search key. The code below is annotated with [x,y] or [x, y) comments that
 -- describe the known page number interval at that point in the search
 -- algorithm.
-search k IndexCompact{..} =
+search k idx =
     let !primbits = keyTopBits64 k in
     -- [0, n), where n is the length of the P array
-    case unsafeSearchLE primbits icPrimary of
+    case unsafeSearchLE primbits idx.icPrimary of
       Nothing ->
         -- TODO: if the P array is indeed empty, then this violates the
         -- guarantee that we return a valid page span! We should specify that a
         -- compact index should be non-empty.
-        if VU.length icLargerThanPage == 0 then singlePage (PageNo 0) else
+        if VU.length idx.icLargerThanPage == 0 then singlePage (PageNo 0) else
         -- [0, n), our page span definitely starts at 0, but we still have to
         -- consult the LTP array to check whether the value on page 0 overflows
         -- into subsequent pages.
-        let !i = bitLongestPrefixFromTo (BoundExclusive 0) NoBound (Bit True) icLargerThanPage
+        let !i = bitLongestPrefixFromTo (BoundExclusive 0) NoBound (Bit True) idx.icLargerThanPage
         -- [0, i]
         in  multiPage (PageNo 0) (PageNo i)
       Just !i ->
         -- [0, i]
-        if unBit $ icClashes VU.! i then
+        if unBit $ idx.icClashes VU.! i then
           -- [0, i], now in clash recovery mode.
           let -- i is the *last* index in a range of contiguous pages that all
               -- clash. Since i is the end of the range, we search backwards
               -- through the C array to find the start of this range.
               !i1 = PageNo $ fromMaybe 0 $
-                bitIndexFromToRev (BoundInclusive 0) (BoundInclusive i) (Bit False) icClashes
+                bitIndexFromToRev (BoundInclusive 0) (BoundInclusive i) (Bit False) idx.icClashes
               -- The TB map is consulted to find the closest key smaller than k.
               !i2 = maybe (PageNo 0) snd $
-                Map.lookupLE (makeUnslicedKey k) icTieBreaker
+                Map.lookupLE (makeUnslicedKey k) idx.icTieBreaker
               -- If i2 < i1, then it means the clashing pages were all just part
               -- of the same larger-than-page value. Entries are only included
               -- in the TB map if the clash was a *proper* clash.
@@ -430,7 +433,7 @@ search k IndexCompact{..} =
               PageNo !i3 = max i1 i2
               -- [max i1 i2, i], this is equivalent to taking the intersection
               -- of [i1, i] and [i2, i]
-              !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) icLargerThanPage
+              !i4 = bitLongestPrefixFromTo (BoundExclusive i3) (BoundInclusive i) (Bit True) idx.icLargerThanPage
           in  multiPage (PageNo i3) (PageNo i4)
               -- [i3, i4], we consulted the LTP array to check whether the value
               -- on page i3 overflows into subsequent pages
@@ -441,17 +444,17 @@ search k IndexCompact{..} =
 
 
 countClashes :: IndexCompact -> Int
-countClashes = Map.size . icTieBreaker
+countClashes idx = Map.size idx.icTieBreaker
 
 hasClashes :: IndexCompact -> Bool
-hasClashes = not . Map.null . icTieBreaker
+hasClashes idx = not (Map.null idx.icTieBreaker)
 
 {-|
     For a specification of this operation, see the documentation of [its
     type-agnostic version]('Database.LSMTree.Internal.Index.sizeInPages').
 -}
 sizeInPages :: IndexCompact -> NumPages
-sizeInPages = NumPages . toEnum . VU.length . icPrimary
+sizeInPages idx = NumPages . toEnum . VU.length $ idx.icPrimary
 
 {-------------------------------------------------------------------------------
   Non-incremental serialisation
@@ -461,7 +464,7 @@ sizeInPages = NumPages . toEnum . VU.length . icPrimary
 toLBS :: NumEntries -> IndexCompact -> LBS.ByteString
 toLBS numEntries index =
      headerLBS
-  <> LBS.fromStrict (Chunk.toByteString (word64VectorToChunk (icPrimary index)))
+  <> LBS.fromStrict (Chunk.toByteString (word64VectorToChunk (index.icPrimary)))
   <> finalLBS numEntries index
 
 {-------------------------------------------------------------------------------
@@ -489,21 +492,22 @@ headerLBS =
     type-agnostic version]('Database.LSMTree.Internal.Index.finalLBS').
 -}
 finalLBS :: NumEntries -> IndexCompact -> LBS.ByteString
-finalLBS (NumEntries numEntries) IndexCompact {..} =
+finalLBS (NumEntries numEntries) idx =
     -- use a builder, since it is all relatively small
     BB.toLazyByteString $
-         putBitVec icClashes
-      <> putBitVec icLargerThanPage
-      <> putTieBreaker icTieBreaker
+         putBitVec idx.icClashes
+      <> putBitVec idx.icLargerThanPage
+      <> putTieBreaker idx.icTieBreaker
       <> BB.word64Host (fromIntegral numPages)
       <> BB.word64Host (fromIntegral numEntries)
   where
-    numPages = VU.length icPrimary
+    numPages = VU.length idx.icPrimary
 
 -- | Constructs a chunk containing the contents of a vector of 64-bit words.
 word64VectorToChunk :: VU.Vector Word64 -> Chunk
 word64VectorToChunk (VU.V_Word64 (VP.Vector off len ba)) =
     Chunk (mkPrimVector (mul8 off) (mul8 len) ba)
+
 
 -- | Padded to 64 bit.
 --
@@ -595,7 +599,12 @@ fromSBS (SBS ba') = do
     when (bytesUsed < sizeofByteArray ba) $
       Left "Byte array is too large for components"
 
-    pure (NumEntries numEntries, IndexCompact {..})
+    pure (NumEntries numEntries, IndexCompact {
+      icPrimary = icPrimary,
+      icClashes = icClashes,
+      icTieBreaker = icTieBreaker,
+      icLargerThanPage = icLargerThanPage
+    })
 
 type Offset32 = Int
 type Offset64 = Int
