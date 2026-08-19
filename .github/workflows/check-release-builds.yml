@@ -78,6 +78,7 @@ jobs:
 
     - name: 🛠️ Setup system dependencies (Linux)
       if: ${{ runner.os == 'Linux' }}
+      timeout-minutes: 10
       run: sudo apt-get update && sudo apt-get -y install liburing-dev librocksdb-dev
       env:
         DEBIAN_FRONTEND: "noninteractive"
