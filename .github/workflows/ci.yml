@@ -162,6 +162,8 @@ jobs:
     - name: 📥 Checkout repository
       uses: actions/checkout@v7
 
+    - uses: ./.github/actions/fast-apt-mirror
+
     - name: 🗄️ Print Job info
       run: |
         echo 'matrix.os: ${{ matrix.os }}'

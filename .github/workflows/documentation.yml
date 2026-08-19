@@ -42,6 +42,8 @@ jobs:
     - name: 📥 Checkout repository
       uses: actions/checkout@v7
 
+    - uses: ./.github/actions/fast-apt-mirror
+
     - name: 🛠️ Setup Haskell
       id: setup-haskell
       uses:  haskell-actions/setup@v2
