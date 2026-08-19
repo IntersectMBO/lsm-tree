@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                   #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE UndecidableInstances  #-}
@@ -797,9 +798,10 @@ instance (NoThunks a, Typeable s, Typeable a) => NoThunks (VM.MVector s a) where
         | i <- [0.. VM.length v-1]
         ]
 
--- TODO: https://github.com/input-output-hk/nothunks/issues/57
+#if !MIN_VERSION_nothunks(0,3,2)
 deriving via OnlyCheckWhnf (VP.Vector a)
     instance Typeable a => NoThunks (VP.Vector a)
+#endif
 
 -- TODO: upstream to @nothunks@
 deriving via OnlyCheckWhnf (VUM.MVector s Word64)
@@ -853,9 +855,10 @@ instance NoThunks a => NoThunks (SmallMutableArray s a) where
 deriving via OnlyCheckWhnf (MutablePrimArray s a)
     instance (Typeable s, Typeable a) => NoThunks (MutablePrimArray s a)
 
--- TODO: https://github.com/input-output-hk/nothunks/issues/56
+#if !MIN_VERSION_nothunks(0,3,2)
 deriving via OnlyCheckWhnf ByteArray
     instance NoThunks ByteArray
+#endif
 
 {-------------------------------------------------------------------------------
   bloomfilter
