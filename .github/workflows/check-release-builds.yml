@@ -60,6 +60,8 @@ jobs:
     - name: 📥 Checkout repository
       uses: actions/checkout@v7
 
+    - uses: ./.github/actions/fast-apt-mirror
+
     - name: 🗄️ Print Job info
       run: |
         echo 'matrix.os: ${{ matrix.os }}'
@@ -76,6 +78,7 @@ jobs:
 
     - name: 🛠️ Setup system dependencies (Linux)
       if: ${{ runner.os == 'Linux' }}
+      timeout-minutes: 10
       run: sudo apt-get update && sudo apt-get -y install liburing-dev librocksdb-dev
       env:
         DEBIAN_FRONTEND: "noninteractive"
