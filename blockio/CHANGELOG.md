@@ -1,6 +1,6 @@
 # Revision history for blockio
 
-## ?.?.?.? -- ????-??-??
+## 0.2.1.0 -- 2026-08-27
 
 ### Breaking changes
 
