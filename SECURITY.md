@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The Cardano lsm-tree project is committed to ensuring the security of
+The Cardano `lsm-tree` project is committed to ensuring the security of
 its software and the privacy of its users. We value the contributions
 of the security community in helping us identify and address
 vulnerabilities in our code. This Security Vulnerability Disclosure
@@ -13,7 +13,7 @@ how we will respond to and remediate such reports.
 
 ### Reporting a Vulnerability
 
-If you discover a security vulnerability in lsm-tree, we encourage you to
+If you discover a security vulnerability in `lsm-tree`, we encourage you to
 responsibly disclose it to us. To report a vulnerability, please use
 the [security advisory form on GitHub](https://github.com/IntersectMBO/lsm-tree/security/advisories/new)
 to draft a new _Security advisory_.
@@ -22,7 +22,7 @@ Please include as many details as needed to clearly qualify the issue:
 
 - A description of the vulnerability and its potential impact.
 - Steps to reproduce the vulnerability.
-- The version of lsm-tree where the vulnerability exists.
+- The version of `lsm-tree` where the vulnerability exists.
 - Any relevant proof-of-concept or exploit code (if applicable).
 
 ### Processing Vulnerability
@@ -97,7 +97,7 @@ on the [Open-Source-Office repository](https://github.com/IntersectMBO/Open-Sour
 
 ## Conclusion
 
-The lsm-tree project greatly appreciates the assistance of the security
+The `lsm-tree` project greatly appreciates the assistance of the security
 community in helping us maintain the security of our software while
 upholding the highest standards of privacy. Together, we can work to
 identify and address vulnerabilities, ensuring a safer and more secure
