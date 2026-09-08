@@ -102,3 +102,36 @@ community in helping us maintain the security of our software while
 upholding the highest standards of privacy. Together, we can work to
 identify and address vulnerabilities, ensuring a safer and more secure
 experience for all users.
+
+## Security model
+
+The `lsm-tree` library (and its child library `blockio`) are not designed for or
+expected to be used at a security boundary. Legitimate security vulnerability
+concerns would involve leveraging exploits through the public API of the
+library. Corrupting process memory or local disk files without going through the
+public API is not considered a security vulnerability. In particular, directly
+modifying the local on-disk data structures as a preparatory step within a
+vulnerability report is invalid, because it involves the attacker already being
+within the same security compartment as the software being attacked.
+
+* The local data files are to be considered to be within the `lsm-tree` security
+  compartment (i.e. protected by OS security and file system and user
+  permissions). Thus deliberate corruption of the local on-disk data files are
+  not a security vulnerability (any more than deliberate corruption of the
+  process memory would be). Moreover, sessions (i.e., databases), snapshots, or
+  any part thereof should not be copied across from untrusted sources to be used
+  as local on-disk data. It should be assumed that such copies can be
+  deliberately tampered with. This is also *not* a security vulnerability
+  because it crosses a security boundary.
+
+* The snapshot export/import feature is not currently intended to be used across
+  a security boundary to import untrusted snapshots. It is only intended to
+  allow archiving snapshots outside of the current session, for example on
+  different file system volumes, but still within the same security compartment.
+  The snapshot format is also not intended as an external interchange format.
+  Use cases that require importing whole tables should do so via the other APIs:
+  make an empty table and add elements in batches. Alternatively, a new
+  import/export feature could be implemented that is intended to be used to
+  import untrusted snapshots. This would involve code changes and would be less
+  efficient since it would need to re-construct the table from scratch
+  (validating the internal format is a fools errand).
