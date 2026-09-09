@@ -15,7 +15,6 @@ module Database.LSMTree.Internal.ChecksumHandle
     writeRawOverflowPages,
     writeBlob,
     copyBlob,
-    writeFilter,
     writeIndexHeader,
     writeIndexChunk,
     writeIndexFinal,
@@ -29,7 +28,6 @@ import           Data.Primitive.PrimVar
 import           Data.Word (Word64)
 import           Database.LSMTree.Internal.BlobRef (BlobSpan (..), RawBlobRef)
 import qualified Database.LSMTree.Internal.BlobRef as BlobRef
-import           Database.LSMTree.Internal.BloomFilter (Bloom, bloomFilterToLBS)
 import           Database.LSMTree.Internal.Chunk (Chunk)
 import qualified Database.LSMTree.Internal.Chunk as Chunk (toByteString)
 import           Database.LSMTree.Internal.CRC32C (CRC32C)
@@ -37,8 +35,8 @@ import qualified Database.LSMTree.Internal.CRC32C as CRC
 import           Database.LSMTree.Internal.Entry
 import           Database.LSMTree.Internal.Index (Index, IndexType)
 import qualified Database.LSMTree.Internal.Index as Index (finalLBS, headerLBS)
-import           Database.LSMTree.Internal.Paths (ForBlob (..), ForFilter (..),
-                     ForIndex (..), ForKOps (..))
+import           Database.LSMTree.Internal.Paths (ForBlob (..), ForIndex (..),
+                     ForKOps (..))
 import qualified Database.LSMTree.Internal.RawBytes as RB
 import           Database.LSMTree.Internal.RawOverflowPage (RawOverflowPage)
 import qualified Database.LSMTree.Internal.RawOverflowPage as RawOverflowPage
@@ -187,20 +185,6 @@ copyBlob ::
 copyBlob hfs blobOffset blobHandle blobref = do
     blob <- BlobRef.readRawBlobRef hfs blobref
     writeBlob hfs blobOffset blobHandle blob
-
-{-# SPECIALISE writeFilter ::
-     HasFS IO h
-  -> ForFilter (ChecksumHandle RealWorld h)
-  -> Bloom SerialisedKey
-  -> IO () #-}
-writeFilter ::
-     (MonadSTM m, PrimMonad m)
-  => HasFS m h
-  -> ForFilter (ChecksumHandle (PrimState m) h)
-  -> Bloom SerialisedKey
-  -> m ()
-writeFilter hfs filterHandle bf =
-    writeToHandle hfs (unForFilter filterHandle) (bloomFilterToLBS bf)
 
 {-# SPECIALISE writeIndexHeader ::
      HasFS IO h

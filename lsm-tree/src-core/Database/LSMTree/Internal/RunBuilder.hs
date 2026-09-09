@@ -219,15 +219,13 @@ unsafeFinalise RunBuilder {..} = do
     for_ mPage $ writeRawPage runBuilderHasFS (forRunKOps runBuilderHandles)
     for_ mChunk $ writeIndexChunk runBuilderHasFS (forRunIndex runBuilderHandles)
     writeIndexFinal runBuilderHasFS (forRunIndex runBuilderHandles) numEntries runIndex
-    writeFilter runBuilderHasFS (forRunFilter runBuilderHandles) runFilter
     -- write checksums
     checksums <- toChecksumsFile <$> traverse readChecksum runBuilderHandles
     FS.withFile runBuilderHasFS (runChecksumsPath runBuilderFsPaths) (FS.WriteMode FS.MustBeNew) $ \h -> do
       CRC.writeChecksumsFile' runBuilderHasFS h checksums
       -- always drop the checksum file from the cache
       FS.hDropCacheAll runBuilderHasBlockIO h
-    -- always drop filter and index files from the cache
-    dropCache runBuilderHasBlockIO (forRunFilterRaw runBuilderHandles)
+    -- always drop index files from the cache
     dropCache runBuilderHasBlockIO (forRunIndexRaw runBuilderHandles)
     -- drop the KOps and blobs files from the cache if asked for
     when (runParamCaching runBuilderParams == NoCacheRunData) $ do
