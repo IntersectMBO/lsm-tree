@@ -151,6 +151,7 @@ module Database.LSMTree.Simple (
     SnapshotExistsError (..),
     SnapshotDoesNotExistError (..),
     SnapshotCorruptedError (..),
+    SnapshotVersionMismatchError (..),
     SnapshotNotCompatibleError (..),
     SnapshotImportDirDoesNotExistError (..),
     SnapshotExportDirExistsError (..),
@@ -178,7 +179,8 @@ import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
                      SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
                      SnapshotLabel (..), SnapshotName,
-                     SnapshotNotCompatibleError (..), TableClosedError (..),
+                     SnapshotNotCompatibleError (..),
+                     SnapshotVersionMismatchError (..), TableClosedError (..),
                      TableConfig (..), TableConfigOverride (..),
                      TableCorruptedError (..), TableTooLargeError (..),
                      UnionCredits (..), UnionDebt (..), WriteBufferAlloc,
@@ -1437,6 +1439,8 @@ Throws the following exceptions:
     If the table is closed.
 ['SnapshotDoesNotExistError']
     If no snapshot with the given name exists.
+['SnapshotVersionMismatchError']:
+    If the snapshot was created with an incompatible snapshot format version.
 ['SnapshotCorruptedError']:
     If the snapshot data is corrupted.
 ['SnapshotNotCompatibleError']:
@@ -1483,6 +1487,8 @@ Throws the following exceptions:
     If no snapshot with the given name exists.
 ['SnapshotCorruptedError']:
     If the snapshot data is corrupted.
+['SnapshotVersionMismatchError']:
+    If the snapshot was created with an incompatible snapshot format version.
 ['SnapshotNotCompatibleError']:
     If the snapshot has a different label or is a different table type.
 -}
