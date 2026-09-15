@@ -38,6 +38,10 @@
 
 * Revert the deprecation of `withOpenSessionIO`, since the other changes in this
   version have made it safe to use with `importSnapshot` and `exportSnapshot`.
+* The record fields of `TableConfig` are now rendered in the haddocks, with
+  their types and documentation. See [issue
+  #795](https://github.com/IntersectMBO/lsm-tree/issues/795) and [PR
+  #885](https://github.com/IntersectMBO/lsm-tree/pull/885).
 
 ### Bug fixes
 

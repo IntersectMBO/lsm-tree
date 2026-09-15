@@ -52,60 +52,44 @@ A collection of configuration parameters for tables, which can be used to tune t
 To construct a 'TableConfig', modify the 'defaultTableConfig', which defines reasonable defaults for all parameters.
 
 For a detailed discussion of fine-tuning the table configuration, see [Fine-tuning Table Configuration](../#fine_tuning).
-
-[@confMergePolicy :: t'MergePolicy'@]
-    The /merge policy/ balances the performance of lookups against the performance of updates.
-    Levelling favours lookups.
-    Tiering favours updates.
-    Lazy levelling strikes a middle ground between levelling and tiering, and moderately favours updates.
-    This parameter is explicitly referenced in the documentation of those operations it affects.
-
-[@confSizeRatio :: t'SizeRatio'@]
-    The /size ratio/ pushes the effects of the merge policy to the extreme.
-    If the size ratio is higher, levelling favours lookups more, and tiering and lazy levelling favour updates more.
-    This parameter is referred to as \(T\) in the disk I\/O cost of operations.
-
-[@confWriteBufferAlloc :: t'WriteBufferAlloc'@]
-    The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the database.
-    If the write buffer is larger, it takes up more memory, but lookups and updates are more efficient.
-    This parameter is referred to as \(B\) in the disk I\/O cost of operations.
-    Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
-
-[@confMergeSchedule :: t'MergeSchedule'@]
-    The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
-    With the one-shot merge schedule, lookups and updates are more efficient overall, but some updates may take much longer than others.
-    With the incremental merge schedule, lookups and updates are less efficient overall, but each update does a similar amount of work.
-    This parameter is explicitly referenced in the documentation of those operations it affects.
-    The merge schedule does not affect the way that table unions are computed.
-    However, any table union must complete all outstanding incremental updates.
-
-[@confBloomFilterAlloc :: t'BloomFilterAlloc'@]
-    The Bloom filter size balances the performance of lookups against the in-memory size of the database.
-    If the Bloom filters are larger, they take up more memory, but lookup operations are more efficient.
-
-[@confFencePointerIndex :: t'FencePointerIndexType'@]
-    The /fence-pointer index type/ supports two types of indexes.
-    The /ordinary/ indexes are designed to work with any key.
-    The /compact/ indexes are optimised for the case where the keys in the database are uniformly distributed, e.g., when the keys are hashes.
-
-[@confDiskCachePolicy :: t'DiskCachePolicy'@]
-    The /disk cache policy/ supports caching lookup operations using the OS page cache.
-    Caching may improve the performance of lookups and updates if database access follows certain patterns.
-
-[@confMergeBatchSize :: t'MergeBatchSize'@]
-    The merge batch size balances the maximum latency of individual update
-    operations, versus the latency of a sequence of update operations. Bigger
-    batches improves overall performance but some updates will take a lot
-    longer than others. The default is to use a large batch size.
 -}
 data TableConfig = TableConfig {
+    -- | The /merge policy/ balances the performance of lookups against the performance of updates.
+    -- Levelling favours lookups.
+    -- Tiering favours updates.
+    -- Lazy levelling strikes a middle ground between levelling and tiering, and moderately favours updates.
+    -- This parameter is explicitly referenced in the documentation of those operations it affects.
     confMergePolicy       :: !MergePolicy
+    -- | The /merge schedule/ balances the performance of lookups and updates against the consistency of updates.
+    -- With the one-shot merge schedule, lookups and updates are more efficient overall, but some updates may take much longer than others.
+    -- With the incremental merge schedule, lookups and updates are less efficient overall, but each update does a similar amount of work.
+    -- This parameter is explicitly referenced in the documentation of those operations it affects.
+    -- The merge schedule does not affect the way that table unions are computed.
+    -- However, any table union must complete all outstanding incremental updates.
   , confMergeSchedule     :: !MergeSchedule
+    -- | The /size ratio/ pushes the effects of the merge policy to the extreme.
+    -- If the size ratio is higher, levelling favours lookups more, and tiering and lazy levelling favour updates more.
+    -- This parameter is referred to as \(T\) in the disk I\/O cost of operations.
   , confSizeRatio         :: !SizeRatio
+    -- | The /write buffer capacity/ balances the performance of lookups and updates against the in-memory size of the database.
+    -- If the write buffer is larger, it takes up more memory, but lookups and updates are more efficient.
+    -- This parameter is referred to as \(B\) in the disk I\/O cost of operations.
+    -- Irrespective of this parameter, the write buffer size cannot exceed 4GiB.
   , confWriteBufferAlloc  :: !WriteBufferAlloc
+    -- | The Bloom filter size balances the performance of lookups against the in-memory size of the database.
+    -- If the Bloom filters are larger, they take up more memory, but lookup operations are more efficient.
   , confBloomFilterAlloc  :: !BloomFilterAlloc
+    -- | The /fence-pointer index type/ supports two types of indexes.
+    -- The /ordinary/ indexes are designed to work with any key.
+    -- The /compact/ indexes are optimised for the case where the keys in the database are uniformly distributed, e.g., when the keys are hashes.
   , confFencePointerIndex :: !FencePointerIndexType
+    -- | The /disk cache policy/ supports caching lookup operations using the OS page cache.
+    -- Caching may improve the performance of lookups and updates if database access follows certain patterns.
   , confDiskCachePolicy   :: !DiskCachePolicy
+    -- | The merge batch size balances the maximum latency of individual update
+    -- operations, versus the latency of a sequence of update operations. Bigger
+    -- batches improves overall performance but some updates will take a lot
+    -- longer than others. The default is to use a large batch size.
   , confMergeBatchSize    :: !MergeBatchSize
   }
   deriving stock (Show, Eq)
