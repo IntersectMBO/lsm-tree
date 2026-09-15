@@ -2188,22 +2188,21 @@ unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
           -- tableContentToMergingTree duplicates all runs and merges
           -- so the ones from the tableContent here do not escape
           -- the read access.
-          withRollback reg
+          withRollbackMaybe reg
             (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
             releaseRef
-    mt <- withRollback reg (newPendingUnionMerge (sessionRefCtx seshEnv) mts) releaseRef
 
     -- The mts here is a temporary value, since newPendingUnionMerge
     -- will make its own references, so release mts at the end of
     -- the action registry bracket
-    forM_ mts (delayedCommit reg . releaseRef)
+    forM_ mts (traverse_ (delayedCommit reg . releaseRef))
 
-    content <- MT.isStructurallyEmpty mt >>= \case
-      True -> do
+    content <- case NE.nonEmpty (catMaybes mts) of
+      Nothing -> do
         -- no need to have an empty merging tree
-        delayedCommit reg (releaseRef mt)
         newEmptyTableContent ((sessionUniqCounter sesh)) seshEnv reg
-      False -> do
+      Just mts' -> do
+        mt <- withRollback reg (newPendingUnionMerge (sessionRefCtx seshEnv) mts') releaseRef
         empty <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
         cache <- mkUnionCache reg mt
         pure empty { tableUnionLevel = Union mt cache }
@@ -2220,7 +2219,7 @@ unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
   -> SessionEnv IO h
   -> TableConfig
   -> TableContent IO h
-  -> IO (Ref (MergingTree IO h)) #-}
+  -> IO (Maybe (Ref (MergingTree IO h))) #-}
 tableContentToMergingTree ::
      forall m h.
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
@@ -2228,7 +2227,7 @@ tableContentToMergingTree ::
   -> SessionEnv m h
   -> TableConfig
   -> TableContent m h
-  -> m (Ref (MergingTree m h))
+  -> m (Maybe (Ref (MergingTree m h)))
 tableContentToMergingTree uc seshEnv conf
                           tc@TableContent {
                             tableLevels,

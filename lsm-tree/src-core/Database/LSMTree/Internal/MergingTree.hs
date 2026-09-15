@@ -35,6 +35,8 @@ import           Data.Foldable (toList, traverse_)
 import           Data.List (foldl')
                  -- foldl' is included in the Prelude from base 4.20 onwards
 #endif
+import           Data.List.NonEmpty (NonEmpty ((:|)))
+import           Data.Maybe (isJust)
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
@@ -117,13 +119,26 @@ data PendingMerge m h =
     -- | The collection of inputs is the entire contents of a table,
     -- i.e. its (merging) runs and finally a union merge (if that table
     -- already contained a union).
-    PendingLevelMerge
+    PendingLevelMerge_
       !(Vector (PreExistingRun m h))
       !(Maybe (Ref (MergingTree m h)))
 
     -- | Each input is the entire content of a table (as a merging tree).
-  | PendingUnionMerge
+  | PendingUnionMerge_
       !(Vector (Ref (MergingTree m h)))
+
+-- TODO: we could avoid returing Maybe if we had a NonEmpty-like type where the
+-- last element can have a different type.
+mkPendingLevelMerge ::
+     Vector (PreExistingRun m h)
+  -> Maybe (Ref (MergingTree m h))
+  -> Maybe (PendingMerge m h)
+mkPendingLevelMerge prs mmt
+  | not (V.null prs) || isJust mmt = Just (PendingLevelMerge_ prs mmt)
+  | otherwise                      = Nothing
+
+mkPendingUnionMerge :: NonEmpty (Ref (MergingTree m h)) -> PendingMerge m h
+mkPendingUnionMerge mts = PendingUnionMerge_ (V.fromList (toList mts))
 
 pendingContent ::
      PendingMerge m h
@@ -132,8 +147,8 @@ pendingContent ::
      , Vector (Ref (MergingTree m h))
      )
 pendingContent = \case
-    PendingLevelMerge prs t -> (MR.MergeLevel, prs, maybe V.empty V.singleton t)
-    PendingUnionMerge    ts -> (MR.MergeUnion, V.empty, ts)
+    PendingLevelMerge_ prs t -> (MR.MergeLevel, prs, maybe V.empty V.singleton t)
+    PendingUnionMerge_    ts -> (MR.MergeUnion, V.empty, ts)
 
 {-# COMPLETE PendingMerge #-}
 pattern PendingMerge ::
@@ -176,15 +191,14 @@ newOngoingMerge refCtx mr = mkMergingTree refCtx . OngoingTreeMerge =<< dupRef m
      RefCtx
   -> [PreExistingRun IO h]
   -> Maybe (Ref (MergingTree IO h))
-  -> IO (Ref (MergingTree IO h)) #-}
+  -> IO (Maybe (Ref (MergingTree IO h))) #-}
 -- | Create a new 'MergingTree' representing the merge of a sequence of
 -- pre-existing runs (completed or ongoing, plus a optional final tree).
 -- This is for merging the entire contents of a table down to a single run
 -- (while sharing existing ongoing merges).
 --
--- Shape: if the list of runs is empty and the optional input tree is
--- structurally empty, the result will also be structurally empty. See
--- 'isStructurallyEmpty'.
+-- If the list of runs is empty and the optional input tree is not present, the
+-- resulting tree would be empty, so we return @Nothing@.
 --
 -- Resource tracking:
 -- * This allocates a new 'Ref' which the caller is responsible for releasing
@@ -200,8 +214,8 @@ newPendingLevelMerge ::
   => RefCtx
   -> [PreExistingRun m h]
   -> Maybe (Ref (MergingTree m h))
-  -> m (Ref (MergingTree m h))
-newPendingLevelMerge _ [] (Just t) = dupRef t
+  -> m (Maybe (Ref (MergingTree m h)))
+newPendingLevelMerge _ [] (Just t) = Just <$> dupRef t
 newPendingLevelMerge refCtx [PreExistingRun r] Nothing = do
     -- No need to create a pending merge here.
     --
@@ -214,40 +228,25 @@ newPendingLevelMerge refCtx [PreExistingRun r] Nothing = do
     r' <- dupRef r
     -- There are no interruption points here, and thus provided async
     -- exceptions are masked then there can be no async exceptions here at all.
-    mkMergingTree refCtx (CompletedTreeMerge r')
+    Just <$> mkMergingTree refCtx (CompletedTreeMerge r')
 
 newPendingLevelMerge refCtx prs mmt = do
-    -- isStructurallyEmpty is an interruption point, and can receive async
-    -- exceptions even when masked. So we use it first, *before* allocating
-    -- new references.
-    mmt' <- dupMaybeMergingTree mmt
+    mmt' <- traverse dupRef mmt
     prs' <- traverse dupPreExistingRun (V.fromList prs)
-    mkMergingTree refCtx (PendingTreeMerge (PendingLevelMerge prs' mmt'))
+    traverse (mkMergingTree refCtx . PendingTreeMerge) (mkPendingLevelMerge prs' mmt')
   where
     dupPreExistingRun (PreExistingRun r) =
       PreExistingRun <$!> dupRef r
     dupPreExistingRun (PreExistingMergingRun mr) =
       PreExistingMergingRun <$!> dupRef mr
 
-    dupMaybeMergingTree :: Maybe (Ref (MergingTree m h))
-                        -> m (Maybe (Ref (MergingTree m h)))
-    dupMaybeMergingTree Nothing   = pure Nothing
-    dupMaybeMergingTree (Just mt) = do
-      isempty <- isStructurallyEmpty mt
-      if isempty
-        then pure Nothing
-        else Just <$!> dupRef mt
-
 {-# SPECIALISE newPendingUnionMerge ::
      RefCtx
-  -> [Ref (MergingTree IO h)]
+  -> NonEmpty (Ref (MergingTree IO h))
   -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the union of one or more merging
 -- trees. This is for unioning the content of multiple tables (represented
 -- themselves as merging trees).
---
--- Shape: if all of the input trees are structurally empty, the result will
--- also be structurally empty. See 'isStructurallyEmpty'.
 --
 -- Resource tracking:
 -- * This allocates a new 'Ref' which the caller is responsible for releasing
@@ -260,17 +259,14 @@ newPendingLevelMerge refCtx prs mmt = do
 newPendingUnionMerge ::
      (MonadMVar m, MonadMask m, PrimMonad m)
   => RefCtx
-  -> [Ref (MergingTree m h)]
+  -> NonEmpty (Ref (MergingTree m h))
   -> m (Ref (MergingTree m h))
+newPendingUnionMerge _ (mt :| []) = do
+    -- No need to create a new node, directly use the single input tree.
+    dupRef mt
 newPendingUnionMerge refCtx mts = do
-    mts' <- V.filterM (fmap not . isStructurallyEmpty) (V.fromList mts)
-    -- isStructurallyEmpty is interruptible even with async exceptions masked,
-    -- but we use it before allocating new references.
-    mts'' <- V.mapM dupRef mts'
-    case V.uncons mts'' of
-      Just (mt, x) | V.null x
-        -> pure mt
-      _ -> mkMergingTree refCtx (PendingTreeMerge (PendingUnionMerge mts''))
+    state <- mkPendingUnionMerge <$> mapM dupRef mts
+    mkMergingTree refCtx (PendingTreeMerge state)
 
 {-# SPECIALISE getCompleted ::
      Ref (MergingTree IO h)
@@ -303,17 +299,22 @@ getCompleted (DeRef MergingTree {mergeState}) =
 -- This is not the same as being empty due to a pending or ongoing merge
 -- happening to produce an empty run.
 --
+-- TODO: remove, this should now always be False due to invariants
 isStructurallyEmpty :: MonadMVar m => Ref (MergingTree m h) -> m Bool
-isStructurallyEmpty (DeRef MergingTree {mergeState}) =
-    isStructurallyEmptyState <$> readMVar mergeState
+isStructurallyEmpty (DeRef MergingTree {mergeState}) = do
+    b <- isStructurallyEmptyState <$> readMVar mergeState
+    assert (not b) $ pure False
 
 isStructurallyEmptyState :: MergingTreeState m h -> Bool
 isStructurallyEmptyState = \case
-    PendingTreeMerge (PendingLevelMerge prs Nothing) -> V.null prs
-    PendingTreeMerge (PendingUnionMerge mts)         -> V.null mts
-    _                                                -> False
     -- It may also turn out to be useful to consider CompletedTreeMerge with
     -- a zero length runs as empty.
+    CompletedTreeMerge _                          -> False
+    OngoingTreeMerge _                            -> False
+    PendingTreeMerge (PendingLevelMerge_ prs mmt) -> V.null prs && null mmt
+    PendingTreeMerge (PendingUnionMerge_ mts)     -> V.null mts
+
+-- TODO: add invariant (not structurally empty plus maybe invariants of fields?)
 
 {-# SPECIALISE mkMergingTree ::
      RefCtx
@@ -347,8 +348,8 @@ finalise mergeState = releaseMTS =<< readMVar mergeState
     releaseMTS (OngoingTreeMerge  mr) = releaseRef mr
     releaseMTS (PendingTreeMerge ptm) =
       case ptm of
-        PendingUnionMerge mts        -> traverse_ releaseRef mts
-        PendingLevelMerge prs mmt    -> traverse_ releasePER prs
+        PendingUnionMerge_ mts       -> traverse_ releaseRef mts
+        PendingLevelMerge_ prs mmt   -> traverse_ releasePER prs
                                      >> traverse_ releaseRef mmt
 
     releasePER (PreExistingRun         r) = releaseRef r
@@ -500,10 +501,10 @@ supplyCredits hfs hbio refCtx resolve salt runParams threshold root uc = \mt0 c0
     supplyPending =
         MR.supplyChecked remainingMergeDebtPendingMerge $ \pm credits -> do
           case pm of
-            PendingLevelMerge prs mt ->
+            PendingLevelMerge_ prs mt ->
               leftToRight supplyPreExisting (V.toList prs) credits
                 >>= leftToRight (flip supplyTree) (toList mt)
-            PendingUnionMerge mts ->
+            PendingUnionMerge_ mts ->
               splitEqually (flip supplyTree) (V.toList mts) credits
 
     supplyPreExisting c = \case
