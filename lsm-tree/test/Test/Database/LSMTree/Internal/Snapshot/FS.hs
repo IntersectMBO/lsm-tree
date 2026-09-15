@@ -44,7 +44,7 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.FS" [
     , testProperty "prop_fault_fsRoundtripSnapshotMetaData"
         prop_fault_fsRoundtripSnapshotMetaData
     , testProperty "prop_flipSnapshotBit" prop_flipSnapshotBit
-    , testProperty "prop_versionMismatch" prop_versionMismatch
+    , testProperty "prop_versionUnknown" prop_versionUnknown
     ]
 
 -- | @readFileSnapshotMetaData . writeFileSnapshotMetaData = id@
@@ -236,10 +236,10 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
     getConstructorName e = takeWhile (/= ' ') (show e)
 
 -- | Reading snapshot metadata that declares an unknown (future) snapshot
--- format version fails with a 'SnapshotVersionMismatchError', not with a
+-- format version fails with a 'SnapshotVersionUnknownError', not with a
 -- generic 'FileCorruptedError'.
-prop_versionMismatch :: NonNegative Int -> Property
-prop_versionMismatch (NonNegative n) =
+prop_versionUnknown :: NonNegative Int -> Property
+prop_versionUnknown (NonNegative n) =
     ioProperty $
     withTempIOHasFS "temp" $ \hfs -> do
       -- Write a metadata file that declares a future format version. The
@@ -257,13 +257,13 @@ prop_versionMismatch (NonNegative n) =
         (Map.singleton checksumFileName checksum)
 
       result <-
-        try @_ @SnapshotVersionMismatchError $
+        try @_ @SnapshotVersionUnknownError $
           readFileSnapshotMetaData hfs contentPath checksumPath
       pure $ case result of
-        Left (ErrSnapshotVersionMismatch found current _) ->
+        Left (ErrSnapshotVersionUnknown found current) ->
           found === versionNum .&&. current === currentSnapshotVersion
         Right _ ->
-          counterexample "expected SnapshotVersionMismatchError" False
+          counterexample "expected SnapshotVersionUnknownError" False
   where
     versionNum   = 3 + fromIntegral n
     contentPath  = mkFsPath ["content"]
