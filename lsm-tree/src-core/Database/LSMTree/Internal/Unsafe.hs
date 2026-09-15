@@ -23,6 +23,8 @@ module Database.LSMTree.Internal.Unsafe (
   , SnapshotExistsError (..)
   , SnapshotDoesNotExistError (..)
   , SnapshotCorruptedError (..)
+  , SnapshotVersionUnknownError (..)
+  , SnapshotVersionIncompatibleError (..)
   , SnapshotNotCompatibleError (..)
   , SnapshotImportDirDoesNotExistError (..)
   , SnapshotExportDirExistsError (..)
