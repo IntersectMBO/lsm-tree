@@ -96,15 +96,14 @@ module Database.LSMTree.Simple (
     SnapshotLabel (..),
 
     -- * Table Configuration #table_configuration#
-    TableConfig (
-        confMergePolicy,
-        confSizeRatio,
-        confWriteBufferAlloc,
-        confBloomFilterAlloc,
-        confFencePointerIndex,
-        confDiskCachePolicy,
-        confMergeSchedule
-    ),
+    TableConfig,
+    confMergePolicy,
+    confMergeSchedule,
+    confSizeRatio,
+    confWriteBufferAlloc,
+    confBloomFilterAlloc,
+    confFencePointerIndex,
+    confDiskCachePolicy,
     MergePolicy (LazyLevelling),
     SizeRatio (Four),
     WriteBufferAlloc (AllocNumEntries),
