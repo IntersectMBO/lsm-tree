@@ -3,7 +3,6 @@
 module Test.Database.LSMTree.Internal.MergingTree (tests) where
 
 import           Control.ActionRegistry
-import           Control.Exception (bracket)
 import           Control.Monad.Class.MonadAsync as Async
 import           Control.RefCount
 import           Data.Coerce (coerce)
@@ -43,8 +42,7 @@ import           Test.Util.FS (propNoOpenHandles, withSimHasBlockIO)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Internal.MergingTree"
-    [ testProperty "prop_isStructurallyEmpty" prop_isStructurallyEmpty
-    , testProperty "prop_lookupTree" $ \keys mtd ->
+    [ testProperty "prop_lookupTree" $ \keys mtd ->
         ioProperty $
           withSimHasBlockIO propNoOpenHandles MockFS.empty $ \hfs hbio _ ->
             prop_lookupTree hfs hbio keys mtd
@@ -64,57 +62,6 @@ runParams =
 
 testSalt :: Bloom.Salt
 testSalt = 4
-
--- | Check that the merging tree constructor functions preserve the property
--- that if the inputs are obviously empty, the output is also obviously empty.
---
-prop_isStructurallyEmpty :: EmptyMergingTree -> Property
-prop_isStructurallyEmpty emt =
-    ioProperty $ withRefCtx $ \refCtx ->
-      bracket (mkEmptyMergingTree refCtx emt)
-              releaseRef
-              isStructurallyEmpty
-
--- | An expression to specify the shape of an empty 'MergingTree'
---
-data EmptyMergingTree = ObviouslyEmptyLevelMerge
-                      | ObviouslyEmptyUnionMerge
-                      | NonObviouslyEmptyLevelMerge EmptyMergingTree
-                      | NonObviouslyEmptyUnionMerge [EmptyMergingTree]
-  deriving stock (Eq, Show)
-
-instance Arbitrary EmptyMergingTree where
-    arbitrary =
-      sized $ \sz ->
-        frequency $
-        take (1 + sz)
-        [ (1, pure ObviouslyEmptyLevelMerge)
-        , (1, pure ObviouslyEmptyUnionMerge)
-        , (2, NonObviouslyEmptyLevelMerge <$> resize (sz `div` 2) arbitrary)
-        , (2, NonObviouslyEmptyUnionMerge <$> resize (sz `div` 2) arbitrary)
-        ]
-    shrink ObviouslyEmptyLevelMerge         = []
-    shrink ObviouslyEmptyUnionMerge         = [ObviouslyEmptyLevelMerge]
-    shrink (NonObviouslyEmptyLevelMerge mt) = ObviouslyEmptyLevelMerge
-                                            : [ NonObviouslyEmptyLevelMerge mt'
-                                              | mt' <- shrink mt ]
-    shrink (NonObviouslyEmptyUnionMerge mt) = ObviouslyEmptyUnionMerge
-                                            : [ NonObviouslyEmptyUnionMerge mt'
-                                              | mt' <- shrink mt ]
-
-mkEmptyMergingTree :: RefCtx -> EmptyMergingTree -> IO (Ref (MergingTree IO h))
-mkEmptyMergingTree refCtx ObviouslyEmptyLevelMerge = newPendingLevelMerge refCtx [] Nothing
-mkEmptyMergingTree refCtx ObviouslyEmptyUnionMerge = newPendingUnionMerge refCtx []
-mkEmptyMergingTree refCtx (NonObviouslyEmptyLevelMerge emt) = do
-    mt  <- mkEmptyMergingTree refCtx emt
-    mt' <- newPendingLevelMerge refCtx [] (Just mt)
-    releaseRef mt
-    pure mt'
-mkEmptyMergingTree refCtx (NonObviouslyEmptyUnionMerge emts) = do
-    mts <- mapM (mkEmptyMergingTree refCtx) emts
-    mt' <- newPendingUnionMerge refCtx mts
-    mapM_ releaseRef mts
-    pure mt'
 
 {-------------------------------------------------------------------------------
   Lookup
@@ -199,7 +146,7 @@ modelFoldMergingTree = goMergingTree
         PendingLevelMergeData prs t ->
           modelMerge MR.MergeLevel (map goPreExistingRun prs <> map goMergingTree (toList t))
         PendingUnionMergeData ts ->
-          modelMerge MR.MergeUnion (map goMergingTree ts)
+          modelMerge MR.MergeUnion (map goMergingTree (toList ts))
 
     goPreExistingRun = \case
         PreExistingRunData r -> unRunData r

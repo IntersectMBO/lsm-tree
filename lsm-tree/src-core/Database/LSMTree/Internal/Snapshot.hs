@@ -44,6 +44,7 @@ import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
+import           Data.List.NonEmpty (nonEmpty)
 import           Data.String (IsString)
 import           Data.Text (Text)
 import qualified Data.Vector as V
@@ -276,16 +277,26 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
                               (SnapPendingLevelMerge prs mmt))) = do
       prs' <- traverse (fromSnapPreExistingRun reg) prs
       mmt' <- traverse (go reg) mmt
-      mt   <- withRollback reg
+      mt   <- withRollbackMaybe reg
                 (MT.newPendingLevelMerge refCtx prs' mmt')
                 releaseRef
       traverse_ (delayedCommit reg . releasePER) prs'
       traverse_ (delayedCommit reg . releaseRef) mmt'
-      pure mt
+      case mt of
+        Nothing ->
+          -- TODO: fail properly, or enforce invariant in SnapPendingLevelMerge
+          error "structurally empty pending level merge in snapshot"
+        Just mt' ->
+          pure mt'
 
     go reg (SnapMergingTree (SnapPendingTreeMerge
                               (SnapPendingUnionMerge mts))) = do
-      mts' <- traverse (go reg) mts
+      mts' <- case nonEmpty mts of
+        Nothing ->
+          -- TODO: fail properly, or enforce invariant in SnapPendingUnionMerge
+          error "structurally empty pending union merge in snapshot"
+        Just nonEmptyTrees ->
+          traverse (go reg) nonEmptyTrees
       mt   <- withRollback reg
                 (MT.newPendingUnionMerge refCtx mts')
                 releaseRef
@@ -345,9 +356,9 @@ toSnapPendingMerge ::
      (PrimMonad m, MonadMVar m)
   => MT.PendingMerge m h
   -> m (SnapPendingMerge (Ref (Run m h)))
-toSnapPendingMerge (MT.PendingUnionMerge mts) =
+toSnapPendingMerge (MT.PendingUnionMerge_ mts) =
   SnapPendingUnionMerge <$> traverse toSnapMergingTree (V.toList mts)
-toSnapPendingMerge (MT.PendingLevelMerge pes mmt) = do
+toSnapPendingMerge (MT.PendingLevelMerge_ pes mmt) = do
   pes' <- traverse toSnapPreExistingRun pes
   mmt' <- traverse toSnapMergingTree mmt
   pure $ SnapPendingLevelMerge (V.toList pes') mmt'
