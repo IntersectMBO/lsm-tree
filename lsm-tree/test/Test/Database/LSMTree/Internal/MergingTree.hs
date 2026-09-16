@@ -103,17 +103,12 @@ prop_lookupTree hfs hbio keys mtd = withRefCtx $ \refCtx -> do
       Entry.Upsert v           -> Just (v, Nothing)
       Entry.Delete             -> Nothing
 
-    lookupsIO reg mgr tree =
-        isStructurallyEmpty tree >>= \case
-          True ->
-            -- if the tree was empty, then the model should also have no results
-            pure $ V.map (const Nothing) keys
-          False -> do
-            batches <- buildLookupTree reg tree
-            results <- mapMStrict (performLookups mgr) batches
-            acc <- foldLookupTree resolveVal results
-            traverse_ (traverse_ (delayedCommit reg . releaseRef)) batches
-            pure acc
+    lookupsIO reg mgr tree = do
+        batches <- buildLookupTree reg tree
+        results <- mapMStrict (performLookups mgr) batches
+        acc <- foldLookupTree resolveVal results
+        traverse_ (traverse_ (delayedCommit reg . releaseRef)) batches
+        pure acc
 
     performLookups mgr runs =
         Async.async $

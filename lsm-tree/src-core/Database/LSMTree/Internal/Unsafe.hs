@@ -1190,12 +1190,10 @@ lookups resolve ks t = do
       RW.withReadAccess (tableContent tEnv) $ \tc -> do
         case tableUnionLevel tc of
           NoUnion -> lookupsRegular tEnv tc
-          Union tree unionCache -> do
-            isStructurallyEmpty tree >>= \case
-              True  -> lookupsRegular tEnv tc
-              False -> if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
-                         then lookupsUnion tEnv unionCache
-                         else lookupsRegularAndUnion tEnv tc unionCache
+          Union _tree unionCache -> do
+            if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
+              then lookupsUnion tEnv unionCache
+              else lookupsRegularAndUnion tEnv tc unionCache
   where
     lookupsRegular tEnv tc = do
         let !cache = tableCache tc
@@ -1818,13 +1816,9 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) mTree
                 mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
-                isStructurallyEmpty mt >>= \case
-                  True ->
-                    pure NoUnion
-                  False -> do
-                    traverse_ (delayedCommit reg . releaseRef) snapTree
-                    cache <- mkUnionCache reg mt
-                    pure (Union mt cache)
+                traverse_ (delayedCommit reg . releaseRef) snapTree
+                cache <- mkUnionCache reg mt
+                pure (Union mt cache)
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels hfs hbio (sessionRefCtx seshEnv) salt uc conf resolve reg activeDir snapLevels'
@@ -2406,12 +2400,7 @@ supplyUnionCredits resolve t credits = do
           case tableUnionLevel tc' of
             NoUnion -> pure tc'
             Union mt cache -> do
-              unionLevel' <- MT.isStructurallyEmpty mt >>= \case
-                True  ->
-                  pure NoUnion
-                False -> do
-                  cache' <- mkUnionCache reg mt
-                  releaseUnionCache reg cache
-                  pure (Union mt cache')
-              pure tc' { tableUnionLevel = unionLevel' }
+              cache' <- mkUnionCache reg mt
+              releaseUnionCache reg cache
+              pure tc' { tableUnionLevel = Union mt cache' }
       pure leftovers

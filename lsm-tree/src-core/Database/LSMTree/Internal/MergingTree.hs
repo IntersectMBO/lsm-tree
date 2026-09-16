@@ -13,7 +13,6 @@ module Database.LSMTree.Internal.MergingTree (
   , newPendingLevelMerge
   , newPendingUnionMerge
   , getCompleted
-  , isStructurallyEmpty
   , remainingMergeDebt
   , supplyCredits
     -- * Internal state
@@ -294,28 +293,6 @@ getCompleted (DeRef MergingTree {mergeState}) =
       OngoingTreeMerge{}   -> pure Nothing
       PendingTreeMerge{}   -> pure Nothing
 
-{-# SPECIALISE isStructurallyEmpty :: Ref (MergingTree IO h) -> IO Bool #-}
--- | Test if a 'MergingTree' is \"obviously\" empty by virtue of its structure.
--- This is not the same as being empty due to a pending or ongoing merge
--- happening to produce an empty run.
---
--- TODO: remove, this should now always be False due to invariants
-isStructurallyEmpty :: MonadMVar m => Ref (MergingTree m h) -> m Bool
-isStructurallyEmpty (DeRef MergingTree {mergeState}) = do
-    b <- isStructurallyEmptyState <$> readMVar mergeState
-    assert (not b) $ pure False
-
-isStructurallyEmptyState :: MergingTreeState m h -> Bool
-isStructurallyEmptyState = \case
-    -- It may also turn out to be useful to consider CompletedTreeMerge with
-    -- a zero length runs as empty.
-    CompletedTreeMerge _                          -> False
-    OngoingTreeMerge _                            -> False
-    PendingTreeMerge (PendingLevelMerge_ prs mmt) -> V.null prs && null mmt
-    PendingTreeMerge (PendingUnionMerge_ mts)     -> V.null mts
-
--- TODO: add invariant (not structurally empty plus maybe invariants of fields?)
-
 {-# SPECIALISE mkMergingTree ::
      RefCtx
   -> MergingTreeState IO h
@@ -467,22 +444,6 @@ supplyCredits hfs hbio refCtx resolve salt runParams threshold root uc = \mt0 c0
                 delayedCommit reg (releaseRef mr)
                 -- all work is done, we can't spend any more credits
                 pure (CompletedTreeMerge r, leftovers)
-
-          PendingTreeMerge _
-            | isStructurallyEmptyState state -> do
-            -- make a completely fresh empty run. this can only happen at the
-            -- root. the structurally empty tree still has debt 1, so we want to
-            -- merge it into a single run.
-            -- we handle this as a special case here since in several places
-            -- below we require the list of children to be non-empty.
-            runPaths <- mkFreshRunPaths
-            run <-
-              withRollback reg
-                -- TODO: the builder's handles aren't cleaned up if we fail
-                -- before fromBuilder closes them
-                (Run.newEmpty hfs hbio refCtx salt runParams runPaths)
-                releaseRef
-            pure (CompletedTreeMerge run, credits)
 
           PendingTreeMerge pm -> do
             leftovers <- supplyPending pm credits
