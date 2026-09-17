@@ -44,7 +44,6 @@ import           Control.Monad.Class.MonadThrow (MonadMask, bracket,
 import           Control.Monad.Primitive (PrimMonad)
 import           Control.RefCount
 import           Data.Foldable (sequenceA_, traverse_)
-import           Data.List.NonEmpty (nonEmpty)
 import           Data.String (IsString)
 import           Data.Text (Text)
 import qualified Data.Vector as V
@@ -204,9 +203,13 @@ instance NFData r => NFData (SnapMergingTreeState r) where
   rnf (SnapOngoingTreeMerge a)   = rnf a
 
 data SnapPendingMerge r =
+    -- | INVARIANT: There is always at least one 'SnapPreExistingRun'. See
+    -- 'MT.PendingMerge'.
     SnapPendingLevelMerge
       ![SnapPreExistingRun r]
       !(Maybe (SnapMergingTree r))
+    -- | INVARIANT: There is always at least one 'SnapMergingRun'. See
+    -- 'MT.PendingMerge'.
   | SnapPendingUnionMerge
       ![SnapMergingTree r]
   deriving stock (Eq, Functor, Foldable, Traversable)
@@ -291,17 +294,17 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
 
     go reg (SnapMergingTree (SnapPendingTreeMerge
                               (SnapPendingUnionMerge mts))) = do
-      mts' <- case nonEmpty mts of
-        Nothing ->
-          -- TODO: fail properly, or enforce invariant in SnapPendingUnionMerge
-          error "structurally empty pending union merge in snapshot"
-        Just nonEmptyTrees ->
-          traverse (go reg) nonEmptyTrees
-      mt   <- withRollback reg
+      mts' <- traverse (go reg) mts
+      mt   <- withRollbackMaybe reg
                 (MT.newPendingUnionMerge refCtx mts')
                 releaseRef
       traverse_ (delayedCommit reg . releaseRef) mts'
-      pure mt
+      case mt of
+        Nothing ->
+          -- TODO: fail properly, or enforce invariant in SnapPendingUnionMerge
+          error "structurally empty pending union merge in snapshot"
+        Just mt' ->
+          pure mt'
 
     go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
       mr <- withRollback reg

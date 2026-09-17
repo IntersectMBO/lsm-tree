@@ -36,7 +36,6 @@ import           Data.Foldable (toList, traverse_)
 import           Data.List (foldl')
                  -- foldl' is included in the Prelude from base 4.20 onwards
 #endif
-import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
@@ -269,11 +268,14 @@ newPendingLevelMerge refCtx (pr:prs) mmt = do
 
 {-# SPECIALISE newPendingUnionMerge ::
      RefCtx
-  -> NonEmpty (Ref (MergingTree IO h))
-  -> IO (Ref (MergingTree IO h)) #-}
+  -> [Ref (MergingTree IO h)]
+  -> IO (Maybe (Ref (MergingTree IO h))) #-}
 -- | Create a new 'MergingTree' representing the union of one or more merging
 -- trees. This is for unioning the content of multiple tables (represented
 -- themselves as merging trees).
+--
+-- If the list of inputs is empty, the resulting tree would be empty, so we
+-- return @Nothing@.
 --
 -- Resource tracking:
 -- * This allocates a new 'Ref' which the caller is responsible for releasing
@@ -286,14 +288,16 @@ newPendingLevelMerge refCtx (pr:prs) mmt = do
 newPendingUnionMerge ::
      (MonadMVar m, MonadMask m, PrimMonad m)
   => RefCtx
-  -> NonEmpty (Ref (MergingTree m h))
-  -> m (Ref (MergingTree m h))
-newPendingUnionMerge _ (mt :| []) = do
+  -> [Ref (MergingTree m h)]
+  -> m (Maybe (Ref (MergingTree m h)))
+newPendingUnionMerge _ [] =
+    pure Nothing
+newPendingUnionMerge _ [mt] =
     -- No need to create a new node, directly use the single input tree.
-    dupRef mt
-newPendingUnionMerge refCtx (mt1 :| (mt2 : mts)) = do
+    Just <$> dupRef mt
+newPendingUnionMerge refCtx (mt1 : mt2 : mts) = do
     state <- mkPendingUnionMerge <$> dupRef mt1 <*> dupRef mt2 <*> mapM dupRef mts
-    mkMergingTree refCtx (PendingTreeMerge state)
+    Just <$> mkMergingTree refCtx (PendingTreeMerge state)
 
 {-# SPECIALISE getCompleted ::
      Ref (MergingTree IO h)

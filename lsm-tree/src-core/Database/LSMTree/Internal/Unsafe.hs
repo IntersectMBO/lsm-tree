@@ -2176,30 +2176,36 @@ unionsInOpenSession ::
   -> NonEmpty (Table m h)
   -> m (Table m h)
 unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
-    mts <- forM (NE.toList ts) $ \t ->
-      withKeepTableOpen t $ \tEnv ->
-        RW.withReadAccess (tableContent tEnv) $ \tc ->
-          -- tableContentToMergingTree duplicates all runs and merges
-          -- so the ones from the tableContent here do not escape
-          -- the read access.
-          withRollbackMaybe reg
-            (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
-            releaseRef
+    mts <-
+      fmap catMaybes $
+        forM (NE.toList ts) $ \t ->
+          withKeepTableOpen t $ \tEnv ->
+            RW.withReadAccess (tableContent tEnv) $ \tc ->
+              -- tableContentToMergingTree duplicates all runs and merges
+              -- so the ones from the tableContent here do not escape
+              -- the read access.
+              withRollbackMaybe reg
+                (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
+                releaseRef
 
     -- The mts here is a temporary value, since newPendingUnionMerge
     -- will make its own references, so release mts at the end of
     -- the action registry bracket
-    forM_ mts (traverse_ (delayedCommit reg . releaseRef))
+    forM_ mts (delayedCommit reg . releaseRef)
 
-    content <- case NE.nonEmpty (catMaybes mts) of
+    mt <-
+      withRollbackMaybe reg
+        (newPendingUnionMerge (sessionRefCtx seshEnv) mts)
+        releaseRef
+
+    content <- case mt of
       Nothing -> do
         -- no need to have an empty merging tree
         newEmptyTableContent ((sessionUniqCounter sesh)) seshEnv reg
-      Just mts' -> do
-        mt <- withRollback reg (newPendingUnionMerge (sessionRefCtx seshEnv) mts') releaseRef
+      Just mt' -> do
         empty <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
-        cache <- mkUnionCache reg mt
-        pure empty { tableUnionLevel = Union mt cache }
+        cache <- mkUnionCache reg mt'
+        pure empty { tableUnionLevel = Union mt' cache }
 
     -- Pick the arena manager to optimise the case of:
     -- someUpdates <> bigTableWithLotsOfLookups
