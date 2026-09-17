@@ -1815,7 +1815,7 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
               Nothing -> pure NoUnion
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) mTree
-                mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
+                mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve contentPath activeDir reg snapTree
                 traverse_ (delayedCommit reg . releaseRef) snapTree
                 cache <- mkUnionCache reg mt
                 pure (Union mt cache)
