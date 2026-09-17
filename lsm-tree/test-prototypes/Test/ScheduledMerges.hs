@@ -323,7 +323,7 @@ instance Arbitrary SmallCredit where
 data T = TCompleted Run
        | TOngoing (M TreeMergeType)
        | TPendingLevel (NonEmpty P) (Maybe T)
-       | TPendingUnion (NonEmpty T)  -- at least 2 children
+       | TPendingUnion T (NonEmpty T)  -- at least 2 children
   deriving stock Show
 
 -- simplified non-ST version of PreExistingRun
@@ -353,7 +353,7 @@ sizeT :: T -> Int
 sizeT (TCompleted _)        = 1
 sizeT (TOngoing _)          = 1
 sizeT (TPendingLevel ps mt) = sum (fmap sizeP ps) + maybe 0 sizeT mt
-sizeT (TPendingUnion ts)    = sum (fmap sizeT ts)
+sizeT (TPendingUnion t ts)  = sum (fmap sizeT (NE.cons t ts))
 
 sizeP :: P -> Int
 sizeP (PRun _)        = 1
@@ -368,23 +368,23 @@ depthT (TPendingLevel ps mt) =
     let depthPs = maximum (fmap depthP ps)
         depthMt = maybe 0 depthT mt
     in 1 + max depthPs depthMt
-depthT (TPendingUnion ts) =
-    maximum (fmap depthT ts)
+depthT (TPendingUnion t ts) =
+    maximum (fmap depthT (NE.cons t ts))
 
 depthP :: P -> Int
 depthP (PRun _)        = 0
 depthP (PMergingRun _) = 0
 
 fromT :: T -> ST s (MergingTree s)
-fromT t = do
-    state <- case t of
+fromT t0 = do
+    state <- case t0 of
       TCompleted r -> pure (CompletedTreeMerge r)
       TOngoing mr  -> OngoingTreeMerge <$> fromM mr
       TPendingLevel ps mt ->
         fmap PendingTreeMerge $
           PendingLevelMerge <$> traverse fromP ps <*> traverse fromT mt
-      TPendingUnion ts -> do
-        fmap PendingTreeMerge $ PendingUnionMerge <$> traverse fromT ts
+      TPendingUnion t ts -> do
+        fmap PendingTreeMerge $ PendingUnionMerge <$> fromT t <*> traverse fromT ts
     MergingTree <$> newSTRef state
 
 fromP :: P -> ST s (PreExistingRun s)
@@ -404,8 +404,8 @@ completeT (TCompleted r) = r
 completeT (TOngoing m)   = completeM m
 completeT (TPendingLevel is t) =
     mergek MergeLevel (map completeP (toList is) <> maybe [] (pure . completeT) t)
-completeT (TPendingUnion ts) =
-    mergek MergeUnion (map completeT (toList ts))
+completeT (TPendingUnion t ts) =
+    mergek MergeUnion (map completeT (t : toList ts))
 
 completeP :: P -> Run
 completeP (PRun r)        = r
@@ -421,44 +421,49 @@ completeM (MOngoing mt _ _ rs) = mergek mt (map getNonEmptyRun rs)
 
 instance Arbitrary T where
   arbitrary = QC.sized $ \s -> do
-      n <- QC.chooseInt (1, max 1 s)
-      go n
+      num <- QC.chooseInt (1, max 1 s)
+      go num
     where
-      -- n is the number of constructors of T and P
-      go n | n < 1 = error ("arbitrary T: n == " <> show n)
-      go n | n == 1 =
+      -- num is the number of constructors of T and P
+      go num | num < 1 = error ("arbitrary T: num == " <> show num)
+      go num | num == 1 =
           QC.frequency
             [ (1, TCompleted <$> arbitrary)
             , (1, TOngoing <$> arbitrary)
             ]
-      go n =
+      go num =
           QC.frequency
             [ (1, do
                 -- pending level merge without child
                 -- 1 for constructor itself
-                preExisting <- vectorNE (n - 1)
+                preExisting <- vectorNE (num - 1)
                 pure (TPendingLevel preExisting Nothing))
-            , (if n >= 3 then 1 else 0, do
+            , (if num >= 3 then 1 else 0, do
                 -- pending level merge with child
-                numPreExisting <- QC.chooseInt (1, min 20 (n - 2))
+                numPreExisting <- QC.chooseInt (1, min 20 (num - 2))
                 preExisting <- vectorNE numPreExisting
-                tree <- go (n - numPreExisting - 1)
+                tree <- go (num - numPreExisting - 1)
                 pure (TPendingLevel preExisting (Just tree)))
             , (2, do
                 -- pending union merge
-                ns <- shuffleNE =<< arbitraryPartition2 n
-                TPendingUnion <$> traverse go ns)
+                (n, ns) <- shuffle2 =<< arbitraryPartition2 num
+                TPendingUnion <$> go n <*> traverse go ns)
             ]
 
       vectorNE n = (:|) <$> arbitrary <*> QC.vector (n - 1)
-      shuffleNE = fmap NE.fromList . QC.shuffle . NE.toList
+      shuffle2 (x, xs) =
+          QC.shuffle (x : NE.toList xs) >>= \case
+            y1:y2:ys -> pure (y1, y2 :| ys)
+            _        -> error "shuffle2: less than two elements"
 
       -- Split into at least two smaller positive numbers. The input needs to be
       -- greater than or equal to 2.
-      arbitraryPartition2 :: Int -> QC.Gen (NonEmpty Int)
-      arbitraryPartition2 n = assert (n >= 2) $ do
-          first <- QC.chooseInt (1, n-1)
-          (first :|) <$> arbitraryPartition (n - first)
+      arbitraryPartition2 :: Int -> QC.Gen (Int, NonEmpty Int)
+      arbitraryPartition2 total = assert (total >= 2) $ do
+          n1 <- QC.chooseInt (1, total - 1)
+          n2 <- QC.chooseInt (1, total - n1)
+          ns <- arbitraryPartition (total - n1 - n2)
+          pure (n1, n2 :| ns)
 
       -- Split into smaller positive numbers.
       arbitraryPartition :: Int -> QC.Gen [Int]
@@ -488,12 +493,12 @@ instance Arbitrary T where
       | (ps', t') <- shrink (ps, t)
       , length ps' + length t' > 0
       ]
-  shrink tree@(TPendingUnion ts) =
+  shrink tree@(TPendingUnion t ts) =
       [ TCompleted (completeT tree) ]
+   <> [t]
    <> toList ts
-   <> [ TPendingUnion ts'
-      | ts' <- shrink ts
-      , length ts' > 1
+   <> [ TPendingUnion t' ts'
+      | (t', ts') <- shrink (t, ts)
       ]
 
 instance Arbitrary P where

@@ -280,7 +280,7 @@ data PendingMerge s = -- | The inputs are entire content of a table, i.e. its
                       PendingLevelMerge !(NonEmpty (PreExistingRun s)) !(Maybe (MergingTree s))
                       -- | Each input is a level merge of the entire content of
                       -- a table.
-                    | PendingUnionMerge !(NonEmpty (MergingTree s))
+                    | PendingUnionMerge !(MergingTree s) !(NonEmpty (MergingTree s))
 
 -- | This is much like an 'IncomingRun', and are created from them, but contain
 -- only the essential information needed in a 'PendingLevelMerge'.
@@ -291,7 +291,7 @@ pendingContent :: PendingMerge s
                -> (TreeMergeType, [PreExistingRun s], [MergingTree s])
 pendingContent = \case
     PendingLevelMerge prs t  -> (MergeLevel, toList prs, toList t)
-    PendingUnionMerge     ts -> (MergeUnion, [], toList ts)
+    PendingUnionMerge   t ts -> (MergeUnion, [], t : toList ts)
 
 {-# COMPLETE PendingMerge #-}
 pattern PendingMerge :: TreeMergeType
@@ -532,9 +532,8 @@ treeInvariant tree@(MergingTree treeState) = do
           PreExistingMergingRun mr -> mergeInvariant mr
         for_ t treeInvariant
 
-      PendingTreeMerge (PendingUnionMerge ts) -> do
-        assertI "pending union merges are non-trivial (at least two inputs)" $
-          length ts > 1
+      PendingTreeMerge (PendingUnionMerge t ts) -> do
+        treeInvariant t
         for_ ts treeInvariant
 
     (debt, _) <- liftI $ remainingDebtMergingTree tree
@@ -1381,8 +1380,8 @@ buildLookupTree = go
             Just t  -> do
               lTree <- go t
               pure (LookupNode MergeLevel [preExisting, lTree])
-        PendingTreeMerge (PendingUnionMerge trees) -> do
-          LookupNode MergeUnion <$> traverse go (toList trees)
+        PendingTreeMerge (PendingUnionMerge tree trees) -> do
+          LookupNode MergeUnion <$> traverse go (tree : toList trees)
 
 foldLookupTree :: LookupTree LookupAcc -> LookupAcc
 foldLookupTree = \case
@@ -1732,8 +1731,8 @@ newPendingLevelMerge (pr:prs) t = do
 newPendingUnionMerge :: [MergingTree s] -> ST s (Maybe (MergingTree s))
 newPendingUnionMerge []  = pure Nothing
 newPendingUnionMerge [t] = pure (Just t)
-newPendingUnionMerge (t:ts) = do
-    let st = PendingTreeMerge (PendingUnionMerge (t :| ts))
+newPendingUnionMerge (t1:t2:ts) = do
+    let st = PendingTreeMerge (PendingUnionMerge t1 (t2 :| ts))
     Just . MergingTree <$> newSTRef st
 
 contentToMergingTree :: LSMContent s -> ST s (Maybe (MergingTree s))
@@ -1861,8 +1860,8 @@ supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \cas
     PendingLevelMerge prs tree ->
       leftToRight supplyPreExistingRun (toList prs) credits
         >>= leftToRight supplyCreditsMergingTree (toList tree)
-    PendingUnionMerge trees ->
-      splitEqually supplyCreditsMergingTree (toList trees) credits
+    PendingUnionMerge tree trees ->
+      splitEqually supplyCreditsMergingTree (tree : toList trees) credits
   where
     supplyPreExistingRun c = \case
         PreExistingRun        _r -> pure c
