@@ -88,6 +88,7 @@ jobs:
           echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.14", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
           ## Various special cases
           echo '{"name" : "Build with +serialblockio"       , "os": "ubuntu-latest", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "+serialblockio", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "Build with +posixblockio"        , "os": "ubuntu-latest", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "+posixblockio",  "cabal-project-file": "cabal.project.debug"},'
           echo '{"name" : "Build with cabal.project.release", "os": "ubuntu-latest", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "",               "cabal-project-file": "cabal.project.release"},'
           echo EOF
         } >> "$GITHUB_ENV"
