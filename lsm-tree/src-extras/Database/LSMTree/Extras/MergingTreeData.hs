@@ -128,6 +128,10 @@ unsafeCreateMergingTree hfs hbio refCtx resolve salt runParams path counter = go
 -- ScheduledMergesTest module. Maybe we can share some code?
 
 -- | A data structure suitable for creating arbitrary 'MergingTree's.
+-- Its invariants are slightly less strict as for 'MergingTree' itself, as it
+-- allows for pending nodes containing only a single sub-tree.
+-- 'MT.newPendingLevelMerge' and 'MT.newPendingUnionMerge' accept these inputs,
+-- but will return the input tree itself without creating a single-child node.
 --
 -- Note: 'b ~ Void' should rule out blobs.
 data MergingTreeData k v b =
@@ -136,7 +140,7 @@ data MergingTreeData k v b =
   | PendingLevelMergeData
       [PreExistingRunData k v b]
       (Maybe (MergingTreeData k v b))  -- ^ not both empty!
-  | PendingUnionMergeData (NonEmpty (MergingTreeData k v b))  -- ^ at least 2 children
+  | PendingUnionMergeData (NonEmpty (MergingTreeData k v b))
   deriving stock (Show, Eq)
 
 data PreExistingRunData k v b =
@@ -165,8 +169,6 @@ mergingTreeDataInvariant mtd =
               mergingRunDataMergeType mr == MR.MergeMidLevel
         for_ t mergingTreeDataInvariant
       PendingUnionMergeData ts -> do
-        assertI "pending union merges are non-trivial (at least two inputs)" $
-          length ts >= 2
         for_ ts mergingTreeDataInvariant
   where
     assertI msg False = Left msg
@@ -280,9 +282,6 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
           , genPendingLevelMergeNoChild
           ]
 
-      | n == 2
-      = genPendingLevelMergeWithChild n
-
       | otherwise
       = QC.oneof [genPendingLevelMergeWithChild n, genPendingUnionMerge n]
 
@@ -297,7 +296,7 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
         let preExisting = initPreExisting ++ [lastPreExisting]
         pure (PendingLevelMergeData preExisting Nothing)
 
-    -- n >= 2
+    -- n >= 2, needs 1 constructor + 1 child
     genPendingLevelMergeWithChild n = do
         numPreExisting <- chooseIntSkewed (0, 6)
         preExisting <- QC.vectorOf numPreExisting $
@@ -306,9 +305,9 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
         tree <- genMergingTree (n - 1)
         pure (PendingLevelMergeData preExisting (Just tree))
 
-    -- n >= 3, needs 1 constructor + 2 children
+    -- n >= 2, needs 1 constructor + 1 child
     genPendingUnionMerge n = do
-        ns <- shuffleNE =<< arbitraryPartition2 (n - 1)
+        ns <- shuffleNE =<< arbitraryPartition1 (n - 1)
         PendingUnionMergeData <$> traverse genMergingTree ns
         where
           shuffleNE = fmap NE.fromList . QC.shuffle . NE.toList
@@ -337,12 +336,11 @@ mergingTreeDataSize = \case
     PendingLevelMergeData _ tree -> 1 + maybe 0 mergingTreeDataSize tree
     PendingUnionMergeData trees -> 1 + sum (fmap mergingTreeDataSize trees)
 
--- Split into at least two smaller positive numbers. The input needs to be
--- greater than or equal to 2.
-arbitraryPartition2 :: Int -> QC.Gen (NonEmpty Int)
-arbitraryPartition2 n = assert (n >= 2) $ do
-    first <- QC.chooseInt (1, n-1)
-    (first :|) <$> arbitraryPartition (n - first)
+-- Split into at least one positive numbers. The input needs to be greater than
+-- or equal to 1.
+arbitraryPartition1 :: Int -> QC.Gen (NonEmpty Int)
+arbitraryPartition1 n = assert (n >= 1) $
+    NE.fromList <$> arbitraryPartition n
 
 -- Split into smaller positive numbers.
 arbitraryPartition :: Int -> QC.Gen [Int]
@@ -394,7 +392,7 @@ shrinkMergingTreeData shrinkKey shrinkVal shrinkBlob = \case
     <>
     [ PendingUnionMergeData ts'
     | ts' <- liftShrink (shrinkMergingTreeData shrinkKey shrinkVal shrinkBlob) ts
-    , length ts' >= 2
+    , not (null ts')
     ]
 
 genPreExistingRunData ::

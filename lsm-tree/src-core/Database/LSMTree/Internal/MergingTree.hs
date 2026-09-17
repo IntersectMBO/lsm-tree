@@ -18,6 +18,8 @@ module Database.LSMTree.Internal.MergingTree (
     -- * Internal state
   , MergingTreeState (..)
   , PendingMerge (..)
+  , pattern PendingLevelMerge
+  , pattern PendingUnionMerge
   ) where
 
 import           Control.ActionRegistry
@@ -35,7 +37,6 @@ import           Data.List (foldl')
                  -- foldl' is included in the Prelude from base 4.20 onwards
 #endif
 import           Data.List.NonEmpty (NonEmpty ((:|)))
-import           Data.Maybe (isJust)
 import           Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
@@ -114,30 +115,55 @@ data MergingTreeState m h =
       !(PendingMerge m h)
 
 -- | A merge that is waiting for its inputs to complete.
+--
+-- The constructors are unsafe and only exported to allow deriving instances in
+-- other modules. Use the patterns 'PendingLevelMerge' and 'PendingUnionMerge'
+-- instead.
 data PendingMerge m h =
     -- | The collection of inputs is the entire contents of a table,
     -- i.e. its (merging) runs and finally a union merge (if that table
     -- already contained a union).
-    PendingLevelMerge_
+    --
+    -- INVARIANT: At least one 'PreExistingRun' must be present. This is
+    -- enforced by in 'mkPendingLevelMerge'. Don't use the constructor directly.
+    UnsafePendingLevelMerge
       !(Vector (PreExistingRun m h))
       !(Maybe (Ref (MergingTree m h)))
 
     -- | Each input is the entire content of a table (as a merging tree).
-  | PendingUnionMerge_
+    --
+    -- INVARIANT: At least two inputs ('MergingTree') must be present. This is
+    -- enforced in 'newPendingUnionMerge'. Don't use the constructor directly.
+  | UnsafePendingUnionMerge
       !(Vector (Ref (MergingTree m h)))
 
--- TODO: we could avoid returing Maybe if we had a NonEmpty-like type where the
--- last element can have a different type.
-mkPendingLevelMerge ::
+{-# COMPLETE PendingLevelMerge, PendingUnionMerge #-}
+pattern PendingLevelMerge ::
      Vector (PreExistingRun m h)
   -> Maybe (Ref (MergingTree m h))
-  -> Maybe (PendingMerge m h)
-mkPendingLevelMerge prs mmt
-  | not (V.null prs) || isJust mmt = Just (PendingLevelMerge_ prs mmt)
-  | otherwise                      = Nothing
+  -> PendingMerge m h
+pattern PendingLevelMerge prs mmt <- UnsafePendingLevelMerge prs mmt
 
-mkPendingUnionMerge :: NonEmpty (Ref (MergingTree m h)) -> PendingMerge m h
-mkPendingUnionMerge mts = PendingUnionMerge_ (V.fromList (toList mts))
+pattern PendingUnionMerge ::
+     Vector (Ref (MergingTree m h))
+  -> PendingMerge m h
+pattern PendingUnionMerge mts <- UnsafePendingUnionMerge mts
+
+mkPendingLevelMerge ::
+     PreExistingRun m h
+  -> [PreExistingRun m h]
+  -> Maybe (Ref (MergingTree m h))
+  -> PendingMerge m h
+mkPendingLevelMerge pr prs mmt =
+    UnsafePendingLevelMerge (V.fromList (pr:prs)) mmt
+
+mkPendingUnionMerge ::
+     Ref (MergingTree m h)
+  -> Ref (MergingTree m h)
+  -> [Ref (MergingTree m h)]
+  -> PendingMerge m h
+mkPendingUnionMerge mt1 mt2 mts =
+    UnsafePendingUnionMerge (V.fromList (mt1 : mt2 : mts))
 
 pendingContent ::
      PendingMerge m h
@@ -146,8 +172,8 @@ pendingContent ::
      , Vector (Ref (MergingTree m h))
      )
 pendingContent = \case
-    PendingLevelMerge_ prs t -> (MR.MergeLevel, prs, maybe V.empty V.singleton t)
-    PendingUnionMerge_    ts -> (MR.MergeUnion, V.empty, ts)
+    PendingLevelMerge prs t -> (MR.MergeLevel, prs, maybe V.empty V.singleton t)
+    PendingUnionMerge    ts -> (MR.MergeUnion, V.empty, ts)
 
 {-# COMPLETE PendingMerge #-}
 pattern PendingMerge ::
@@ -214,7 +240,7 @@ newPendingLevelMerge ::
   -> [PreExistingRun m h]
   -> Maybe (Ref (MergingTree m h))
   -> m (Maybe (Ref (MergingTree m h)))
-newPendingLevelMerge _ [] (Just t) = Just <$> dupRef t
+newPendingLevelMerge _ [] mt = traverse dupRef mt
 newPendingLevelMerge refCtx [PreExistingRun r] Nothing = do
     -- No need to create a pending merge here.
     --
@@ -229,10 +255,12 @@ newPendingLevelMerge refCtx [PreExistingRun r] Nothing = do
     -- exceptions are masked then there can be no async exceptions here at all.
     Just <$> mkMergingTree refCtx (CompletedTreeMerge r')
 
-newPendingLevelMerge refCtx prs mmt = do
+newPendingLevelMerge refCtx (pr:prs) mmt = do
+    pr'  <- dupPreExistingRun pr
+    prs' <- traverse dupPreExistingRun prs
     mmt' <- traverse dupRef mmt
-    prs' <- traverse dupPreExistingRun (V.fromList prs)
-    traverse (mkMergingTree refCtx . PendingTreeMerge) (mkPendingLevelMerge prs' mmt')
+    let pending = mkPendingLevelMerge pr' prs' mmt'
+    Just <$> mkMergingTree refCtx (PendingTreeMerge pending)
   where
     dupPreExistingRun (PreExistingRun r) =
       PreExistingRun <$!> dupRef r
@@ -263,8 +291,8 @@ newPendingUnionMerge ::
 newPendingUnionMerge _ (mt :| []) = do
     -- No need to create a new node, directly use the single input tree.
     dupRef mt
-newPendingUnionMerge refCtx mts = do
-    state <- mkPendingUnionMerge <$> mapM dupRef mts
+newPendingUnionMerge refCtx (mt1 :| (mt2 : mts)) = do
+    state <- mkPendingUnionMerge <$> dupRef mt1 <*> dupRef mt2 <*> mapM dupRef mts
     mkMergingTree refCtx (PendingTreeMerge state)
 
 {-# SPECIALISE getCompleted ::
@@ -325,8 +353,8 @@ finalise mergeState = releaseMTS =<< readMVar mergeState
     releaseMTS (OngoingTreeMerge  mr) = releaseRef mr
     releaseMTS (PendingTreeMerge ptm) =
       case ptm of
-        PendingUnionMerge_ mts       -> traverse_ releaseRef mts
-        PendingLevelMerge_ prs mmt   -> traverse_ releasePER prs
+        PendingUnionMerge mts        -> traverse_ releaseRef mts
+        PendingLevelMerge prs mmt    -> traverse_ releasePER prs
                                      >> traverse_ releaseRef mmt
 
     releasePER (PreExistingRun         r) = releaseRef r
@@ -462,10 +490,10 @@ supplyCredits hfs hbio refCtx resolve salt runParams threshold root uc = \mt0 c0
     supplyPending =
         MR.supplyChecked remainingMergeDebtPendingMerge $ \pm credits -> do
           case pm of
-            PendingLevelMerge_ prs mt ->
+            PendingLevelMerge prs mt ->
               leftToRight supplyPreExisting (V.toList prs) credits
                 >>= leftToRight (flip supplyTree) (toList mt)
-            PendingUnionMerge_ mts ->
+            PendingUnionMerge mts ->
               splitEqually (flip supplyTree) (V.toList mts) credits
 
     supplyPreExisting c = \case
