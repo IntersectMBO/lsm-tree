@@ -22,8 +22,10 @@ concurrently. On Windows, MacOS, and FreeBSD systems the *real* implementation
 currently simply performs each I/O operation sequentially, which should achieve
 about the same performance as using non-batched I/O, but the library could be
 extended with asynchronous I/O implementations for Windows, MacOS, and FreeBSD
-as well. The simulated implementation also performs each I/O operation
-sequentially.
+as well. On other POSIX systems a portable serial implementation is used that
+relies only on the parts of the `unix` package available on the platform; it
+can be selected explicitly on any platform with the `posixblockio` cabal flag.
+The simulated implementation also performs each I/O operation sequentially.
 
 As mentioned before, the batched I/O functionality is separated into an
 *abstract interface* and *implementations* of that abstract interface. The

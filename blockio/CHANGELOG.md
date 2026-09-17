@@ -1,5 +1,32 @@
 # Revision history for blockio
 
+## ?.?.?.? -- ????-??-??
+
+### Breaking changes
+
+None
+
+### New features
+
+* Add a portable serial `HasBlockIO` implementation for POSIX systems that do
+  not have a dedicated one, so `blockio` builds on more than Linux, MacOS,
+  Windows, and FreeBSD. Operations the platform does not support
+  (`posix_fallocate`, `O_DIRECT`/`F_NOCACHE`) degrade to no-ops. See [issue
+  #872][issue-872] and [PR #NNN][pr-NNN].
+* Add the `posixblockio` cabal flag, which forces the portable implementation
+  on any platform, for testing it. See [PR #NNN][pr-NNN].
+
+### Minor changes
+
+None
+
+### Bug fixes
+
+None
+
+[issue-872]: https://github.com/IntersectMBO/lsm-tree/issues/872
+[pr-886]: https://github.com/IntersectMBO/lsm-tree/pull/886
+
 ## 0.2.1.0 -- 2026-08-27
 
 ### Breaking changes
