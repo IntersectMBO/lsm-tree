@@ -214,9 +214,9 @@ newOngoingMerge refCtx mr = mkMergingTree refCtx . OngoingTreeMerge =<< dupRef m
 
 {-# SPECIALISE newPendingLevelMerge ::
      RefCtx
-  -> [PreExistingRun IO h]
+  -> NonEmpty (PreExistingRun IO h)
   -> Maybe (Ref (MergingTree IO h))
-  -> IO (Maybe (Ref (MergingTree IO h))) #-}
+  -> IO (Ref (MergingTree IO h)) #-}
 -- | Create a new 'MergingTree' representing the merge of a sequence of
 -- pre-existing runs (completed or ongoing, plus a optional final tree).
 -- This is for merging the entire contents of a table down to a single run
@@ -237,11 +237,10 @@ newPendingLevelMerge ::
      forall m h.
      (MonadMVar m, MonadMask m, PrimMonad m)
   => RefCtx
-  -> [PreExistingRun m h]
+  -> NonEmpty (PreExistingRun m h)
   -> Maybe (Ref (MergingTree m h))
-  -> m (Maybe (Ref (MergingTree m h)))
-newPendingLevelMerge _ [] mt = traverse dupRef mt
-newPendingLevelMerge refCtx [PreExistingRun r] Nothing = do
+  -> m (Ref (MergingTree m h))
+newPendingLevelMerge refCtx (PreExistingRun r :| []) Nothing = do
     -- No need to create a pending merge here.
     --
     -- We could do something similar for PreExistingMergingRun, but it's:
@@ -253,14 +252,13 @@ newPendingLevelMerge refCtx [PreExistingRun r] Nothing = do
     r' <- dupRef r
     -- There are no interruption points here, and thus provided async
     -- exceptions are masked then there can be no async exceptions here at all.
-    Just <$> mkMergingTree refCtx (CompletedTreeMerge r')
+    mkMergingTree refCtx (CompletedTreeMerge r')
 
-newPendingLevelMerge refCtx (pr : prs) mmt = do
+newPendingLevelMerge refCtx (pr :| prs) mmt = do
     pr'  <- dupPreExistingRun pr
     prs' <- traverse dupPreExistingRun prs
     mmt' <- traverse dupRef mmt
-    let pending = mkPendingLevelMerge pr' prs' mmt'
-    Just <$> mkMergingTree refCtx (PendingTreeMerge pending)
+    mkMergingTree refCtx (PendingTreeMerge (mkPendingLevelMerge pr' prs' mmt'))
   where
     dupPreExistingRun (PreExistingRun r) =
       PreExistingRun <$!> dupRef r

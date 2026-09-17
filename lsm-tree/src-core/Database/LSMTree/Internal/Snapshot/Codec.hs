@@ -34,6 +34,8 @@ import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import           Data.List (intercalate)
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
@@ -853,20 +855,20 @@ instance Encode r => Encode (SnapPendingMerge r) where
   encode (SnapPendingLevelMerge pe mt) =
       encodeListLen 3
    <> encodeWord 0
-   <> encodeList pe
+   <> encodeNonEmpty pe
    <> encodeMaybe mt
   encode (SnapPendingUnionMerge mts) =
       encodeListLen 2
    <> encodeWord 1
-   <> encodeList mts
+   <> encodeNonEmpty mts
 
 instance DecodeVersioned r => DecodeVersioned (SnapPendingMerge r) where
   decodeVersioned v = do
       n <- decodeListLen
       tag <- decodeWord
       case (n, tag) of
-        (3, 0) -> SnapPendingLevelMerge <$> decodeList v <*> decodeMaybe v
-        (2, 1) -> SnapPendingUnionMerge <$> decodeList v
+        (3, 0) -> SnapPendingLevelMerge <$> decodeNonEmpty "SnapPendingMerge" v <*> decodeMaybe v
+        (2, 1) -> SnapPendingUnionMerge <$> decodeNonEmpty "SnapPendingMerge" v
         _ -> fail ("[SnapPendingMerge] Unexpected combination of list length and tag: " <> show (n, tag))
 
 -- SnapPreExistingRun
@@ -915,6 +917,16 @@ decodeList :: DecodeVersioned a => SnapshotVersion -> Decoder s [a]
 decodeList v = do
     n <- decodeListLen
     decodeSequenceLenN (flip (:)) [] reverse n (decodeVersioned v)
+
+encodeNonEmpty :: Encode a => NonEmpty a -> Encoding
+encodeNonEmpty = encodeList . NE.toList
+
+decodeNonEmpty :: DecodeVersioned a => String -> SnapshotVersion -> Decoder s (NonEmpty a)
+decodeNonEmpty ty v = do
+    xs <- decodeList v
+    case NE.nonEmpty xs of
+      Just ne -> pure ne
+      Nothing -> fail ("[" <> ty <> "] Empty list (expected non-empty)")
 
 encodeVector :: Encode a => V.Vector a -> Encoding
 encodeVector xs =

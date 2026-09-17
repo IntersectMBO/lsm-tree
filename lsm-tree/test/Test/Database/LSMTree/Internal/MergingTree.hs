@@ -139,7 +139,7 @@ modelFoldMergingTree = goMergingTree
         OngoingTreeMergeData mr ->
           goMergingRun mr
         PendingLevelMergeData prs t ->
-          modelMerge MR.MergeLevel (map goPreExistingRun prs <> map goMergingTree (toList t))
+          modelMerge MR.MergeLevel (map goPreExistingRun (toList prs) <> map goMergingTree (toList t))
         PendingUnionMergeData ts ->
           modelMerge MR.MergeUnion (map goMergingTree (toList ts))
 

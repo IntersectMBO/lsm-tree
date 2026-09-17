@@ -10,6 +10,7 @@ import           Codec.CBOR.Write
 import           Control.DeepSeq (NFData)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.List as List
+import qualified Data.List.NonEmpty as NE
 import           Data.Ord (comparing)
 import           Data.Proxy
 import qualified Data.Text as Text
@@ -308,6 +309,11 @@ vectorOfUpTo maxlen gen = do
       len <- chooseInt (0, maxlen)
       vectorOf len gen
 
+nonEmptyOf :: Int -> Gen a -> Gen (NE.NonEmpty a)
+nonEmptyOf len gen
+  | len < 1   = error "nonEmptyOf: non-positive length"
+  | otherwise = (NE.:|) <$> gen <*> vectorOf (len - 1) gen
+
 instance Arbitrary RunNumber where
   arbitrary = RunNumber <$> arbitrarySizedNatural
   shrink (RunNumber n) =
@@ -408,7 +414,7 @@ instance Arbitrary r => Arbitrary (SnapMergingTreeState r) where
 
 instance Arbitrary r => Arbitrary (SnapPendingMerge r) where
   arbitrary = genPendingTreeMerge mergingTreeDepthLimit
-  shrink (SnapPendingUnionMerge a) = SnapPendingUnionMerge <$> shrinkList shrink a
+  shrink (SnapPendingUnionMerge a) = SnapPendingUnionMerge <$> shrink a
   shrink (SnapPendingLevelMerge a b) =
       [ SnapPendingLevelMerge a' b' | (a', b') <- shrink (a, b)]
 
@@ -448,18 +454,21 @@ genMergingTreeState gas =
 
 -- | Generate an 'Arbitrary', "gas-limited" 'SnapPendingMerge'.
 genPendingTreeMerge :: Arbitrary a => Int -> Gen (SnapPendingMerge a)
-genPendingTreeMerge gas =
-    oneof [
-      SnapPendingLevelMerge <$> genPreExistings <*> genMaybeSubTree
-    , SnapPendingUnionMerge <$> genListSubtrees
-    ]
+genPendingTreeMerge gas
+  | gas <= 0  = genPendingLevelMerge
+  | otherwise = oneof [genPendingLevelMerge, genPendingUnionMerge]
   where
     -- Decrement the gas for the recursive calls
     nextGas = max 0 $ gas - 1
     subGen = SnapMergingTree <$> genMergingTreeState nextGas
 
+    genPendingLevelMerge = SnapPendingLevelMerge <$> genPreExistings <*> genMaybeSubTree
+    genPendingUnionMerge = SnapPendingUnionMerge <$> genListSubtrees
+
     -- No recursive subtrees within here, so not constrained by gas.
-    genPreExistings = vectorOfUpTo branchingLimit arbitrary
+    genPreExistings = do
+      len <- chooseInt (1, branchingLimit)
+      nonEmptyOf len arbitrary
 
     -- Define custom generators to ensure that the sub-trees are less than
     -- or equal to the lesser of the "gas" parameter and the branching limit.
@@ -467,17 +476,15 @@ genPendingTreeMerge gas =
       | gas == 0  = pure Nothing
       | otherwise = oneof [ pure Nothing, Just <$> subGen ]
 
-    genListSubtrees = case gas of
-      0 -> vectorOf 0 subGen
-      _ ->
-        -- This frequency distribution will uniformly at random select an
-        -- n-ary tree topology with a specified branching factor.
-        let recursiveOptions branching = \case
-              0 -> 1
-              depth ->
-                let sub = recursiveOptions branching $ depth - 1
-                in  sum $ (sub ^) <$> [ 0 .. branching ]
-            probability e =
-              let basis = recursiveOptions branchingLimit nextGas
-              in  (basis ^ e, vectorOf e subGen)
-        in  frequency $ probability <$> [ 0 .. branchingLimit ]
+    genListSubtrees =
+      -- This frequency distribution will uniformly at random select an
+      -- n-ary tree topology with a specified branching factor.
+      let recursiveOptions branching = \case
+            0 -> 1
+            depth ->
+              let sub = recursiveOptions branching $ depth - 1
+              in  sum $ (sub ^) <$> [ 1 .. branching ]
+          probability e =
+            let basis = recursiveOptions branchingLimit nextGas
+            in  (basis ^ e, nonEmptyOf e subGen)
+      in  frequency $ probability <$> [ 1 .. branchingLimit ]

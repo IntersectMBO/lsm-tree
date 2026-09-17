@@ -22,7 +22,6 @@ import           Control.RefCount
 import           Data.Foldable (for_, toList)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NE
-import           Data.Maybe (fromMaybe)
 import           Database.LSMTree.Extras (showPowersOf)
 import           Database.LSMTree.Extras.Generators ()
 import           Database.LSMTree.Extras.MergingRunData
@@ -88,10 +87,9 @@ unsafeCreateMergingTree hfs hbio refCtx resolve salt runParams path counter = go
         withMergingRun hfs hbio refCtx resolve salt runParams path counter mrd $ \mr ->
           MT.newOngoingMerge refCtx mr
       PendingLevelMergeData prds mtd ->
-        withPreExistingRuns prds $ \prs ->
+        withPreExistingRuns' prds $ \prs ->
           withMaybeTree mtd $ \mt ->
-            fromMaybe (error "PendingLevelMergeData: invalid") <$>
-              MT.newPendingLevelMerge refCtx prs mt
+            MT.newPendingLevelMerge refCtx prs mt
       PendingUnionMergeData mtds ->
         withTrees mtds $ \mts ->
           MT.newPendingUnionMerge refCtx mts
@@ -110,15 +108,17 @@ unsafeCreateMergingTree hfs hbio refCtx resolve salt runParams path counter = go
         bracket (go mtd) releaseRef $ \t ->
           act (Just t)
 
-    withPreExistingRuns [] act = act []
-    withPreExistingRuns (PreExistingRunData rd : rest) act =
+    withPreExistingRuns []     act = act []
+    withPreExistingRuns (x:xs) act = withPreExistingRuns' (x :| xs) (act . toList)
+
+    withPreExistingRuns' (PreExistingRunData rd :| rest) act =
         withRun hfs hbio refCtx salt runParams path counter rd $ \r ->
           withPreExistingRuns rest $ \prs ->
-            act (MT.PreExistingRun r : prs)
-    withPreExistingRuns (PreExistingMergingRunData mrd : rest) act =
+            act (MT.PreExistingRun r :| prs)
+    withPreExistingRuns' (PreExistingMergingRunData mrd :| rest) act =
         withMergingRun hfs hbio refCtx resolve salt runParams path counter mrd $ \mr ->
           withPreExistingRuns rest $ \prs ->
-            act (MT.PreExistingMergingRun mr : prs)
+            act (MT.PreExistingMergingRun mr :| prs)
 
 {-------------------------------------------------------------------------------
   MergingTreeData
@@ -138,7 +138,7 @@ data MergingTreeData k v b =
     CompletedTreeMergeData (RunData k v b)
   | OngoingTreeMergeData (MergingRunData MR.TreeMergeType k v b)
   | PendingLevelMergeData
-      [PreExistingRunData k v b]
+      (NonEmpty (PreExistingRunData k v b))
       (Maybe (MergingTreeData k v b))  -- ^ not both empty!
   | PendingUnionMergeData (NonEmpty (MergingTreeData k v b))
   deriving stock (Show, Eq)
@@ -157,12 +157,10 @@ mergingTreeDataInvariant mtd =
       OngoingTreeMergeData mr ->
         mergingRunDataInvariant mr
       PendingLevelMergeData prs t -> do
-        assertI "pending level merges have at least one input" $
-          length prs + length t > 0
         for_ prs $ \case
           PreExistingRunData        _r -> Right ()
           PreExistingMergingRunData mr -> mergingRunDataInvariant mr
-        for_ (drop 1 (reverse prs)) $ \case
+        for_ (NE.init prs) $ \case
           PreExistingRunData        _r -> Right ()
           PreExistingMergingRunData mr ->
             assertI "only the last pre-existing run can be a last level merge" $
@@ -185,7 +183,7 @@ mapMergingTreeData f g h = \case
       OngoingTreeMergeData $ mapMergingRunData f g h mr
     PendingLevelMergeData prs t ->
       PendingLevelMergeData
-        (map (mapPreExistingRunData f g h) prs)
+        (fmap (mapPreExistingRunData f g h) prs)
         (fmap (mapMergingTreeData f g h) t)
     PendingUnionMergeData ts ->
       PendingUnionMergeData $ fmap (mapMergingTreeData f g h) ts
@@ -238,10 +236,10 @@ labelMergingTreeData = \rd ->
     depthTree = (+1) . \case  -- maximum depth of children
         CompletedTreeMergeData _ -> 0
         OngoingTreeMergeData _   -> 0
-        PendingLevelMergeData prds mtds ->
-          maximum (0 : fmap (const 1) prds ++ map depthTree (toList mtds))
+        PendingLevelMergeData _prds mtds ->
+          maximum (1 : map depthTree (toList mtds))
         PendingUnionMergeData mtds ->
-          maximum (0 : map depthTree (NE.toList mtds))
+          maximum (fmap depthTree mtds)
 
 
 labelPreExistingRunData :: SerialisedPreExistingRunData -> Property -> Property
@@ -279,31 +277,24 @@ genMergingTreeDataOfSize genKey genVal genBlob = \n0 -> do
       = QC.oneof
           [ CompletedTreeMergeData <$> genRun
           , OngoingTreeMergeData <$> genMergingRun arbitrary
-          , genPendingLevelMergeNoChild
+          , genPendingLevelMerge n
           ]
 
       | otherwise
-      = QC.oneof [genPendingLevelMergeWithChild n, genPendingUnionMerge n]
+      = QC.oneof [genPendingLevelMerge n, genPendingUnionMerge n]
 
-    -- n == 1
-    genPendingLevelMergeNoChild = do
+    -- n >= 1
+    genPendingLevelMerge n = do
+        mTree <- if n >= 2 then Just <$> genMergingTree (n - 1)
+                           else pure Nothing
         numPreExisting <- chooseIntSkewed (0, 6)
         initPreExisting <- QC.vectorOf numPreExisting $
           -- these can't be last level. we generate the last input below.
           genPreExistingRun (pure MR.MergeMidLevel)
         -- there must be at least one (last) input to the pending merge.
         lastPreExisting <- genPreExistingRun arbitrary
-        let preExisting = initPreExisting ++ [lastPreExisting]
-        pure (PendingLevelMergeData preExisting Nothing)
-
-    -- n >= 2, needs 1 constructor + 1 child
-    genPendingLevelMergeWithChild n = do
-        numPreExisting <- chooseIntSkewed (0, 6)
-        preExisting <- QC.vectorOf numPreExisting $
-          -- there can't be a last level merge, child is last
-          genPreExistingRun (pure MR.MergeMidLevel)
-        tree <- genMergingTree (n - 1)
-        pure (PendingLevelMergeData preExisting (Just tree))
+        let preExisting = NE.prependList initPreExisting (pure lastPreExisting)
+        pure (PendingLevelMergeData preExisting mTree)
 
     -- n >= 2, needs 1 constructor + 1 child
     genPendingUnionMerge n = do
@@ -375,7 +366,7 @@ shrinkMergingTreeData shrinkKey shrinkVal shrinkBlob = \case
     [ t' | Just t' <- [t] ]
     <>
     -- move completed child tree into regular levels
-    [ PendingLevelMergeData (prs ++ [PreExistingRunData r]) Nothing
+    [ PendingLevelMergeData (NE.appendList prs [PreExistingRunData r]) Nothing
     | Just (CompletedTreeMergeData r) <- [t]
     ]
     <>

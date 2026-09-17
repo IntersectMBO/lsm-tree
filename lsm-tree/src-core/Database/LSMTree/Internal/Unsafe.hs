@@ -2239,7 +2239,11 @@ tableContentToMergingTree uc seshEnv conf
                     NoUnion    -> Nothing
                     Union mt _ -> Just mt  -- we could reuse the cache, but it
                                            -- would complicate things
-       in newPendingLevelMerge (sessionRefCtx seshEnv) runs unionmt
+       in case NE.nonEmpty runs of
+            Nothing ->
+              pure unionmt
+            Just neRuns ->
+              Just <$> newPendingLevelMerge (sessionRefCtx seshEnv) neRuns unionmt
   where
     levelToPreExistingRuns :: Level m h -> [PreExistingRun m h]
     levelToPreExistingRuns EmptyLevel =

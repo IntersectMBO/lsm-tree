@@ -11,6 +11,7 @@ module Database.LSMTree.Internal.Config.Override (
   , overrideTableConfig
   ) where
 
+import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
 import           Database.LSMTree.Internal.MergeSchedule (MergePolicyForLevel,
@@ -194,10 +195,10 @@ instance Override RunDataCaching (SnapMergingTreeState SnapshotRun) where
 instance Override RunDataCaching (SnapPendingMerge SnapshotRun) where
   override rdc = \case
       SnapPendingLevelMerge
-        (spers :: [SnapPreExistingRun SnapshotRun])
+        (spers :: NonEmpty (SnapPreExistingRun SnapshotRun))
         (msmt :: Maybe (SnapMergingTree SnapshotRun)) ->
           SnapPendingLevelMerge (fmap (override rdc) spers) (fmap (override rdc) msmt)
-      SnapPendingUnionMerge (smts :: [SnapMergingTree SnapshotRun]) ->
+      SnapPendingUnionMerge (smts :: NonEmpty (SnapMergingTree SnapshotRun)) ->
         SnapPendingUnionMerge (fmap (override rdc) smts)
 
 instance Override RunDataCaching (SnapPreExistingRun SnapshotRun) where

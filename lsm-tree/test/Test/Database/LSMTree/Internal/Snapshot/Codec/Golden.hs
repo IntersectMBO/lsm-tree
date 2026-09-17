@@ -12,6 +12,7 @@ import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (Exception (displayException))
 import qualified Data.ByteString.Lazy as BSL
+import           Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Set as Set
 import           Data.Typeable
 import qualified Data.Vector as V
@@ -504,6 +505,12 @@ instance EnumGolden a => EnumGolden [a] where
       [ singGolden v, singGolden v ]
     , []
     , [ singGolden v]
+    ]
+
+instance EnumGolden a => EnumGolden (NonEmpty a) where
+  enumGolden v = [
+      singGolden v :| [singGolden v]
+    , singGolden v :| []
     ]
 
 instance EnumGolden RunParams where
