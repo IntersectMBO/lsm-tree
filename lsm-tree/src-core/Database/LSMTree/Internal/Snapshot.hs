@@ -356,9 +356,9 @@ toSnapPendingMerge ::
      (PrimMonad m, MonadMVar m)
   => MT.PendingMerge m h
   -> m (SnapPendingMerge (Ref (Run m h)))
-toSnapPendingMerge (MT.PendingUnionMerge_ mts) =
+toSnapPendingMerge (MT.PendingUnionMerge mts) =
   SnapPendingUnionMerge <$> traverse toSnapMergingTree (V.toList mts)
-toSnapPendingMerge (MT.PendingLevelMerge_ pes mmt) = do
+toSnapPendingMerge (MT.PendingLevelMerge pes mmt) = do
   pes' <- traverse toSnapPreExistingRun pes
   mmt' <- traverse toSnapMergingTree mmt
   pure $ SnapPendingLevelMerge (V.toList pes') mmt'
