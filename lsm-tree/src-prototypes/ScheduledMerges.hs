@@ -102,6 +102,7 @@ import           Prelude hiding (lookup)
 
 import           Data.Foldable (for_, toList, traverse_)
 import           Data.Functor.Contravariant
+import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, maybeToList)
@@ -276,10 +277,10 @@ data MergingTreeState s = CompletedTreeMerge !Run
 data PendingMerge s = -- | The inputs are entire content of a table, i.e. its
                       -- (merging) runs and finally a union merge (if that table
                       -- already contained a union).
-                      PendingLevelMerge ![PreExistingRun s] !(Maybe (MergingTree s))
+                      PendingLevelMerge !(NonEmpty (PreExistingRun s)) !(Maybe (MergingTree s))
                       -- | Each input is a level merge of the entire content of
                       -- a table.
-                    | PendingUnionMerge ![MergingTree s]
+                    | PendingUnionMerge !(NonEmpty (MergingTree s))
 
 -- | This is much like an 'IncomingRun', and are created from them, but contain
 -- only the essential information needed in a 'PendingLevelMerge'.
@@ -289,8 +290,8 @@ data PreExistingRun s = PreExistingRun  !Run
 pendingContent :: PendingMerge s
                -> (TreeMergeType, [PreExistingRun s], [MergingTree s])
 pendingContent = \case
-    PendingLevelMerge prs t  -> (MergeLevel, prs, toList t)
-    PendingUnionMerge     ts -> (MergeUnion, [],  ts)
+    PendingLevelMerge prs t  -> (MergeLevel, toList prs, toList t)
+    PendingUnionMerge     ts -> (MergeUnion, [], toList ts)
 
 {-# COMPLETE PendingMerge #-}
 pattern PendingMerge :: TreeMergeType
@@ -524,11 +525,8 @@ treeInvariant tree@(MergingTree treeState) = do
         mergeInvariant mr
 
       PendingTreeMerge (PendingLevelMerge prs t) -> do
-        -- Non-empty, but can be just one input (see 'newPendingLevelMerge').
         -- Note that children of a pending merge can be empty runs, as noted
         -- above for 'CompletedTreeMerge'.
-        assertI "pending level merges have at least one input" $
-          length prs + length t > 0
         for_ prs $ \case
           PreExistingRun        _r -> pure ()
           PreExistingMergingRun mr -> mergeInvariant mr
@@ -1384,7 +1382,7 @@ buildLookupTree = go
               lTree <- go t
               pure (LookupNode MergeLevel [preExisting, lTree])
         PendingTreeMerge (PendingUnionMerge trees) -> do
-          LookupNode MergeUnion <$> traverse go trees
+          LookupNode MergeUnion <$> traverse go (toList trees)
 
 foldLookupTree :: LookupTree LookupAcc -> LookupAcc
 foldLookupTree = \case
@@ -1727,15 +1725,15 @@ newPendingLevelMerge [PreExistingMergingRun{}] Nothing =
     -- there can only be one level in the input table. At level 1 there are no
     -- merging runs, it must be a Single run flushed from a write buffer.
     error "newPendingLevelMerge: singleton Merging run"
-newPendingLevelMerge prs t = do
-    Just . MergingTree <$> newSTRef (PendingTreeMerge (PendingLevelMerge prs t))
+newPendingLevelMerge (pr:prs) t = do
+    Just . MergingTree <$> newSTRef (PendingTreeMerge (PendingLevelMerge (pr :| prs) t))
 
 -- | Ensures that the merge contains more than one input.
 newPendingUnionMerge :: [MergingTree s] -> ST s (Maybe (MergingTree s))
 newPendingUnionMerge []  = pure Nothing
 newPendingUnionMerge [t] = pure (Just t)
-newPendingUnionMerge trees = do
-    let st = PendingTreeMerge (PendingUnionMerge trees)
+newPendingUnionMerge (t:ts) = do
+    let st = PendingTreeMerge (PendingUnionMerge (t :| ts))
     Just . MergingTree <$> newSTRef st
 
 contentToMergingTree :: LSMContent s -> ST s (Maybe (MergingTree s))
@@ -1861,10 +1859,10 @@ supplyCreditsMergingTreeState credits !state = do
 supplyCreditsPendingMerge :: Credit -> PendingMerge s -> ST s Credit
 supplyCreditsPendingMerge = checked remainingDebtPendingMerge $ \credits -> \case
     PendingLevelMerge prs tree ->
-      leftToRight supplyPreExistingRun prs credits
+      leftToRight supplyPreExistingRun (toList prs) credits
         >>= leftToRight supplyCreditsMergingTree (toList tree)
     PendingUnionMerge trees ->
-      splitEqually supplyCreditsMergingTree trees credits
+      splitEqually supplyCreditsMergingTree (toList trees) credits
   where
     supplyPreExistingRun c = \case
         PreExistingRun        _r -> pure c
