@@ -20,7 +20,7 @@ module Database.LSMTree.Extras.MergingTreeData (
 import           Control.Exception (assert, bracket)
 import           Control.RefCount
 import           Data.Foldable (for_, toList)
-import           Data.List.NonEmpty (NonEmpty ((:|)))
+import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import           Database.LSMTree.Extras (showPowersOf)
@@ -93,17 +93,15 @@ unsafeCreateMergingTree hfs hbio refCtx resolve salt runParams path counter = go
             fromMaybe (error "PendingLevelMergeData: invalid") <$>
               MT.newPendingLevelMerge refCtx prs mt
       PendingUnionMergeData mtds ->
-        withTrees mtds $ \mts ->
-          MT.newPendingUnionMerge refCtx mts
+        withTrees (toList mtds) $ \mts ->
+          fromMaybe (error "PendingUnionMergeData: invalid") <$>
+            MT.newPendingUnionMerge refCtx mts
 
-    withTrees (mtd :| rest) act =
+    withTrees [] act = act []
+    withTrees (mtd : rest) act =
         bracket (go mtd) releaseRef $ \t ->
-          case NE.nonEmpty rest of
-            Nothing ->
-              act (t :| [])
-            Just rest' ->
-              withTrees rest' $ \ts ->
-                act (NE.cons t ts)
+          withTrees rest $ \ts ->
+            act (t : ts)
 
     withMaybeTree Nothing    act = act Nothing
     withMaybeTree (Just mtd) act =
