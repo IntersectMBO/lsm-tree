@@ -8,6 +8,10 @@ module Database.LSMTree.Internal.Snapshot.Codec (
   , prettySnapshotVersion
   , currentSnapshotVersion
   , allCompatibleSnapshotVersions
+  , isCompatible
+    -- * Errors
+  , SnapshotVersionUnknownError (..)
+  , SnapshotVersionIncompatibleError (..)
     -- * Writing and reading files
   , writeFileSnapshotMetaData
   , readFileSnapshotMetaData
@@ -15,6 +19,7 @@ module Database.LSMTree.Internal.Snapshot.Codec (
     -- * Encoding and decoding
   , Encode (..)
   , Decode (..)
+  , DecodeError (..)
   , DecodeVersioned (..)
   , Versioned (..)
   ) where
@@ -23,11 +28,12 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.CBOR.Read
 import           Codec.CBOR.Write
-import           Control.Monad.Class.MonadThrow (Exception (displayException),
+import           Control.Monad.Class.MonadThrow (Exception (..),
                      MonadThrow (..))
-import           Data.Bifunctor (Bifunctor (..))
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy as LBS
+import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import qualified Data.Vector as V
 import           Database.LSMTree.Internal.Config
@@ -42,7 +48,7 @@ import           Database.LSMTree.Internal.RunNumber
 import           Database.LSMTree.Internal.Snapshot
 import qualified System.FS.API as FS
 import           System.FS.API (FsPath, HasFS)
-import           Text.Printf
+import           Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
   Versioning
@@ -87,12 +93,72 @@ currentSnapshotVersion = V2
 allCompatibleSnapshotVersions :: [SnapshotVersion]
 allCompatibleSnapshotVersions = [V0, V1, V2]
 
-isCompatible :: SnapshotVersion -> Either String ()
+-- | Check that a known version is compatible with 'currentSnapshotVersion'.
+isCompatible :: SnapshotVersion -> Either SnapshotVersionIncompatibleError ()
 isCompatible otherVersion
     -- for the moment, all versions are backwards compatible:
-  | otherVersion `elem` allCompatibleSnapshotVersions
-  = Right ()
-  | otherwise = Left "forward compatibility not supported"
+  | otherVersion `elem` allCompatibleSnapshotVersions = Right ()
+  | otherwise = Left (ErrSnapshotVersionIncompatible otherVersion currentSnapshotVersion)
+
+{-------------------------------------------------------------------------------
+  Errors
+-------------------------------------------------------------------------------}
+
+-- | The snapshot metadata declares a snapshot format version number that this
+-- version of the library does not know. Most likely the snapshot was written
+-- by a newer version of the library.
+data SnapshotVersionUnknownError
+    = ErrSnapshotVersionUnknown
+        -- | The version number found in the snapshot metadata. A raw number,
+        -- because it does not correspond to any known 'SnapshotVersion'.
+        !Word
+        -- | The current snapshot version of the library.
+        !SnapshotVersion
+    deriving stock (Show, Eq)
+
+instance Exception SnapshotVersionUnknownError where
+  displayException (ErrSnapshotVersionUnknown found current) =
+       "Snapshot format version number "
+    <> show found
+    <> " is unkown to the current version of the library. "
+    <> "The snapshot was most likely written by a newer version of the library. "
+    <> currentVersionMsg current
+    <> " "
+    <> currentlySupportedMsg
+
+-- | The snapshot metadata declares a known snapshot format version that is no
+-- longer compatible with the current snapshot version of the library.
+data SnapshotVersionIncompatibleError
+    = ErrSnapshotVersionIncompatible
+        -- | The version found in the snapshot metadata.
+        !SnapshotVersion
+        -- | The current snapshot version of the library.
+        !SnapshotVersion
+    deriving stock (Show, Eq)
+
+instance Exception SnapshotVersionIncompatibleError where
+  displayException (ErrSnapshotVersionIncompatible found current) =
+       "Snapshot format version "
+    <> prettySnapshotVersion found
+    <> " is no longer supported by the current version of the library. "
+    <> currentVersionMsg current
+    <> " "
+    <> currentlySupportedMsg
+
+currentVersionMsg :: SnapshotVersion -> String
+currentVersionMsg ver = mconcat [
+      "The current version of the library is "
+    , prettySnapshotVersion ver
+    , "."
+    ]
+
+currentlySupportedMsg :: String
+currentlySupportedMsg = mconcat [
+      "This version of the library supports: "
+    , intercalate ", " (map prettySnapshotVersion allCompatibleSnapshotVersions)
+    , "."
+    ]
+
 
 {-------------------------------------------------------------------------------
   Writing and reading files
@@ -138,6 +204,11 @@ encodeSnapshotMetaData = toLazyByteString . encode . Versioned
   #-}
 -- | Read from 'SnapshotMetaDataFile' and attempt to decode it to
 -- 'SnapshotMetaData'.
+--
+-- Throws a 'SnapshotVersionUnknownError' if the snapshot metadata declares a
+-- snapshot format version that this version of the library does not know, or
+-- a 'SnapshotVersionIncompatibleError' if the version is known but no longer
+-- supported.
 readFileSnapshotMetaData ::
      (MonadThrow m)
   => HasFS m h
@@ -156,10 +227,24 @@ readFileSnapshotMetaData hfs contentPath checksumPath = do
 
     expectChecksum hfs contentPath expectedChecksum actualChecksum
 
-    expectValidFile hfs contentPath FormatSnapshotMetaData (decodeSnapshotMetaData lbs)
+    expectValidFile hfs contentPath FormatSnapshotMetaData =<< decodeSnapshotMetaData lbs
 
-decodeSnapshotMetaData :: ByteString -> Either String SnapshotMetaData
-decodeSnapshotMetaData lbs = bimap displayException (getVersioned . snd) (deserialiseFromBytes decode lbs)
+{-# SPECIALISE
+  decodeSnapshotMetaData ::
+       ByteString
+    -> IO (Either String SnapshotMetaData)
+  #-}
+decodeSnapshotMetaData ::
+     MonadThrow m
+  => ByteString
+  -> m (Either String SnapshotMetaData)
+decodeSnapshotMetaData lbs = case deserialiseFromBytes decode lbs of
+    Left desFail -> pure $ Left $ displayException desFail
+    Right (leftover, result) -> case result of
+      Left exc -> throwDecodeError exc
+      Right metadata
+        | LBS.null leftover -> pure $ Right $ getVersioned metadata
+        | otherwise -> pure $ Left $ printf "Found %d leftover bytes" (LBS.length leftover)
 
 {-------------------------------------------------------------------------------
   Encoding and decoding
@@ -173,7 +258,7 @@ class Encode a where
 -- Used only for 'SnapshotVersion' and 'Versioned', which live outside the
 -- 'SnapshotMetaData' type hierarchy.
 class Decode a where
-  decode :: Decoder s a
+  decode :: Decoder s (Either DecodeError a)
 
 -- | Decoder parameterised by a 'SnapshotVersion'.
 --
@@ -190,22 +275,38 @@ instance Encode a => Encode (Versioned a) where
     <> encode currentSnapshotVersion
     <> encode x
 
--- | Decodes a 'SnapshotVersion' first, and then passes that into the versioned
--- decoder for @a@.
+-- | Decodes the version header, checks it for compatibility, and then passes
+-- the version into the versioned decoder for @a@.
 instance DecodeVersioned a => Decode (Versioned a) where
   decode = do
-      _ <- decodeListLenOf 2
-      version <- decode
-      case isCompatible version of
-        Right () -> pure ()
-        Left errMsg ->
-          fail $
-            printf "Incompatible snapshot format version found. Version %s \
-                   \is not backwards compatible with version %s : %s"
-                   (prettySnapshotVersion currentSnapshotVersion)
-                   (prettySnapshotVersion version)
-                   errMsg
-      Versioned <$> decodeVersioned version
+    _ <- decodeListLenOf 2
+    versionEither <- decode
+    case versionEither of
+      Left err ->
+        pure $ Left err
+      Right version ->
+        case isCompatible version of
+          Right () ->
+            Right  . Versioned <$> decodeVersioned version
+          Left incompatibleErr ->
+            pure $ Left $ SnapshotVersionIncompatibleError incompatibleErr
+
+data DecodeError =
+    SnapshotVersionUnknownError SnapshotVersionUnknownError
+  | SnapshotVersionIncompatibleError SnapshotVersionIncompatibleError
+  deriving stock (Show, Eq)
+
+{-# SPECIALISE
+  throwDecodeError ::
+       DecodeError -> IO ()
+  #-}
+throwDecodeError ::
+     MonadThrow m
+  => DecodeError
+  -> m a
+throwDecodeError = \case
+    SnapshotVersionUnknownError e -> throwIO e
+    SnapshotVersionIncompatibleError e -> throwIO e
 
 {-------------------------------------------------------------------------------
   Encoding and decoding: Versioning
@@ -223,11 +324,11 @@ instance Decode SnapshotVersion where
   decode = do
       _ <- decodeListLenOf 1
       ver <- decodeWord
-      case ver of
-        0 -> pure V0
-        1 -> pure V1
-        2 -> pure V2
-        _ -> fail ("Unknown snapshot format version number: " <>  show ver)
+      pure $ case ver of
+        0 -> Right V0
+        1 -> Right V1
+        2 -> Right V2
+        w -> Left (SnapshotVersionUnknownError $ ErrSnapshotVersionUnknown w currentSnapshotVersion)
 
 {-------------------------------------------------------------------------------
   Encoding and decoding: SnapshotMetaData
