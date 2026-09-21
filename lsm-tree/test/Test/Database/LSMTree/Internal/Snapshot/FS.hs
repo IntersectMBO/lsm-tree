@@ -238,10 +238,10 @@ prop_flipSnapshotBit (Positive (Small bufferSize)) es pickFileBit =
 -- | Reading snapshot metadata that declares an unknown (future) snapshot
 -- format version fails with a 'SnapshotVersionUnknownError', not with a
 -- generic 'FileCorruptedError'.
-prop_versionUnknown :: NonNegative Int -> Property
+prop_versionUnknown :: NonNegative Word -> Property
 prop_versionUnknown (NonNegative n) =
     ioProperty $
-    withTempIOHasFS "temp" $ \hfs -> do
+    withTempIOHasFS "prop_versionUnknown" $ \hfs -> do
       -- Write a metadata file that declares a future format version. The
       -- payload does not matter: the version is checked before the payload is
       -- decoded.
@@ -265,6 +265,6 @@ prop_versionUnknown (NonNegative n) =
         Right _ ->
           counterexample "expected SnapshotVersionUnknownError" False
   where
-    versionNum   = 3 + fromIntegral n
+    versionNum   = 3 + n
     contentPath  = mkFsPath ["content"]
     checksumPath = mkFsPath ["checksum"]

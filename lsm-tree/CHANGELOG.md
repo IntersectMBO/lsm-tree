@@ -24,6 +24,8 @@
   See [issue #862](https://github.com/IntersectMBO/lsm-tree/issues/862),
   [issue #864](https://github.com/IntersectMBO/lsm-tree/issues/864) and [PR
   #875](https://github.com/IntersectMBO/lsm-tree/pull/875).
+* Decoding of snapshot metadata now fails if there are trailing bytes in the
+  file. See [PR #875](https://github.com/IntersectMBO/lsm-tree/pull/875).
 
 ### New features
 
