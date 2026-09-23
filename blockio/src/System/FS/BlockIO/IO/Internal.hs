@@ -38,6 +38,7 @@ import           System.IO.Error (ioeSetErrorString, mkIOError)
 --  * MacOS: Ignore the parameters
 --  * Windows: Ignore the parameters
 --  * FreeBSD: Ignore the parameters
+--  * Other POSIX systems: Ignore the parameters
 --
 --  For more information about what these parameters mean and how to configure
 --  them, see the @blockio-uring@ package.

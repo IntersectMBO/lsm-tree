@@ -71,6 +71,15 @@ flag serialblockio
   default:     False
   manual:      True
 
+flag posixblockio
+  description:
+    Use the portable POSIX HasBlockIO implementation regardless of the
+    operating system. Intended for testing that implementation on platforms
+    that have a dedicated one. Not supported on Windows.
+
+  default:     False
+  manual:      True
+
 library
   import:          language, warnings
   hs-source-dirs:  src
@@ -92,7 +101,15 @@ library
     , primitive   ^>=0.9
     , vector      ^>=0.13
 
-  if os(linux)
+  if (flag(posixblockio) || !(((os(linux) || os(osx)) || os(windows)) || os(freebsd)))
+    -- The portable fallback: forced by the flag, or the platform has no dedicated implementation
+    hs-source-dirs: src-unix
+    build-depends:  unix ^>=2.8.7
+    other-modules:
+      System.FS.BlockIO.Internal
+      System.FS.BlockIO.Internal.Fcntl
+
+  elif os(linux)
     hs-source-dirs: src-linux
     build-depends:  unix ^>=2.8.4
     other-modules:
@@ -121,9 +138,6 @@ library
     other-modules:
       System.FS.BlockIO.Internal
       System.FS.BlockIO.Internal.Fcntl
-
-  else
-    buildable: False
 
   if flag(serialblockio)
     cpp-options: -DSERIALBLOCKIO
