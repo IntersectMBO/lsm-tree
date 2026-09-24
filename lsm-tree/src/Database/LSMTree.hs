@@ -117,15 +117,15 @@ module Database.LSMTree (
 
   -- * Table Configuration #table_configuration#
   TableConfig,
-  defaultTableConfig,
   confMergePolicy,
-  confMergeSchedule,
   confSizeRatio,
   confWriteBufferAlloc,
   confBloomFilterAlloc,
   confFencePointerIndex,
   confDiskCachePolicy,
+  confMergeSchedule,
   confMergeBatchSize,
+  defaultTableConfig,
   MergePolicy (LazyLevelling),
   MergeSchedule (..),
   SizeRatio (Four),

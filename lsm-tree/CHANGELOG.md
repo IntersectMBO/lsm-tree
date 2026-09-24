@@ -26,6 +26,11 @@
   #875](https://github.com/IntersectMBO/lsm-tree/pull/875).
 * Decoding of snapshot metadata now fails if there are trailing bytes in the
   file. See [PR #875](https://github.com/IntersectMBO/lsm-tree/pull/875).
+* The record fields of `TableConfig` are now exported from `Database.LSMTree`
+  and `Database.LSMTree.Simple` as separate entities, instead of as part of
+  the `TableConfig` export item, so that they show up in the haddocks. See
+  [issue #795](https://github.com/IntersectMBO/lsm-tree/issues/795) and [PR
+  #885](https://github.com/IntersectMBO/lsm-tree/pull/885).
 
 ### New features
 
@@ -49,10 +54,6 @@
 
 * Revert the deprecation of `withOpenSessionIO`, since the other changes in this
   version have made it safe to use with `importSnapshot` and `exportSnapshot`.
-* The record fields of `TableConfig` are now rendered in the haddocks, with
-  their types and documentation. See [issue
-  #795](https://github.com/IntersectMBO/lsm-tree/issues/795) and [PR
-  #885](https://github.com/IntersectMBO/lsm-tree/pull/885).
 
 ### Bug fixes
 

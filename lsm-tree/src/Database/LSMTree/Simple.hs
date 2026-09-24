@@ -98,12 +98,12 @@ module Database.LSMTree.Simple (
     -- * Table Configuration #table_configuration#
     TableConfig,
     confMergePolicy,
-    confMergeSchedule,
     confSizeRatio,
     confWriteBufferAlloc,
     confBloomFilterAlloc,
     confFencePointerIndex,
     confDiskCachePolicy,
+    confMergeSchedule,
     MergePolicy (LazyLevelling),
     SizeRatio (Four),
     WriteBufferAlloc (AllocNumEntries),
