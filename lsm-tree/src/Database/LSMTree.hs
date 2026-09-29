@@ -116,16 +116,15 @@ module Database.LSMTree (
   Salt,
 
   -- * Table Configuration #table_configuration#
-  TableConfig (
-    confMergePolicy,
-    confSizeRatio,
-    confWriteBufferAlloc,
-    confBloomFilterAlloc,
-    confFencePointerIndex,
-    confDiskCachePolicy,
-    confMergeSchedule,
-    confMergeBatchSize
-  ),
+  TableConfig,
+  confMergePolicy,
+  confSizeRatio,
+  confWriteBufferAlloc,
+  confBloomFilterAlloc,
+  confFencePointerIndex,
+  confDiskCachePolicy,
+  confMergeSchedule,
+  confMergeBatchSize,
   defaultTableConfig,
   MergePolicy (LazyLevelling),
   MergeSchedule (..),
