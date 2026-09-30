@@ -101,12 +101,11 @@ library
     , primitive   ^>=0.9
     , vector      ^>=0.13
 
-  if ((flag(unixlikeblockio) && !os(windows)) || !(os(linux) || os(osx) || os(windows) || os(freebsd)))
+  if ((flag(unixlikeblockio) && !os(windows)) || !(((os(linux) || os(osx)) || os(windows)) || os(freebsd)))
     -- The portable fallback: forced by the flag, or the platform has no dedicated implementation
     hs-source-dirs: src-unix
     build-depends:  unix ^>=2.8.7
-    other-modules:
-      System.FS.BlockIO.Internal
+    other-modules:  System.FS.BlockIO.Internal
 
   elif os(linux)
     hs-source-dirs: src-linux
