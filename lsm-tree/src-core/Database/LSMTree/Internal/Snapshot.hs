@@ -49,7 +49,7 @@ import           Data.Text (Text)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.CRC32C (checkCRC, expectValidFile)
+import           Database.LSMTree.Internal.CRC32C (checkCRC)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import qualified Database.LSMTree.Internal.FS as FS
 import           Database.LSMTree.Internal.IncomingRun
@@ -238,7 +238,6 @@ instance NFData r => NFData (SnapPreExistingRun r) where
   -> Bloom.Salt
   -> UniqCounter IO
   -> ResolveSerialisedValue
-  -> FS.FsPath
   -> ActiveDir
   -> ActionRegistry IO
   -> SnapMergingTree (Ref (Run IO h))
@@ -255,12 +254,11 @@ fromSnapMergingTree ::
   -> Bloom.Salt
   -> UniqCounter m
   -> ResolveSerialisedValue
-  -> FS.FsPath -- ^ Path to source file for error reporting
   -> ActiveDir
   -> ActionRegistry m
   -> SnapMergingTree (Ref (Run m h))
   -> m (Ref (MT.MergingTree m h))
-fromSnapMergingTree hfs hbio refCtx salt uc resolve contentPath dir =
+fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
     go
   where
     -- Reference strategy:
@@ -287,12 +285,12 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve contentPath dir =
                 releaseRef
       traverse_ (delayedCommit reg . releasePER) prs'
       traverse_ (delayedCommit reg . releaseRef) mmt'
-      expectValidFile hfs contentPath CRC.FormatSnapshotMetaData $
-        case mt of
-          Nothing ->
-            Left "structurally empty pending level merge in snapshot"
-          Just mt' ->
-            Right mt'
+      case mt of
+        Nothing ->
+          -- TODO: fail properly, or enforce invariant in SnapPendingLevelMerge
+          error "structurally empty pending level merge in snapshot"
+        Just mt' ->
+          pure mt'
 
     go reg (SnapMergingTree (SnapPendingTreeMerge
                               (SnapPendingUnionMerge mts))) = do
@@ -301,13 +299,12 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve contentPath dir =
                 (MT.newPendingUnionMerge refCtx mts')
                 releaseRef
       traverse_ (delayedCommit reg . releaseRef) mts'
-      expectValidFile hfs contentPath CRC.FormatSnapshotMetaData $
-        case mt of
-          Nothing ->
-            -- TODO: fail properly, or enforce invariant in SnapPendingUnionMerge
-            Left "structurally empty pending union merge in snapshot"
-          Just mt' ->
-            Right mt'
+      case mt of
+        Nothing ->
+          -- TODO: fail properly, or enforce invariant in SnapPendingUnionMerge
+          error "structurally empty pending union merge in snapshot"
+        Just mt' ->
+          pure mt'
 
     go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
       mr <- withRollback reg
