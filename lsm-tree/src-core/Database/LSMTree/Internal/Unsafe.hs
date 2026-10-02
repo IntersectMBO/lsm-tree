@@ -1192,12 +1192,10 @@ lookups resolve ks t = do
       RW.withReadAccess (tableContent tEnv) $ \tc -> do
         case tableUnionLevel tc of
           NoUnion -> lookupsRegular tEnv tc
-          Union tree unionCache -> do
-            isStructurallyEmpty tree >>= \case
-              True  -> lookupsRegular tEnv tc
-              False -> if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
-                         then lookupsUnion tEnv unionCache
-                         else lookupsRegularAndUnion tEnv tc unionCache
+          Union _tree unionCache -> do
+            if WB.null (tableWriteBuffer tc) && V.null (tableLevels tc)
+              then lookupsUnion tEnv unionCache
+              else lookupsRegularAndUnion tEnv tc unionCache
   where
     lookupsRegular tEnv tc = do
         let !cache = tableCache tc
@@ -1819,14 +1817,10 @@ openTableFromSnapshot policyOveride sesh snap label resolve = do
               Nothing -> pure NoUnion
               Just mTree -> do
                 snapTree <- traverse (openRun hfs hbio (sessionRefCtx seshEnv) uc reg snapDir activeDir salt) mTree
-                mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve activeDir reg snapTree
-                isStructurallyEmpty mt >>= \case
-                  True ->
-                    pure NoUnion
-                  False -> do
-                    traverse_ (delayedCommit reg . releaseRef) snapTree
-                    cache <- mkUnionCache reg mt
-                    pure (Union mt cache)
+                mt <- fromSnapMergingTree hfs hbio (sessionRefCtx seshEnv) salt uc resolve contentPath activeDir reg snapTree
+                traverse_ (delayedCommit reg . releaseRef) snapTree
+                cache <- mkUnionCache reg mt
+                pure (Union mt cache)
 
         -- Convert from the snapshot format, restoring merge progress in the process
         tableLevels <- fromSnapLevels hfs hbio (sessionRefCtx seshEnv) salt uc conf resolve reg activeDir snapLevels'
@@ -2182,31 +2176,36 @@ unionsInOpenSession ::
   -> NonEmpty (Table m h)
   -> m (Table m h)
 unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
-    mts <- forM (NE.toList ts) $ \t ->
-      withKeepTableOpen t $ \tEnv ->
-        RW.withReadAccess (tableContent tEnv) $ \tc ->
-          -- tableContentToMergingTree duplicates all runs and merges
-          -- so the ones from the tableContent here do not escape
-          -- the read access.
-          withRollback reg
-            (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
-            releaseRef
-    mt <- withRollback reg (newPendingUnionMerge (sessionRefCtx seshEnv) mts) releaseRef
+    mts <-
+      fmap catMaybes $
+        forM (NE.toList ts) $ \t ->
+          withKeepTableOpen t $ \tEnv ->
+            RW.withReadAccess (tableContent tEnv) $ \tc ->
+              -- tableContentToMergingTree duplicates all runs and merges
+              -- so the ones from the tableContent here do not escape
+              -- the read access.
+              withRollbackMaybe reg
+                (tableContentToMergingTree (sessionUniqCounter sesh) seshEnv conf tc)
+                releaseRef
 
     -- The mts here is a temporary value, since newPendingUnionMerge
     -- will make its own references, so release mts at the end of
     -- the action registry bracket
     forM_ mts (delayedCommit reg . releaseRef)
 
-    content <- MT.isStructurallyEmpty mt >>= \case
-      True -> do
+    mt <-
+      withRollbackMaybe reg
+        (newPendingUnionMerge (sessionRefCtx seshEnv) mts)
+        releaseRef
+
+    content <- case mt of
+      Nothing -> do
         -- no need to have an empty merging tree
-        delayedCommit reg (releaseRef mt)
         newEmptyTableContent ((sessionUniqCounter sesh)) seshEnv reg
-      False -> do
+      Just mt' -> do
         empty <- newEmptyTableContent (sessionUniqCounter sesh) seshEnv reg
-        cache <- mkUnionCache reg mt
-        pure empty { tableUnionLevel = Union mt cache }
+        cache <- mkUnionCache reg mt'
+        pure empty { tableUnionLevel = Union mt' cache }
 
     -- Pick the arena manager to optimise the case of:
     -- someUpdates <> bigTableWithLotsOfLookups
@@ -2220,7 +2219,7 @@ unionsInOpenSession reg sesh seshEnv conf tr !tableId ts = do
   -> SessionEnv IO h
   -> TableConfig
   -> TableContent IO h
-  -> IO (Ref (MergingTree IO h)) #-}
+  -> IO (Maybe (Ref (MergingTree IO h))) #-}
 tableContentToMergingTree ::
      forall m h.
      (MonadMask m, MonadMVar m, MonadST m, MonadSTM m)
@@ -2228,7 +2227,7 @@ tableContentToMergingTree ::
   -> SessionEnv m h
   -> TableConfig
   -> TableContent m h
-  -> m (Ref (MergingTree m h))
+  -> m (Maybe (Ref (MergingTree m h)))
 tableContentToMergingTree uc seshEnv conf
                           tc@TableContent {
                             tableLevels,
@@ -2409,12 +2408,7 @@ supplyUnionCredits resolve t credits = do
           case tableUnionLevel tc' of
             NoUnion -> pure tc'
             Union mt cache -> do
-              unionLevel' <- MT.isStructurallyEmpty mt >>= \case
-                True  ->
-                  pure NoUnion
-                False -> do
-                  cache' <- mkUnionCache reg mt
-                  releaseUnionCache reg cache
-                  pure (Union mt cache')
-              pure tc' { tableUnionLevel = unionLevel' }
+              cache' <- mkUnionCache reg mt
+              releaseUnionCache reg cache
+              pure tc' { tableUnionLevel = Union mt cache' }
       pure leftovers
