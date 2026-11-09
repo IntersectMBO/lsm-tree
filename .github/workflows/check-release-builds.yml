@@ -60,7 +60,7 @@ jobs:
     - name: 📥 Checkout repository
       uses: actions/checkout@v7
 
-    - uses: ./.github/actions/fast-apt-mirror
+    - uses: ./.github/actions/remove-azure-apt-mirrors
 
     - name: 🗄️ Print Job info
       run: |

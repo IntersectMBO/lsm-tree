@@ -159,7 +159,13 @@ separately, publishing a package before publising its dependent packages.
 * Publish:
   * Run `cabal sdist foo` where `foo` is the package name.
   * [Upload](https://hackage.haskell.org/upload) the resulting archive to
-  `Hackage`. It might be useful to first upload a [package
-  *candidate*](https://hackage.haskell.org/upload#candidates) before publishing
-  the package once and for all.
-  * Manually upload Haddock documentation for the package if necessary.
+    `Hackage`. It might be useful to first upload a [package
+    *candidate*](https://hackage.haskell.org/upload#candidates) before
+    publishing the package once and for all.
+  * Manually upload Haddock documentation for the package if necessary. We
+    should use the [upload-hackage-docs.sh][scripts:hackage-docs] script to
+    build and upload documentation. This script works around [issue
+    #795][is-795].
+
+[is-795]: https://github.com/IntersectMBO/lsm-tree/issues/795
+[scripts:hackage-docs]: ./scripts/upload-hackage-docs.sh
