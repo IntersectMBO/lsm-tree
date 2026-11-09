@@ -25,6 +25,10 @@ env:
   LINT_CABAL_VERSION: "3.12"
   LINT_CABAL_PROJECT_FILE: "cabal.project.debug"
 
+  # TODO <https://github.com/IntersectMBO/lsm-tree/issues/895>: use
+  # ubuntu-latest (i.e., ubuntu-26.04).
+  BUILD_UBUNTU_VERSION: "ubuntu-24.04"
+
 jobs:
   ################################################################################
   # Setup matrix
@@ -50,9 +54,9 @@ jobs:
       run: |
         { echo 'MATRIX_COMBINATIONS<<EOF'
           # Default CI: PR
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
           echo EOF
         } >> "$GITHUB_ENV"
 
@@ -61,34 +65,34 @@ jobs:
       run: |
         { echo 'MATRIX_COMBINATIONS<<EOF'
           # Default CI: PR
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
           # Comprehensive CI: MQ, push to main
           ## Test every GHC version on Ubuntu
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.2",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.4",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.8",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.10", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.12", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "ubuntu-latest",  "ghc-version": "9.14", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.2",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.4",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.8",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.10", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.12", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "${{ env.BUILD_UBUNTU_VERSION }}",  "ghc-version": "9.14", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
           ## Test every GHC version on MacOS
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.2",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.4",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.8",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.10", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.12", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "macos-latest",   "ghc-version": "9.14", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.2",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.4",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.8",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.10", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.12", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "macos-latest",                     "ghc-version": "9.14", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
           ## Test every GHC version on Windows
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.2",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.4",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.8",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.10", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.12", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "", "os": "windows-latest", "ghc-version": "9.14", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.2",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.4",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.8",  "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.10", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.12", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "", "os": "windows-latest",                   "ghc-version": "9.14", "cabal-version": "3.12", "cabal-flags": "", "cabal-project-file": "cabal.project.debug"},'
           ## Various special cases
-          echo '{"name" : "Build with +serialblockio"       , "os": "ubuntu-latest", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "+serialblockio", "cabal-project-file": "cabal.project.debug"},'
-          echo '{"name" : "Build with cabal.project.release", "os": "ubuntu-latest", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "",               "cabal-project-file": "cabal.project.release"},'
+          echo '{"name" : "Build with +serialblockio"       , "os": "${{ env.BUILD_UBUNTU_VERSION }}", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "+serialblockio", "cabal-project-file": "cabal.project.debug"},'
+          echo '{"name" : "Build with cabal.project.release", "os": "${{ env.BUILD_UBUNTU_VERSION }}", "ghc-version": "9.6", "cabal-version": "3.12", "cabal-flags": "",               "cabal-project-file": "cabal.project.release"},'
           echo EOF
         } >> "$GITHUB_ENV"
 
