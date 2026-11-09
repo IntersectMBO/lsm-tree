@@ -14,6 +14,5 @@ benchmarks: True
 if impl (ghc >= 9.14)
   allow-newer:
       cborg:base
-    , data-elevator:base
     , safe-wild-cards:template-haskell
     , serialise:base
