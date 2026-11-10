@@ -49,7 +49,7 @@
 
 * Revert the deprecation of `withOpenSessionIO`, since the other changes in this
   version have made it safe to use with `importSnapshot` and `exportSnapshot`.
-
+* Support `io-classes ^>=1.11`. See [PR #892](https://github.com/IntersectMBO/lsm-tree/pull/892)
 ### Bug fixes
 
 * If a `SnapshotExportDirExistsError` is thrown, this now contains the
