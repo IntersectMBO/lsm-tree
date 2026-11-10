@@ -1927,6 +1927,20 @@ data SnapshotMode m h
     -- | The 'HasFS' instance used for copying.
     !(HasFS m h)
 
+-- | The /other/ FS that we import snapshots from or export snapshots to.
+data OtherFS m = forall h. OtherFS (HasFS m h)
+
+-- | In case we hardlink, the /other/ FS is just the session file FS. In case we
+-- copy, the other /FS/ is provided by the snapshot mode.
+otherFS :: HasFS m h -> SnapshotMode m h' -> OtherFS m
+otherFS hfs = \case
+    HardLink{} -> OtherFS hfs
+    Copy hfs'  -> OtherFS hfs'
+
+-- | Apply an action on an 'OtherFS'
+onOtherFS :: OtherFS m -> (forall h. HasFS m h -> a) -> a
+onOtherFS (OtherFS hfs) k = k hfs
+
 {- |
 Internal helper.
 
@@ -1941,21 +1955,6 @@ snapshotFsErrorPath hfs mode fsPath =
   case mode of
     HardLink {} -> FS.mkFsErrorPath hfs fsPath
     Copy hfs'   -> FS.mkFsErrorPath hfs' fsPath
-
-{- |
-Internal helper.
-
-Convert a 'SnapshotMode' to the internal 'FS.Mode'.
--}
-fsMode ::
-     HasBlockIO m h
-  -> SnapshotMode m h'
-  -> FS.Mode m h
-fsMode hbio = \case
-  HardLink fallback ->
-    FS.HardLink fallback hbio
-  Copy hfs ->
-    FS.Copy hfs
 
 -- | A snapshot was intended to be imported, but the source directory does not
 -- exist.
@@ -1972,8 +1971,7 @@ newtype SnapshotImportDirDoesNotExistError
   -> IO () #-}
 -- |  See 'Database.LSMTree.importSnapshot'.
 importSnapshot ::
-  forall m h h'.
-     (MonadMask m, MonadSTM m, PrimMonad m)
+     forall m h h'. (MonadMask m, MonadSTM m, PrimMonad m)
   => Session m h
   -> SnapshotName
   -> SnapshotMode m h'
@@ -1983,8 +1981,9 @@ importSnapshot sesh snap mode sourcePath = do
     traceWith sesh.sessionTracer $ TraceImportSnapshot snap sourcePath
     withKeepSessionOpen sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
-        let hfs = seshEnv.sessionHasFS
-            hbio = seshEnv.sessionHasBlockIO
+        let destinationFS = seshEnv.sessionHasFS
+            destinationHBIO = seshEnv.sessionHasBlockIO
+            sourceFS = otherFS destinationFS mode
 
         -- Guard that the snapshot does not exist already
         let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
@@ -1993,20 +1992,43 @@ importSnapshot sesh snap mode sourcePath = do
 
         let destinationPath = Paths.getNamedSnapshotDir snapDir
 
-        sourceExists <- FS.doesDirectoryExist hfs sourcePath
-        unless sourceExists $ throwIO $ ErrSnapshotImportDirDoesNotExist $ snapshotFsErrorPath hfs mode sourcePath
+        onOtherFS sourceFS $ \sourceFS' -> do
+          sourceExists <- FS.doesDirectoryExist sourceFS' sourcePath
+          unless sourceExists $ throwIO $ ErrSnapshotImportDirDoesNotExist $ snapshotFsErrorPath sourceFS' mode sourcePath
 
         -- we assume the snapshots directory already exists, so we just have
         -- to create the directory for this specific snapshot.
         withRollback_ reg
-          (FS.createDirectory hfs destinationPath)
-          (FS.removeDirectoryRecursive hfs destinationPath)
+          (FS.createDirectory destinationFS destinationPath)
+          (FS.removeDirectoryRecursive destinationFS destinationPath)
 
-        -- import the files for the snapshot, either by hard linking or copying
-        FS.hardLinkOrCopyDirectoryRecursive hfs (fsMode hbio mode) reg sourcePath destinationPath
+         -- import the files for the snapshot, either by hard linking or copying
+        case mode of
+          HardLink True ->
+            FS.hardLinkOrCopyDirectoryRec
+              reg
+              destinationFS
+              destinationHBIO
+              sourcePath
+              destinationPath
+          HardLink False ->
+            FS.hardLinkDirectoryRec
+              reg
+              destinationFS
+              destinationHBIO
+              sourcePath
+              destinationPath
+          Copy _ ->
+            onOtherFS sourceFS $ \sourceFS' ->
+            FS.copyDirectoryRec
+              reg
+              sourceFS'
+              sourcePath
+              destinationFS
+              destinationPath
 
         -- Make the destination directory and its contents durable
-        FS.synchroniseDirectoryRecursive hfs hbio destinationPath
+        FS.synchroniseDirectoryRecursive destinationFS destinationHBIO destinationPath
 
         -- Note: trace the success message only after all side effects have been
         -- succesfully performed
@@ -2023,12 +2045,12 @@ newtype SnapshotExportDirExistsError
 {-# SPECIALISE exportSnapshot ::
      Session IO h
   -> SnapshotName
-  -> SnapshotMode IO h'
+  -> SnapshotMode IO h
   -> FsPath
   -> IO () #-}
 -- |  See 'Database.LSMTree.exportSnapshot'.
 exportSnapshot ::
-     (MonadMask m, MonadSTM m, PrimMonad m)
+     forall m h h'. (MonadMask m, MonadSTM m, PrimMonad m)
   => Session m h
   -> SnapshotName
   -> SnapshotMode m h'
@@ -2038,8 +2060,9 @@ exportSnapshot sesh snap mode destinationPath = do
     traceWith (sessionTracer sesh) $ TraceExportSnapshot snap destinationPath
     withKeepSessionOpen sesh $ \seshEnv ->
       withActionRegistry $ \reg -> do
-        let hfs = seshEnv.sessionHasFS
-            hbio = seshEnv.sessionHasBlockIO
+        let sourceFS = seshEnv.sessionHasFS
+            sourceHBIO = seshEnv.sessionHasBlockIO
+            destinationFS = otherFS sourceFS mode
 
         -- Guard that the snapshot exists already
         let snapDir = Paths.namedSnapshotDir (sessionRoot seshEnv) snap
@@ -2048,18 +2071,38 @@ exportSnapshot sesh snap mode destinationPath = do
 
         let sourcePath = Paths.getNamedSnapshotDir snapDir
 
-        destinationExists <- FS.doesDirectoryExist hfs destinationPath
-        when destinationExists $ throwIO $ ErrSnapshotExportDirExists $ snapshotFsErrorPath hfs mode destinationPath
+        onOtherFS destinationFS $ \destinationFS' -> do
+          destinationExists <- FS.doesDirectoryExist destinationFS' destinationPath
+          when destinationExists $ throwIO $ ErrSnapshotExportDirExists $ snapshotFsErrorPath destinationFS' mode destinationPath
 
-        withRollback_ reg
-          (FS.createDirectoryIfMissing hfs True destinationPath)
-          (FS.removeDirectoryRecursive hfs destinationPath)
+          withRollback_ reg
+            (FS.createDirectoryIfMissing destinationFS' True destinationPath)
+            (FS.removeDirectoryRecursive destinationFS' destinationPath)
 
         -- export the files for the snapshot, either by hard linking or copying
-        FS.hardLinkOrCopyDirectoryRecursive hfs (fsMode hbio mode) reg sourcePath destinationPath
-
-        -- Make the directory and its contents durable.
-        FS.synchroniseDirectoryRecursive hfs hbio destinationPath
+        case mode of
+          HardLink True ->
+            FS.hardLinkOrCopyDirectoryRec
+              reg
+              sourceFS
+              sourceHBIO
+              sourcePath
+              destinationPath
+          HardLink False ->
+            FS.hardLinkDirectoryRec
+              reg
+              sourceFS
+              sourceHBIO
+              sourcePath
+              destinationPath
+          Copy _ ->
+            onOtherFS destinationFS $ \destinationFS' ->
+            FS.copyDirectoryRec
+              reg
+              sourceFS
+              sourcePath
+              destinationFS'
+              destinationPath
 
         -- Note: trace the success message only after all side effects have been
         -- succesfully performed
