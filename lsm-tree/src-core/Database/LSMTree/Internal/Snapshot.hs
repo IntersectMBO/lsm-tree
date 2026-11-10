@@ -472,13 +472,13 @@ snapshotWriteBuffer hfs hbio activeUc snapUc reg activeDir snapDir wb wbb = do
   -- Hard link the write buffer and write buffer blobs to the snapshot directory.
   snapWriteBufferNumber <- uniqueToRunNumber <$> incrUniqCounter snapUc
   let snapWriteBufferPaths = WriteBufferFsPaths (getNamedSnapshotDir snapDir) snapWriteBufferNumber
-  FS.hardLink hfs hbio reg
+  FS.hardLink reg hfs hbio
     (writeBufferKOpsPath activeWriteBufferPaths)
     (writeBufferKOpsPath snapWriteBufferPaths)
-  FS.hardLink hfs hbio reg
+  FS.hardLink reg hfs hbio
     (writeBufferBlobPath activeWriteBufferPaths)
     (writeBufferBlobPath snapWriteBufferPaths)
-  FS.hardLink hfs hbio reg
+  FS.hardLink reg hfs hbio
     (writeBufferChecksumsPath activeWriteBufferPaths)
     (writeBufferChecksumsPath snapWriteBufferPaths)
   pure snapWriteBufferPaths
@@ -520,7 +520,7 @@ openWriteBuffer reg resolve hfs hbio refCtx uc activeDir snapWriteBufferPaths = 
   activeWriteBufferNumber <- uniqueToInt <$> incrUniqCounter uc
   let activeWriteBufferBlobPath =
         getActiveDir activeDir </> FS.mkFsPath [show activeWriteBufferNumber] <.> "wbblobs"
-  FS.copyFile hfs reg (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
+  FS.copyFile' reg hfs (writeBufferBlobPath snapWriteBufferPaths) activeWriteBufferBlobPath
   writeBufferBlobs <-
     withRollback reg
       (WBB.open hfs refCtx activeWriteBufferBlobPath FS.AllowExisting)
@@ -766,5 +766,5 @@ hardLinkRunFiles ::
 hardLinkRunFiles hfs hbio reg sourceRunFsPaths targetRunFsPaths = do
     let sourcePaths = pathsForRunFiles sourceRunFsPaths
         targetPaths = pathsForRunFiles targetRunFsPaths
-    sequenceA_ (FS.hardLink hfs hbio reg <$> sourcePaths <*> targetPaths)
-    FS.hardLink hfs hbio reg (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
+    sequenceA_ (FS.hardLink reg hfs hbio <$> sourcePaths <*> targetPaths)
+    FS.hardLink reg hfs hbio (runChecksumsPath sourceRunFsPaths) (runChecksumsPath targetRunFsPaths)
