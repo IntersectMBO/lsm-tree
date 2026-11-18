@@ -60,9 +60,9 @@ tests = testGroup "Test.Database.LSMTree.Internal.Snapshot.Codec" [
 
 -- | @decode . encode = id@
 explicitRoundtripCBOR ::
-     (Eq a, Show a)
+     (Eq a, Show a, Eq e, Show e)
   => (a -> Encoding)
-  -> (forall s. Decoder s a)
+  -> (forall s. Decoder s (Either e a))
   -> a
   -> Property
 explicitRoundtripCBOR enc dec x = case back (there x) of
@@ -73,7 +73,7 @@ explicitRoundtripCBOR enc dec x = case back (there x) of
     Right (bs, y) ->
            counterexample
              ("Expected value and roundtripped value do not match")
-             (x === y)
+             (Right x === y)
       .&&. counterexample
              ("Found trailing bytes")
              (property (BSL.null bs))
@@ -87,15 +87,15 @@ roundtripCBOR _ = explicitRoundtripCBOR encode decode
 
 -- | See 'explicitRoundtripCBOR'.
 roundtripCBOR' :: (Encode a, DecodeVersioned a, Eq a, Show a) => Proxy a -> a -> Property
-roundtripCBOR' _ = explicitRoundtripCBOR encode (decodeVersioned currentSnapshotVersion)
+roundtripCBOR' _ = explicitRoundtripCBOR encode (Right @() <$> decodeVersioned currentSnapshotVersion)
 
 -- | @fromFlatTerm . toFlatTerm = id@
 --
 -- This will also check @validFlatTerm@ on the result of @toFlatTerm@.
 explicitRoundtripFlatTerm ::
-     (Eq a, Show a)
+     (Eq a, Show a, Eq e, Show e)
   => (a -> Encoding)
-  -> (forall s. Decoder s a)
+  -> (forall s. Decoder s (Either e a))
   -> a
   -> Property
 explicitRoundtripFlatTerm enc dec x = case back flatTerm of
@@ -106,7 +106,7 @@ explicitRoundtripFlatTerm enc dec x = case back flatTerm of
     Right y ->
            counterexample
              ("Expected value and roundtripped value do not match")
-             (x === y)
+             (Right x === y)
       .&&. counterexample
              ("Invalid flat term")
              (property (validFlatTerm flatTerm))
@@ -130,7 +130,7 @@ roundtripFlatTerm' ::
   => Proxy a
   -> a
   -> Property
-roundtripFlatTerm' _ = explicitRoundtripFlatTerm encode (decodeVersioned currentSnapshotVersion)
+roundtripFlatTerm' _ = explicitRoundtripFlatTerm encode (Right @() <$> decodeVersioned currentSnapshotVersion)
 
 {-------------------------------------------------------------------------------
   Test and property runners

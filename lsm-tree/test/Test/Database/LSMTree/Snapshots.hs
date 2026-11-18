@@ -17,10 +17,12 @@ import           Database.LSMTree (ResolveValue, Salt, SerialiseKey,
 
 import           Database.LSMTree.Extras (showRangesOf)
 import qualified System.FS.API as FS
+import qualified System.FS.IO as IO
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck (Arbitrary, Property, Small (Small),
-                     checkCoverage, ioProperty, tabulate, testProperty, (===))
-import           Test.Util.FS (withTempIOHasBlockIO)
+import           Test.Tasty.QuickCheck (Arbitrary (..), Property, Small (Small),
+                     arbitraryBoundedEnum, checkCoverage, ioProperty,
+                     shrinkBoundedEnum, tabulate, testProperty, (===))
+import           Test.Util.FS (withTempIOHasBlockIO, withTempIOHasFS)
 
 tests :: TestTree
 tests = testGroup "Test.Database.LSMTree.Snapshots" [
@@ -42,6 +44,16 @@ newtype Value = Value Word64
   deriving ResolveValue via Sum Word64
   deriving Arbitrary via Small Word64
 
+data TestSnapshotMode =
+    TestHardLink
+  | TestCopySameFS
+  | TestCopyOtherFS
+  deriving stock (Show, Eq, Enum, Bounded)
+
+instance Arbitrary TestSnapshotMode where
+  arbitrary = arbitraryBoundedEnum
+  shrink = shrinkBoundedEnum
+
 -- | Tables opened from imported snapshots behave the same as the original table
 -- that the snapshot was created for.
 --
@@ -54,9 +66,9 @@ newtype Value = Value Word64
 prop_exportImportSnapshot ::
      V.Vector (Key, Value)
   -> V.Vector Key
-  -> Bool -- ^ Should hard link?
+  -> TestSnapshotMode
   -> Property
-prop_exportImportSnapshot ins los shouldHardLink =
+prop_exportImportSnapshot ins los testMode =
     checkCoverage $
     ioProperty $
     withTempIOHasBlockIO "prop_exportImportSnapshot" $ \hfs hbio -> do
@@ -69,25 +81,25 @@ prop_exportImportSnapshot ins los shouldHardLink =
           saveSnapshot "snap1" "KeyValueBlob" table1
 
           -- Export then re-import the snapshot
-          let mode = if shouldHardLink then HardLink False else Copy hfs
-          exportSnapshot session "snap1" mode exportDir
-          importSnapshot session "snap2" mode exportDir
+          withTestMode hfs $ \mode -> do
+            exportSnapshot session "snap1" mode exportDir
+            importSnapshot session "snap2" mode exportDir
 
-          -- Open a table from the re-imported snapshot. Any corruption of the
-          -- snapshot would be identified here.
-          withTableFromSnapshot session "snap2" "KeyValueBlob" $ \(table2 :: Table IO Key Value Void) -> do
+            -- Open a table from the re-imported snapshot. Any corruption of the
+            -- snapshot would be identified here.
+            withTableFromSnapshot session "snap2" "KeyValueBlob" $ \(table2 :: Table IO Key Value Void) -> do
 
-            -- Check that lookups on both the original and re-imported table
-            -- match
-            lrs1 <- V.map getValue <$> lookups table1 los
-            lrs2 <- V.map getValue <$> lookups table2 los
+              -- Check that lookups on both the original and re-imported table
+              -- match
+              lrs1 <- V.map getValue <$> lookups table1 los
+              lrs2 <- V.map getValue <$> lookups table2 los
 
-            pure $
-              tabulate "# of physical table entries" [ showRangesOf 5 $ V.length ins ] $
-              tabulate "# of lookups"                [ showRangesOf 5 $ V.length los ] $
-              tabulate "# of successful lookups"     [ showRangesOf 5 $ V.length $ V.catMaybes lrs1 ] $
-              tabulate "# of unsuccessful lookups"   [ showRangesOf 5 $ V.length $ V.filter (==Nothing) lrs1 ] $
-              lrs1 === lrs2
+              pure $
+                tabulate "# of physical table entries" [ showRangesOf 5 $ V.length ins ] $
+                tabulate "# of lookups"                [ showRangesOf 5 $ V.length los ] $
+                tabulate "# of successful lookups"     [ showRangesOf 5 $ V.length $ V.catMaybes lrs1 ] $
+                tabulate "# of unsuccessful lookups"   [ showRangesOf 5 $ V.length $ V.filter (==Nothing) lrs1 ] $
+                lrs1 === lrs2
   where
     sessionDir = FS.mkFsPath ["session"]
 
@@ -101,3 +113,10 @@ prop_exportImportSnapshot ins los shouldHardLink =
     conf = defaultTableConfig {
         confWriteBufferAlloc = AllocNumEntries 3
       }
+
+    withTestMode :: FS.HasFS IO IO.HandleIO -> (SnapshotMode IO IO.HandleIO -> IO a) -> IO a
+    withTestMode sourceFS k = case testMode of
+        TestHardLink    -> k (HardLink False)
+        TestCopySameFS  -> k (Copy sourceFS)
+        TestCopyOtherFS -> withTempIOHasFS "prop_exportImportSnapshot_otherFS" $ \destinationFS -> do
+                              k (Copy destinationFS)

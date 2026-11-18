@@ -1,12 +1,15 @@
+-- | Common file system operations
 module Database.LSMTree.Internal.FS (
     -- * Hard links
     hardLink
-  , hardLinkDirectoryRecursive
-    -- * Copy file
+  , hardLinkDirectoryRec
+    -- * Copy files and directories
+  , copyFile'
   , copyFile
-    -- * Hard links with fallback
-  , Mode (..)
-  , hardLinkOrCopyDirectoryRecursive
+  , copyDirectoryRec
+  , copyDirectoryRec'
+    -- * Hard links with copy fallback
+  , hardLinkOrCopyDirectoryRec
   ) where
 
 import           Control.ActionRegistry
@@ -15,8 +18,9 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Primitive (PrimMonad)
 
 import           Foreign.C.Error (eXDEV)
+import           GHC.Stack (HasCallStack)
 import qualified System.FS.API as FS
-import           System.FS.API
+import           System.FS.API (FsError, FsPath, HasFS)
 import qualified System.FS.API.Lazy as FSL
 import qualified System.FS.BlockIO.API as FS
 import           System.FS.BlockIO.API (HasBlockIO)
@@ -28,220 +32,247 @@ import           Text.Printf (printf)
 
 {-# SPECIALISE
   hardLink ::
-       HasFS IO h
-    -> HasBlockIO IO h
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
+       HasCallStack
+    => ActionRegistry IO
+    -> HasFS IO h
+    -> HasBlockIO IO h'
+    -> FsPath
+    -> FsPath
     -> IO ()
   #-}
--- | @'hardLink' hfs hbio reg sourcePath destinationPath@ creates a hard link from
--- @sourcePath@ to @destinationPath@.
+-- | Create a hard link for a source file at a destination file /on the same
+-- file system/.
 --
--- Both the source path and destination path should be on the same disk volume.
+-- If the source path and destination path are not on the same disk volume, an
+-- 'FsError' with an @EXDEV@ error number will be thrown.
 hardLink ::
-     (MonadMask m, PrimMonad m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> ActionRegistry m
-  -> FS.FsPath
-  -> FS.FsPath
+     (HasCallStack, MonadMask m, PrimMonad m)
+  => ActionRegistry m
+     -- | The file system
+  -> HasFS m h
+     -- | The file system
+  -> HasBlockIO m h'
+     -- | The path to the source file
+  -> FsPath
+     -- | The path to the destination file
+  -> FsPath
   -> m ()
-hardLink hfs hbio reg sourcePath destinationPath = do
+hardLink reg hfs hbio srcPath dstPath = do
     withRollback_ reg
-      (FS.createHardLink hbio sourcePath destinationPath)
-      (FS.removeFile hfs destinationPath)
+      (FS.createHardLink hbio srcPath dstPath)
+      (FS.removeFile hfs dstPath)
 
 {-# SPECIALISE
-  hardLinkDirectoryRecursive ::
-       HasFS IO h
-    -> HasBlockIO IO h
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
+  hardLinkDirectoryRec ::
+       HasCallStack
+    => ActionRegistry IO
+    -> HasFS IO h
+    -> HasBlockIO IO h'
+    -> FsPath
+    -> FsPath
     -> IO ()
   #-}
--- | Recursively create hard links for all the directory contents of the source
--- path at the destination path.
+-- | Recursively create hard links for a source directory and its contents at a
+-- destination directory /on the same file system/.
 --
--- Both the source path and destination path should be on the same disk volume.
-hardLinkDirectoryRecursive ::
-     (MonadMask m, PrimMonad m)
-  => HasFS m h
-  -> HasBlockIO m h
-  -> ActionRegistry m
-     -- | Source path
-  -> FS.FsPath
-     -- | Destination path
-  -> FS.FsPath
+-- If the source path and destination path (or recursively their directory
+-- contents) are not on the same disk volume, an 'FsError' with an @EXDEV@ error
+-- number will be thrown.
+hardLinkDirectoryRec ::
+     (HasCallStack, MonadMask m, PrimMonad m)
+  => ActionRegistry m
+     -- | The file system
+  -> HasFS m h
+     -- | The file system
+  -> HasBlockIO m h'
+     -- | The path to the source directory
+  -> FsPath
+     -- | The path to the destination directory
+  -> FsPath
   -> m ()
-hardLinkDirectoryRecursive hfs hbio reg sourcePath destinationPath = do
-    entries <- FS.listDirectory hfs sourcePath
+hardLinkDirectoryRec reg hfs hbio srcPath dstPath = do
+    entries <- FS.listDirectory hfs srcPath
     forM_ entries $ \entry -> do
-      let sourcePath' = sourcePath FS.</> FS.mkFsPath [entry]
-          destinationPath' = destinationPath FS.</> FS.mkFsPath [entry]
-      isFile <- FS.doesFileExist hfs sourcePath'
-      if isFile then
-        hardLink hfs hbio reg sourcePath' destinationPath'
+      let srcPath' = srcPath FS.</> FS.mkFsPath [entry]
+          dstPath' = dstPath FS.</> FS.mkFsPath [entry]
+      isFile <- FS.doesFileExist hfs srcPath'
+      if isFile then hardLink reg hfs hbio srcPath' dstPath'
       else do
-        isDirectory <- FS.doesDirectoryExist hfs sourcePath'
-        if isDirectory then do
-          hardLinkDirectoryRecursive hfs hbio reg sourcePath' destinationPath'
-        else
-          error $ printf
-            "hardLinkDirectoryRecursive: %s is not a file or directory"
-            (show sourcePath')
+        isDirectory <- FS.doesDirectoryExist hfs srcPath'
+        if isDirectory then hardLinkDirectoryRec reg hfs hbio srcPath' dstPath'
+        else error $ printf
+                "hardLinkDirectoryRec: %s is not a file or directory"
+                (show srcPath')
 
 {-------------------------------------------------------------------------------
-  Copy file
+  Copy files and directories
 -------------------------------------------------------------------------------}
-
-{-# SPECIALISE
-  copyFile ::
-       HasFS IO h
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
-    -> IO ()
-  #-}
--- | @'copyFile' hfs reg sourcePath destinationPath@ copies the file contents of
--- @sourcePath@ to the @destinationPath@.
-copyFile ::
-     (MonadMask m, PrimMonad m)
-  => HasFS m h
-  -> ActionRegistry m
-  -> FS.FsPath
-  -> FS.FsPath
-  -> m ()
-copyFile hfs = copyFile' hfs hfs
 
 {-# SPECIALISE
   copyFile' ::
-       HasFS IO h
-    -> HasFS IO h'
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
+       HasCallStack
+    => ActionRegistry IO
+    -> HasFS IO h
+    -> FsPath
+    -> FsPath
     -> IO ()
   #-}
--- | @'copyFile' sourceFS destinationFS reg sourcePath destinationPath@ copies the file
---   contents of @sourcePath@ on @sourceFS@ to the @destinationPath@ on @destinationFS@.
+-- | Copy a source file to a destination file /on the same file system/.
 copyFile' ::
-     (MonadMask m, PrimMonad m)
-  => HasFS m h  -- ^ The 'HasFS' instance for the source filesystem
-  -> HasFS m h' -- ^ The 'HasFS' instance for the target filesystem
-  -> ActionRegistry m
+     (HasCallStack, MonadMask m, PrimMonad m)
+  => ActionRegistry m
+     -- | The file system
+  -> HasFS m h
+     -- | The path to the source file
   -> FS.FsPath
+     -- | The path to the destination file
   -> FS.FsPath
   -> m ()
-copyFile' sourceFS destinationFS reg sourcePath destinationPath =
-    flip (withRollback_ reg) (FS.removeFile destinationFS destinationPath) $
-      FS.withFile sourceFS sourcePath FS.ReadMode $ \sourceHandle ->
-        FS.withFile destinationFS destinationPath (FS.WriteMode FS.MustBeNew) $ \destinationHandle -> do
-          bs <- FSL.hGetAll sourceFS sourceHandle
-          void $ FSL.hPutAll destinationFS destinationHandle bs
+copyFile' reg hfs srcPath dstPath = copyFile reg hfs srcPath hfs dstPath
+
+{-# SPECIALISE
+  copyDirectoryRec' ::
+       HasCallStack
+    => ActionRegistry IO
+    -> HasFS IO h
+    -> FsPath
+    -> FsPath
+    -> IO ()
+  #-}
+-- | Recursively copy a source directory and its contents to a destination
+-- directory /on the same file system/.
+copyDirectoryRec' ::
+     (HasCallStack, MonadMask m, PrimMonad m)
+  => ActionRegistry m
+     -- The file system
+  -> HasFS m h
+     -- | The path to the source directory
+  -> FsPath
+     -- | The path to the destination directory
+  -> FsPath
+  -> m ()
+copyDirectoryRec' reg hfs srcPath dstPath = copyDirectoryRec reg hfs srcPath hfs dstPath
+
+{-# SPECIALISE
+  copyFile ::
+       HasCallStack
+    => ActionRegistry IO
+    -> HasFS IO h
+    -> FsPath
+    -> HasFS IO h'
+    -> FsPath
+    -> IO ()
+  #-}
+-- | Copy a source file to a destination file /on potentially different file
+-- systems/.
+copyFile ::
+     (HasCallStack, MonadMask m, PrimMonad m)
+  => ActionRegistry m
+     -- | The source file system
+  -> HasFS m h
+     -- | The path to the source file with respect to the source fileystem
+  -> FsPath
+     -- | The destination file system
+  -> HasFS m h'
+     -- | The path to the destination file with respect to the destination
+     -- fileystem
+  -> FsPath
+  -> m ()
+copyFile reg srcFS srcPath dstFS dstPath =
+    FS.withFile srcFS srcPath FS.ReadMode $ \srcH ->
+    -- We use the action registry to open the destination file and to track that
+    -- we should remove that file even if an exception occurs after we've exited
+    -- copyFile.
+    --
+    -- The outer bracket is used to ensure that we close the file handle after
+    -- we've written to it.
+    bracket (withRollback reg acq rel) (FS.hClose dstFS) $ \dstH -> do
+      bs <- FSL.hGetAll srcFS srcH
+      void $ FSL.hPutAll dstFS dstH bs
+  where
+    acq      = FS.hOpen dstFS dstPath (FS.WriteMode FS.MustBeNew)
+    -- hClose is idempotent, so it does not hurt to try closing before removing
+    -- even if we are pretty sure we'll close the file handle as part of the
+    -- @bracket@ above.
+    rel dstH = FS.hClose dstFS dstH >> FS.removeFile dstFS dstPath
+
+{-# SPECIALISE
+  copyDirectoryRec ::
+       HasCallStack
+    => ActionRegistry IO
+    -> HasFS IO h
+    -> FsPath
+    -> HasFS IO h'
+    -> FsPath
+    -> IO ()
+  #-}
+-- | Recursively copy a source directory and its contents to a destination
+-- directory /on potentially different file systems/
+copyDirectoryRec ::
+     (HasCallStack, MonadMask m, PrimMonad m)
+  => ActionRegistry m
+     -- The source file system
+  -> HasFS m h
+     -- | The path to the source directory with respect to the source fileystem
+  -> FsPath
+     -- | The destination file system
+  -> HasFS m h'
+     -- | The path to the destination directory with respect to the destination
+     -- fileystem
+  -> FsPath
+  -> m ()
+copyDirectoryRec reg srcFS srcPath dstFS dstPath = do
+    entries <- FS.listDirectory srcFS srcPath
+    forM_ entries $ \entry -> do
+      let srcPath' = srcPath FS.</> FS.mkFsPath [entry]
+          dstPath' = dstPath FS.</> FS.mkFsPath [entry]
+      isFile <- FS.doesFileExist srcFS srcPath'
+      if isFile then copyFile reg srcFS srcPath' dstFS dstPath'
+      else do
+        isDirectory <- FS.doesDirectoryExist srcFS srcPath'
+        if isDirectory then copyDirectoryRec reg srcFS srcPath' dstFS dstPath'
+        else error $ printf
+                "copyDirectoryRec: %s is not a file or directory"
+                (show srcPath')
 
 {-------------------------------------------------------------------------------
-  Hard link with fallback
+  Hard links with copy fallback
 -------------------------------------------------------------------------------}
 
-{- |
-The file transfer mode to be used by a snapshot import or export.
--}
-data Mode m h
-  = HardLink
-    -- | Whether or not to allow fallback to copying.
-    !Bool
-    -- | The 'HasBlockIO' instance that enables hard linking.
-    !(HasBlockIO m h)
-  | forall h'.
-    Copy
-    -- | The 'HasFS' instance that enables copying.
-    !(HasFS m h')
-
 {-# SPECIALISE
-  hardLinkOrCopy ::
-       HasFS IO h
-    -> Mode IO h
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
+  hardLinkOrCopyDirectoryRec ::
+       HasCallStack
+    => ActionRegistry IO
+    -> HasFS IO h
+    -> HasBlockIO IO h'
+    -> FsPath
+    -> FsPath
     -> IO ()
   #-}
--- | @'hardLinkOrCopy' sourceFS mode hbio reg sourcePath destinationPath@
---   attempts to create a hard link or create a copy from @sourcePath@ to
---   @destinationPath@ depending on the @mode@
---
--- If @mode = HardLink b hbio@, then this functions attemtps to create a hard
--- link from @sourcePath@ to @destinationPath@ if both are on the same file
--- system and copies the file otherwise (if @b == True@).
---
--- If @mode = Copy destinationFS@, then this function copies from @sourcePath@
--- to @destinationPath@, where the latter is interpreted with respect to
--- @destinationFS@
-hardLinkOrCopy ::
-  (MonadMask m, PrimMonad m)
-  => -- | The 'HasFS' instance for the source filesystem
-     HasFS m h
-  -> -- | Either a 'HasBlockIO' instance for the source filesystem,
-     --   or a 'HasFS' instance for the destination filesystem
-     Mode m h
-  -> ActionRegistry m
-  -> FS.FsPath         -- ^ The source path
-  -> FS.FsPath         -- ^ The destination path
+-- | Attempt to use 'hardLinkDirectoryRec', and if that fails because the source
+-- and destination directory are not on the same disk volume, use
+-- 'copyDirectoryRec'' instead.
+hardLinkOrCopyDirectoryRec ::
+     (HasCallStack, MonadMask m, PrimMonad m)
+  => ActionRegistry m
+     -- | The file system
+  -> HasFS m h
+     -- | The file system
+  -> HasBlockIO m h'
+     -- | The path to the source directory
+  -> FsPath
+     -- | The path to the destination directory
+  -> FsPath
   -> m ()
-hardLinkOrCopy sourceFS (HardLink fallback sourceBIO) reg sourcePath destinationPath = do
-  let -- NOTE: On Windows, the error code is ERROR_NOT_SAME_DEVICE (17),
-      --       but the Win32 primitive for creating hard links maps this
-      --       to the POSIX error code EXDEV using the maperrno builtin.
-      isEXDEV :: FsError -> Bool
-      isEXDEV e = fsErrorNo e == Just eXDEV
-      ifEXDEV e = if isEXDEV e then Just e else Nothing
+hardLinkOrCopyDirectoryRec reg hfs hbio srcPath dstPath =
+    catchJust ifEXDEV doHardLink (const doFallBack)
+  where
+    doHardLink = hardLinkDirectoryRec reg hfs hbio srcPath dstPath
+    doFallBack = copyFile' reg hfs srcPath dstPath
 
-      doHardLink = hardLink sourceFS sourceBIO reg sourcePath destinationPath
-      doFallBack = copyFile sourceFS reg sourcePath destinationPath
-      doHardLinkThenFallBack = catchJust ifEXDEV doHardLink (const doFallBack)
-
-  if fallback then doHardLinkThenFallBack else doHardLink
-
-hardLinkOrCopy sourceFS (Copy destinationFS) reg sourcePath destinationPath =
-  copyFile' sourceFS destinationFS reg sourcePath destinationPath
-
-{-# SPECIALISE
-  hardLinkOrCopyDirectoryRecursive ::
-       HasFS IO h
-    -> Mode IO h
-    -> ActionRegistry IO
-    -> FS.FsPath
-    -> FS.FsPath
-    -> IO ()
-  #-}
-hardLinkOrCopyDirectoryRecursive ::
-     (MonadMask m, PrimMonad m)
-  => -- | The 'HasFS' instance for the source filesystem
-     HasFS m h
-  -> -- | Either a 'HasBlockIO' instance for the source filesystem,
-     --   or a 'HasFS' instance for the destination filesystem
-     Mode m h
-  -> ActionRegistry m
-     -- | Source path
-  -> FS.FsPath
-     -- | Destination path
-  -> FS.FsPath
-  -> m ()
-hardLinkOrCopyDirectoryRecursive sourceFS mode reg sourcePath destinationPath = do
-  entries <- FS.listDirectory sourceFS sourcePath
-  forM_ entries $ \entry -> do
-    let sourcePath' = sourcePath FS.</> FS.mkFsPath [entry]
-        destinationPath' = destinationPath FS.</> FS.mkFsPath [entry]
-    isFile <- FS.doesFileExist sourceFS sourcePath'
-    if isFile then
-      hardLinkOrCopy sourceFS mode reg sourcePath' destinationPath'
-    else do
-      isDirectory <- FS.doesDirectoryExist sourceFS sourcePath'
-      if isDirectory then do
-        hardLinkOrCopyDirectoryRecursive sourceFS mode reg sourcePath' destinationPath'
-      else
-        error $ printf
-          "hardLinkOrCopyDirectoryRecursive: %s is not a file or directory"
-          (show sourcePath')
+    -- NOTE: On Windows, the error code is ERROR_NOT_SAME_DEVICE (17),
+    --       but the Win32 primitive for creating hard links maps this
+    --       to the POSIX error code EXDEV using the maperrno builtin.
+    isEXDEV :: FsError -> Bool
+    isEXDEV e = FS.fsErrorNo e == Just eXDEV
+    ifEXDEV e = if isEXDEV e then Just e else Nothing

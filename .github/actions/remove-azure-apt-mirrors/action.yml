@@ -1,0 +1,19 @@
+name: Remove Azure apt mirrors
+description: |
+  Some Azure apt mirror nodes serve packages extremely slowly, and apt doesn't
+  fail from a slow mirror, only from a failing one. We remove the mirror.
+
+# TODO: reintroduce the Azure apt mirror once the following issue is fixed:
+# <https://github.com/actions/runner-images/issues/14823>
+
+runs:
+  using: composite
+  steps:
+  - name: Download packages from archive.ubuntu.com (Linux)
+    shell: bash
+    if: ${{ runner.os == 'Linux' }}
+    run: |
+      cat /etc/apt/apt-mirrors.txt
+      echo "Deleting..."
+      sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+      cat /etc/apt/apt-mirrors.txt

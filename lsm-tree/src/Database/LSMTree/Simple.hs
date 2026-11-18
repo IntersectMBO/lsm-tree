@@ -151,6 +151,8 @@ module Database.LSMTree.Simple (
     SnapshotExistsError (..),
     SnapshotDoesNotExistError (..),
     SnapshotCorruptedError (..),
+    SnapshotVersionUnknownError (..),
+    SnapshotVersionIncompatibleError (..),
     SnapshotNotCompatibleError (..),
     SnapshotImportDirDoesNotExistError (..),
     SnapshotExportDirExistsError (..),
@@ -178,7 +180,9 @@ import           Database.LSMTree (BloomFilterAlloc, CursorClosedError (..),
                      SnapshotCorruptedError (..),
                      SnapshotDoesNotExistError (..), SnapshotExistsError (..),
                      SnapshotLabel (..), SnapshotName,
-                     SnapshotNotCompatibleError (..), TableClosedError (..),
+                     SnapshotNotCompatibleError (..),
+                     SnapshotVersionIncompatibleError (..),
+                     SnapshotVersionUnknownError (..), TableClosedError (..),
                      TableConfig (..), TableConfigOverride (..),
                      TableCorruptedError (..), TableTooLargeError (..),
                      UnionCredits (..), UnionDebt (..), WriteBufferAlloc,
@@ -1437,6 +1441,11 @@ Throws the following exceptions:
     If the table is closed.
 ['SnapshotDoesNotExistError']
     If no snapshot with the given name exists.
+['SnapshotVersionUnknownError']:
+    If the snapshot declares a format version unknown to this version of the
+    library, e.g., it was written by a newer version.
+['SnapshotVersionIncompatibleError']:
+    If the snapshot's format version is known but no longer supported.
 ['SnapshotCorruptedError']:
     If the snapshot data is corrupted.
 ['SnapshotNotCompatibleError']:
@@ -1483,6 +1492,11 @@ Throws the following exceptions:
     If no snapshot with the given name exists.
 ['SnapshotCorruptedError']:
     If the snapshot data is corrupted.
+['SnapshotVersionUnknownError']:
+    If the snapshot declares a format version unknown to this version of the
+    library, e.g., it was written by a newer version.
+['SnapshotVersionIncompatibleError']:
+    If the snapshot's format version is known but no longer supported.
 ['SnapshotNotCompatibleError']:
     If the snapshot has a different label or is a different table type.
 -}
