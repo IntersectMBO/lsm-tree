@@ -13,10 +13,7 @@ import qualified System.FS.BlockIO.IO.Internal as IOI
 import qualified System.FS.BlockIO.Serial as Serial
 import           System.FS.IO (HandleIO)
 import qualified System.FS.IO.Handle as FS
-import qualified System.Posix.Fcntl as Fcntl (Advice (..), fileAdvise, fileSetCaching)
-#if HAVE_POSIX_FALLOCATE
-import qualified System.Posix.Fcntl as Fcntl (fileAllocate)
-#endif
+import qualified System.Posix.Fcntl as Fcntl
 import qualified System.Posix.Files as Unix
 import qualified System.Posix.Unistd as Unix
 

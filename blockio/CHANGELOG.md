@@ -8,11 +8,11 @@ None
 
 ### New features
 
-* Add a portable serial `HasBlockIO` implementation for POSIX systems that do
-  not have a dedicated one, so `blockio` builds on more than Linux, MacOS,
-  Windows, and FreeBSD. Operations the platform does not support
-  (`posix_fallocate`, `O_DIRECT`/`F_NOCACHE`) degrade to no-ops. See [issue
-  #872][issue-872] and [PR #886][pr-886].
+* Add a portable serial `HasBlockIO` implementation for Unix-like systems that
+  do not have a dedicated implementation. Any system other than Linux, MacOS,
+  Windows, and FreeBSD is assumed to be a Unix-like system. Operations that the
+  system does not support (`posix_fallocate`, `O_DIRECT`/`F_NOCACHE`) degrade to
+  no-ops. See [issue #872][issue-872] and [PR #886][pr-886].
 * Add the `unixlikeblockio` cabal flag, which forces the portable implementation
   on any platform, for testing it. See [PR #886][pr-886].
 

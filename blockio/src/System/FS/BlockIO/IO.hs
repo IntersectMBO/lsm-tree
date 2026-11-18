@@ -104,8 +104,7 @@ import           System.FS.IO (HandleIO, ioHasFS)
     * MacOS: @flock@
     * Windows: @LockFileEx@
     * FreeBSD: Open file descriptor (OFD)
-    * Unix-like systems: whatever GHC's @hTryLock@ uses on the platform, i.e.
-      open file descriptor (OFD) locks where available, otherwise @flock@
+    * Unix-like systems: whatever GHC's @hTryLock@ uses on the platform.
 
   ['hSynchronise']:
 
@@ -113,7 +112,8 @@ import           System.FS.IO (HandleIO, ioHasFS)
     * MacOS: perform @fsync(2)@
     * Windows: perform @flushFileBuffers@
     * FreeBSD: perform @fsync(2)@
-    * Unix-like systems: perform @fsync(2)@
+    * Unix-like systems: perform @fsync(2)@ if the platform has it,
+      otherwise no-op
 
   ['synchroniseDirectory']:
 
@@ -121,7 +121,8 @@ import           System.FS.IO (HandleIO, ioHasFS)
     * MacOS: perform @fsync(2)@
     * Windows: no-op
     * FreeBSD: perform @fsync(2)@
-    * Unix-like systems: perform @fsync(2)@
+    * Unix-like systems: perform @fsync(2)@ if the platform has it,
+      otherwise no-op
 
   ['createHardLink']:
 
