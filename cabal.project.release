@@ -10,9 +10,11 @@ packages:
 tests: True
 benchmarks: True
 
--- TODO: remove once fs-sim allows io-classes-1.11
--- (needs a Hackage revision or release of fs-sim)
-allow-newer: fs-sim:io-classes
+-- TODO: remove once fs-api and fs-sim allow io-classes-1.11
+-- (needs Hackage revisions or releases of fs-api and fs-sim)
+allow-newer:
+    fs-api:io-classes
+  , fs-sim:io-classes
 
 -- TODO: remove this section once all dependencies fully support GHC 9.14
 if impl (ghc >= 9.14)

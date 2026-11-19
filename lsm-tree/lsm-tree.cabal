@@ -791,7 +791,7 @@ test-suite lsm-tree-test
     , io-classes
     , io-classes:strict-mvar
     , io-classes:strict-stm
-    , io-sim                  <1.12
+    , io-sim
     , lsm-tree
     , lsm-tree:control
     , lsm-tree:core
