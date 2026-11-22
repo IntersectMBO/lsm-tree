@@ -1,5 +1,25 @@
 # Revision history for blockio
 
+## ?.?.?.? -- ????-??-??
+
+### Breaking changes
+
+None
+
+### New features
+
+None
+
+### Minor changes
+
+* Support `io-classes ^>=1.11`. See [PR #892][pr-892].
+
+### Bug fixes
+
+None
+
+[pr-892]: https://github.com/IntersectMBO/lsm-tree/pull/892
+
 ## 0.2.1.0 -- 2026-08-27
 
 ### Breaking changes
