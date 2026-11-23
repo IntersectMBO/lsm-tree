@@ -49,7 +49,7 @@ import           Data.Text (Text)
 import qualified Data.Vector as V
 import qualified Database.LSMTree.Internal.BloomFilter as Bloom
 import           Database.LSMTree.Internal.Config
-import           Database.LSMTree.Internal.CRC32C (checkCRC)
+import           Database.LSMTree.Internal.CRC32C (checkCRC, expectValidFile)
 import qualified Database.LSMTree.Internal.CRC32C as CRC
 import qualified Database.LSMTree.Internal.FS as FS
 import           Database.LSMTree.Internal.IncomingRun
@@ -203,9 +203,13 @@ instance NFData r => NFData (SnapMergingTreeState r) where
   rnf (SnapOngoingTreeMerge a)   = rnf a
 
 data SnapPendingMerge r =
+    -- | INVARIANT: There is always at least one 'SnapPreExistingRun'. See
+    -- 'MT.PendingMerge'.
     SnapPendingLevelMerge
       ![SnapPreExistingRun r]
       !(Maybe (SnapMergingTree r))
+    -- | INVARIANT: There is always at least one 'SnapMergingRun'. See
+    -- 'MT.PendingMerge'.
   | SnapPendingUnionMerge
       ![SnapMergingTree r]
   deriving stock (Eq, Functor, Foldable, Traversable)
@@ -234,6 +238,7 @@ instance NFData r => NFData (SnapPreExistingRun r) where
   -> Bloom.Salt
   -> UniqCounter IO
   -> ResolveSerialisedValue
+  -> FS.FsPath
   -> ActiveDir
   -> ActionRegistry IO
   -> SnapMergingTree (Ref (Run IO h))
@@ -250,11 +255,12 @@ fromSnapMergingTree ::
   -> Bloom.Salt
   -> UniqCounter m
   -> ResolveSerialisedValue
+  -> FS.FsPath -- ^ Path to source file for error reporting
   -> ActiveDir
   -> ActionRegistry m
   -> SnapMergingTree (Ref (Run m h))
   -> m (Ref (MT.MergingTree m h))
-fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
+fromSnapMergingTree hfs hbio refCtx salt uc resolve contentPath dir =
     go
   where
     -- Reference strategy:
@@ -276,21 +282,32 @@ fromSnapMergingTree hfs hbio refCtx salt uc resolve dir =
                               (SnapPendingLevelMerge prs mmt))) = do
       prs' <- traverse (fromSnapPreExistingRun reg) prs
       mmt' <- traverse (go reg) mmt
-      mt   <- withRollback reg
+      mt   <- withRollbackMaybe reg
                 (MT.newPendingLevelMerge refCtx prs' mmt')
                 releaseRef
       traverse_ (delayedCommit reg . releasePER) prs'
       traverse_ (delayedCommit reg . releaseRef) mmt'
-      pure mt
+      expectValidFile hfs contentPath CRC.FormatSnapshotMetaData $
+        case mt of
+          Nothing ->
+            Left "structurally empty pending level merge in snapshot"
+          Just mt' ->
+            Right mt'
 
     go reg (SnapMergingTree (SnapPendingTreeMerge
                               (SnapPendingUnionMerge mts))) = do
       mts' <- traverse (go reg) mts
-      mt   <- withRollback reg
+      mt   <- withRollbackMaybe reg
                 (MT.newPendingUnionMerge refCtx mts')
                 releaseRef
       traverse_ (delayedCommit reg . releaseRef) mts'
-      pure mt
+      expectValidFile hfs contentPath CRC.FormatSnapshotMetaData $
+        case mt of
+          Nothing ->
+            -- TODO: fail properly, or enforce invariant in SnapPendingUnionMerge
+            Left "structurally empty pending union merge in snapshot"
+          Just mt' ->
+            Right mt'
 
     go reg (SnapMergingTree (SnapOngoingTreeMerge smrs)) = do
       mr <- withRollback reg

@@ -91,8 +91,6 @@ mergeLookupAcc resolve mt accs =
 -- | Create a 'LookupTree' of batches of runs, e.g. to do lookups on. The
 -- entries within each batch are to be combined using 'MR.MergeLevel'.
 --
--- Assumes that the merging tree is not 'MT.isStructurallyEmpty'.
---
 -- This function duplicates the references to all the tree's runs. These
 -- references later need to be released.
 {-# SPECIALISE buildLookupTree ::
