@@ -8,7 +8,13 @@ None
 
 ### New features
 
-None
+* Add a portable serial `HasBlockIO` implementation for Unix-like systems that
+  do not have a dedicated implementation. Any system other than Linux, MacOS,
+  Windows, and FreeBSD is assumed to be a Unix-like system. Operations that the
+  system does not support (`posix_fallocate`, `O_DIRECT`/`F_NOCACHE`) degrade to
+  no-ops. See [issue #872][issue-872] and [PR #886][pr-886].
+* Add the `unixlikeblockio` cabal flag, which forces the portable implementation
+  on any platform, for testing it. See [PR #886][pr-886].
 
 ### Minor changes
 
@@ -18,6 +24,8 @@ None
 
 None
 
+[issue-872]: https://github.com/IntersectMBO/lsm-tree/issues/872
+[pr-886]: https://github.com/IntersectMBO/lsm-tree/pull/886
 [pr-892]: https://github.com/IntersectMBO/lsm-tree/pull/892
 
 ## 0.2.1.0 -- 2026-08-27

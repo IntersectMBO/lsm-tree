@@ -22,8 +22,8 @@ concurrently. On Windows, MacOS, and FreeBSD systems the *real* implementation
 currently simply performs each I/O operation sequentially, which should achieve
 about the same performance as using non-batched I/O, but the library could be
 extended with asynchronous I/O implementations for Windows, MacOS, and FreeBSD
-as well. The simulated implementation also performs each I/O operation
-sequentially.
+as well. If the operating system is none of the above, then the system is assumed to be Unix-like, in which case the library uses a fallback implementation that performs I/O operations sequentially.
+The simulated implementation also performs each I/O operation sequentially.
 
 As mentioned before, the batched I/O functionality is separated into an
 *abstract interface* and *implementations* of that abstract interface. The
