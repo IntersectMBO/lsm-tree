@@ -18,7 +18,7 @@ None
 
 ### Minor changes
 
-None
+* Support `io-classes ^>=1.11`. See [PR #892][pr-892].
 
 ### Bug fixes
 
@@ -26,6 +26,7 @@ None
 
 [issue-872]: https://github.com/IntersectMBO/lsm-tree/issues/872
 [pr-886]: https://github.com/IntersectMBO/lsm-tree/pull/886
+[pr-892]: https://github.com/IntersectMBO/lsm-tree/pull/892
 
 ## 0.2.1.0 -- 2026-08-27
 
