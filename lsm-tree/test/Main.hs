@@ -4,6 +4,7 @@ module Main (main) where
 
 import qualified Test.Database.LSMTree
 import qualified Test.Database.LSMTree.Class
+import qualified Test.Database.LSMTree.Concurrency
 import qualified Test.Database.LSMTree.Generators
 import qualified Test.Database.LSMTree.Internal
 import qualified Test.Database.LSMTree.Internal.Arena
@@ -55,6 +56,7 @@ main = do
     [ Test.Database.LSMTree.tests
     , Test.Database.LSMTree.Internal.Arena.tests
     , Test.Database.LSMTree.Class.tests
+    , Test.Database.LSMTree.Concurrency.tests
     , Test.Database.LSMTree.Generators.tests
     , Test.Database.LSMTree.Internal.tests
     , Test.Database.LSMTree.Internal.BlobFile.FS.tests
