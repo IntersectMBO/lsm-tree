@@ -320,7 +320,10 @@ hGetByteArrayExactly ::
   -> Int
   -> m P.ByteArray
 hGetByteArrayExactly hfs h len = do
-    buf <- P.newByteArray len
+    -- The buffer must be pinned. The real file system reads into it with a
+    -- safe FFI call through 'P.withMutableByteArrayContents', and the garbage
+    -- collector can move an unpinned buffer while the read is in progress.
+    buf <- P.newPinnedByteArray len
     _   <- hGetBufExactly hfs h buf 0 (fromIntegral len)
     P.unsafeFreezeByteArray buf
 

@@ -1,8 +1,10 @@
 module Test.Database.LSMTree.Internal.BloomFilter (tests) where
 
 import           Control.DeepSeq (deepseq)
-import           Control.Exception (Exception (..), displayException)
-import           Control.Monad (void)
+import           Control.Exception (ErrorCall (..), Exception (..),
+                     displayException)
+import           Control.Monad (unless, void)
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import qualified Control.Monad.IOSim as IOSim
 import           Data.Bits ((.&.))
 import qualified Data.ByteString as BS
@@ -10,6 +12,8 @@ import qualified Data.ByteString.Builder as BS.Builder
 import qualified Data.ByteString.Builder.Extra as BS.Builder
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.List as List
+import           Data.Primitive.ByteArray (MutableByteArray,
+                     isMutableByteArrayPinned)
 import qualified Data.Set as Set
 import qualified Data.Vector as V
 import qualified Data.Vector.Primitive as VP
@@ -39,6 +43,8 @@ tests = testGroup "Database.LSMTree.Internal.BloomFilter"
     [ testProperty "roundtrip" roundtrip_prop
       -- a specific case: 300 bits is just under 5x 64 bit words
     , testProperty "roundtrip-3-300" $ roundtrip_prop (Positive (Small 3)) (Positive 300)
+    , testProperty "prop_bloomFilterFromFile_pinnedBuffers"
+        prop_bloomFilterFromFile_pinnedBuffers
     , testProperty "total-deserialisation" $ withNumTests_compat 10000 $
         prop_total_deserialisation
     , testProperty "total-deserialisation-whitebox" $ withNumTests_compat 10000 $
@@ -86,9 +92,18 @@ prop_total_deserialisation bs =
 -- | Write the bytestring to a file in the mock file system and then use
 -- 'bloomFilterFromFile'.
 bloomFilterFromBS :: BS.ByteString -> Either IOSim.Failure (Bloom a)
-bloomFilterFromBS bs =
+bloomFilterFromBS = bloomFilterFromBSWith id
+
+-- | Like 'bloomFilterFromBS', but the given function modifies the file system
+-- first, for example to check how 'bloomFilterFromFile' uses it.
+bloomFilterFromBSWith ::
+     (forall s. FS.HasFS (IOSim.IOSim s) MockFS.HandleMock
+             -> FS.HasFS (IOSim.IOSim s) MockFS.HandleMock)
+  -> BS.ByteString
+  -> Either IOSim.Failure (Bloom a)
+bloomFilterFromBSWith modifyHasFS bs =
     IOSim.runSim $ do
-      hfs <- FSSim.simHasFS' MockFS.empty
+      hfs <- modifyHasFS <$> FSSim.simHasFS' MockFS.empty
       let file = FS.mkFsPath ["filter"]
       -- write the bytestring
       FS.withFile hfs file (FS.WriteMode FS.MustBeNew) $ \h -> do
@@ -96,6 +111,41 @@ bloomFilterFromBS bs =
       -- deserialise from file
       FS.withFile hfs file FS.ReadMode $ \h ->
         bloomFilterFromFile hfs testSalt h
+
+-- | 'bloomFilterFromFile' must only read into pinned buffers. The real file
+-- system passes the buffer to a safe FFI call, and the garbage collector can
+-- move an unpinned buffer while that call is running.
+prop_bloomFilterFromFile_pinnedBuffers :: [Word64] -> Property
+prop_bloomFilterFromFile_pinnedBuffers ws =
+    case bloomFilterFromBSWith requirePinnedBuffers bs of
+      Left  err -> counterexample (displayException err) $ property False
+      Right rhs -> lhs === rhs
+  where
+    lhs = Bloom.fromList (Bloom.policyForFPR 0.01) testSalt ws
+    bs  = LBS.toStrict (bloomFilterToLBS lhs)
+
+-- | Throw an error if a buffer passed to one of the @hGetBuf*@ or @hPutBuf*@
+-- functions is not pinned.
+requirePinnedBuffers :: MonadThrow m => FS.HasFS m h -> FS.HasFS m h
+requirePinnedBuffers hfs = hfs {
+      FS.hGetBufSome   = \h buf bufOff c ->
+        requirePinned "hGetBufSome" buf
+          >> FS.hGetBufSome hfs h buf bufOff c
+    , FS.hGetBufSomeAt = \h buf bufOff c off ->
+        requirePinned "hGetBufSomeAt" buf
+          >> FS.hGetBufSomeAt hfs h buf bufOff c off
+    , FS.hPutBufSome   = \h buf bufOff c ->
+        requirePinned "hPutBufSome" buf
+          >> FS.hPutBufSome hfs h buf bufOff c
+    , FS.hPutBufSomeAt = \h buf bufOff c off ->
+        requirePinned "hPutBufSomeAt" buf
+          >> FS.hPutBufSomeAt hfs h buf bufOff c off
+    }
+  where
+    requirePinned :: MonadThrow m => String -> MutableByteArray s -> m ()
+    requirePinned name buf =
+      unless (isMutableByteArrayPinned buf) $
+        throwIO (ErrorCall (name ++ ": buffer is not pinned"))
 
 -- Length is in bits. A large length would require significant amount of
 -- memory, so we make it 'Small'.
