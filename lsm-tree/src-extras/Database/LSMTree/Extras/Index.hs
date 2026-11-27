@@ -7,6 +7,7 @@ module Database.LSMTree.Extras.Index
     Append (AppendSinglePage, AppendMultiPage),
     appendToCompact,
     appendToOrdinary,
+    appendToPrefix,
     append
 )
 where
@@ -24,6 +25,9 @@ import qualified Database.LSMTree.Internal.Index.CompactAcc as IndexCompact
                      (appendMulti, appendSingle)
 import           Database.LSMTree.Internal.Index.OrdinaryAcc (IndexOrdinaryAcc)
 import qualified Database.LSMTree.Internal.Index.OrdinaryAcc as IndexOrdinary
+                     (appendMulti, appendSingle)
+import           Database.LSMTree.Internal.Index.PrefixAcc (IndexPrefixAcc)
+import qualified Database.LSMTree.Internal.Index.PrefixAcc as IndexPrefix
                      (appendMulti, appendSingle)
 import           Database.LSMTree.Internal.Serialise (SerialisedKey)
 
@@ -88,6 +92,17 @@ appendToOrdinary :: Append -> IndexOrdinaryAcc s -> ST s [Chunk]
 appendToOrdinary = appendWith IndexOrdinary.appendSingle
                               IndexOrdinary.appendMulti
 {-# INLINE appendToOrdinary #-}
+
+{-|
+    Adds information about appended pages to a prefix index and outputs newly
+    available chunks.
+
+    See the documentation of the 'IndexAcc' type for constraints to adhere to.
+-}
+appendToPrefix :: Append -> IndexPrefixAcc s -> ST s [Chunk]
+appendToPrefix = appendWith IndexPrefix.appendSingle
+                            IndexPrefix.appendMulti
+{-# INLINE appendToPrefix #-}
 
 {-|
     Adds information about appended pages to an index and outputs newly

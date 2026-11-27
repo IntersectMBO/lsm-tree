@@ -7,6 +7,7 @@ import qualified Bench.Database.LSMTree
 import qualified Bench.Database.LSMTree.Internal.BloomFilter
 import qualified Bench.Database.LSMTree.Internal.Index
 import qualified Bench.Database.LSMTree.Internal.Index.Compact
+import qualified Bench.Database.LSMTree.Internal.Index.Prefix
 import qualified Bench.Database.LSMTree.Internal.Lookup
 import qualified Bench.Database.LSMTree.Internal.Merge
 import qualified Bench.Database.LSMTree.Internal.RawPage
@@ -23,6 +24,7 @@ main = do
         Bench.Database.LSMTree.Internal.BloomFilter.benchmarks
       , Bench.Database.LSMTree.Internal.Index.benchmarks
       , Bench.Database.LSMTree.Internal.Index.Compact.benchmarks
+      , Bench.Database.LSMTree.Internal.Index.Prefix.benchmarks
       , Bench.Database.LSMTree.Internal.Lookup.benchmarks
       , Bench.Database.LSMTree.Internal.Merge.benchmarks
       , Bench.Database.LSMTree.Internal.RawPage.benchmarks

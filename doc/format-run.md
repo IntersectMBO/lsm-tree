@@ -271,7 +271,7 @@ this, the following constraints on the sequence of stored keys follow:
 * The sequence must be non-empty.
 * The elements of the sequence must be non-decreasing.
 
-The type of compact indexes is denoted by the number 1. The type–version
+The type of ordinary indexes is denoted by the number 1. The type–version
 indicator in a serialised ordinary index is not padded.
 
 For version 1, the file contents after the type–version indicator consist of the
@@ -296,3 +296,104 @@ sequentially without any gaps.
 For the key sequence, each key is represented by the following components:
 1. The length of the serialised key (16 bit)
 2. The serialised key
+
+### Prefix index
+
+The prefix index type is intended for keys that share long prefixes, such as
+keys made of a common textual prefix and a counter, or composite keys whose
+first component is the same for many keys. Like the ordinary index, it places
+no constraints on the keys.
+
+The index has one entry per _group_ of pages, where a group is either a single
+page that fully comprises one or more key/operation pairs or the pages that
+together comprise a single key/operation pair whose value overflows. Each
+entry stores the number of pages of its group and a _separator_:
+* The separator of the first group is the empty string.
+* The separator of every other group is the shortest prefix of the group's
+  first key that is greater than the last key of the preceding group.
+
+The separators are strictly increasing. A search for a key yields the page span
+of the group with the largest separator that is less than or equal to the key.
+If the key is in the run, this is the page span that contains it. If it is not,
+all keys in pages before the result are less than the key and all keys in pages
+after the result are greater than the key.
+
+Separators are front-coded: an entry stores how many bytes its separator shares
+with the separator of the preceding entry, followed by the remaining bytes (the
+suffix). Every 16th entry, starting with the first one, is a _restart entry_,
+which shares no bytes with the preceding entry and therefore stores its
+separator in full. A restart table lists, for each restart entry, where it
+starts and which page its group starts at. A search does a binary search over
+the restart entries, followed by a linear scan over at most 16 entries, which
+does not need to reconstruct separators.
+
+The type of prefix indexes is denoted by the number 2. The type–version
+indicator in a serialised prefix index is padded to 64 bits.
+
+For version 1, the file contents after the type–version indicator consist of
+the following:
+1. The sequence of entries, one per group
+2. Padding to 64 bit alignment
+3. The restart table, with an offset–page pair for each restart entry
+4. A footer, which consists of the following:
+   1. The size of the sequence of entries in bytes (64 bit)
+   2. The number of entries (64 bit)
+   3. The number of pages (64 bit)
+   4. The number of keys in the corresponding run (64 bit)
+
+The sequence of entries can be written out incrementally, while the remaining
+parts can only be written upon completion of the index. The restart table is
+small, with one pair for every 16 entries, and is kept in memory during
+construction. The padding bytes of the type–version indicator and the padding
+bytes after the sequence of entries must be zero.
+
+The size of the whole serialised index is a multiple of 64 bits, so that the
+restart table and the footer can be accessed with natural alignment, and the
+in-memory index can use the serialised index directly as its backing memory.
+
+|     |                   | elements       | size   | alignment | trailing padding to |
+|-----|-------------------|----------------|--------|-----------|---------------------|
+| 0   | type, version     | 1              | 32 bit | 32 bit    | 64 bit (at the end) |
+| 1   | entries           | g              |        |           | 64 bit (at the end) |
+| 2   | restart table     | 2 · ceil(g/16) | 32 bit | 64 bit    |                     |
+| 3.1 | size of entries   | 1              | 64 bit | 64 bit    |                     |
+| 3.2 | number of entries | 1              | 64 bit | 64 bit    |                     |
+| 3.3 | number of pages   | 1              | 64 bit | 64 bit    |                     |
+| 3.4 | number of keys    | 1              | 64 bit | 64 bit    |                     |
+
+The restart table stores, for each restart entry in order, first the offset of
+the entry relative to the start of the sequence of entries and then the number
+of the first page of its group, both as 32 bit numbers. As a consequence, every
+restart entry must start at an offset smaller than 2^32, and its group must
+start at a page number smaller than 2^32. Entries after the last restart entry
+are not affected by this limit.
+
+Each entry is represented by the following components, where all numbers are
+variable-length numbers that store 7 bits per byte, least significant group
+first, with the most significant bit of each byte set exactly if more bytes
+follow, and that use at most 5 bytes. Each number must be stored with the
+fewest possible bytes, so the last byte of a number of more than one byte must
+not be zero:
+1. The number of bytes shared with the preceding separator, multiplied by 2,
+   plus 1 if the group has overflow pages and 0 otherwise
+2. The length of the suffix
+3. If the group has overflow pages, the number of overflow pages, which must
+   not be zero; nothing otherwise
+4. The suffix
+
+The number of shared bytes is zero for restart entries. For other entries, it is
+the length of the longest common prefix of the separator and the preceding
+separator.
+
+For example, consider four groups: a page with the keys `aa` to `ab`, a page
+with the keys `ac` to `ad`, a value for the key `b` that spans three pages, and
+a page with the keys `ba` to `bb`. The separators are the empty string, `ac`,
+`b`, and `ba`, and the entries are as follows, written as hexadecimal bytes:
+1. `00 00`
+2. `00 02 61 63`
+3. `01 01 02 62`
+4. `02 01 61`
+
+The entries take 13 bytes, followed by 3 bytes of padding. The restart table
+consists of the numbers 0 and 0, and the footer consists of the numbers 13, 4,
+and 6, followed by the number of keys.
