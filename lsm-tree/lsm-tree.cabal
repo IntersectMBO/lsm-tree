@@ -589,6 +589,7 @@ library core
     Database.LSMTree.Internal.Index.Ordinary
     Database.LSMTree.Internal.Index.OrdinaryAcc
     Database.LSMTree.Internal.Index.Prefix
+    Database.LSMTree.Internal.Index.PrefixAcc
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Map.Range
     Database.LSMTree.Internal.Merge
@@ -723,6 +724,7 @@ test-suite lsm-tree-test
     Test.Database.LSMTree.Internal.Entry
     Test.Database.LSMTree.Internal.Index.Compact
     Test.Database.LSMTree.Internal.Index.Ordinary
+    Test.Database.LSMTree.Internal.Index.Prefix
     Test.Database.LSMTree.Internal.Lookup
     Test.Database.LSMTree.Internal.Merge
     Test.Database.LSMTree.Internal.MergingRun
@@ -834,6 +836,7 @@ benchmark lsm-tree-micro-bench
     Bench.Database.LSMTree.Internal.BloomFilter
     Bench.Database.LSMTree.Internal.Index
     Bench.Database.LSMTree.Internal.Index.Compact
+    Bench.Database.LSMTree.Internal.Index.Prefix
     Bench.Database.LSMTree.Internal.Lookup
     Bench.Database.LSMTree.Internal.Merge
     Bench.Database.LSMTree.Internal.RawPage

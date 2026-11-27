@@ -14,6 +14,7 @@ import qualified Test.Database.LSMTree.Internal.CRC32C
 import qualified Test.Database.LSMTree.Internal.Entry
 import qualified Test.Database.LSMTree.Internal.Index.Compact
 import qualified Test.Database.LSMTree.Internal.Index.Ordinary
+import qualified Test.Database.LSMTree.Internal.Index.Prefix
 import qualified Test.Database.LSMTree.Internal.Lookup
 import qualified Test.Database.LSMTree.Internal.Merge
 import qualified Test.Database.LSMTree.Internal.MergingRun
@@ -64,6 +65,7 @@ main = do
     , Test.Database.LSMTree.Internal.Entry.tests
     , Test.Database.LSMTree.Internal.Index.Compact.tests
     , Test.Database.LSMTree.Internal.Index.Ordinary.tests
+    , Test.Database.LSMTree.Internal.Index.Prefix.tests
     , Test.Database.LSMTree.Internal.Lookup.tests
     , Test.Database.LSMTree.Internal.Merge.tests
     , Test.Database.LSMTree.Internal.MergingRun.tests

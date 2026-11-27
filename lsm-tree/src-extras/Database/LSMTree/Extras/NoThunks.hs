@@ -47,6 +47,8 @@ import           Database.LSMTree.Internal.Index.Compact
 import           Database.LSMTree.Internal.Index.CompactAcc
 import           Database.LSMTree.Internal.Index.Ordinary
 import           Database.LSMTree.Internal.Index.OrdinaryAcc
+import           Database.LSMTree.Internal.Index.Prefix
+import           Database.LSMTree.Internal.Index.PrefixAcc
 import           Database.LSMTree.Internal.Merge
 import qualified Database.LSMTree.Internal.Merge as Merge
 import           Database.LSMTree.Internal.MergeSchedule
@@ -302,6 +304,9 @@ deriving anyclass instance NoThunks PageNo
 deriving stock instance Generic IndexOrdinary
 deriving anyclass instance NoThunks IndexOrdinary
 
+deriving stock instance Generic IndexPrefix
+deriving anyclass instance NoThunks IndexPrefix
+
 deriving stock instance Generic Index
 deriving anyclass instance NoThunks Index
 
@@ -458,6 +463,10 @@ deriving anyclass instance NoThunks a => NoThunks (SMaybe a)
 deriving stock instance Generic (IndexOrdinaryAcc s)
 deriving anyclass instance Typeable s
                         => NoThunks (IndexOrdinaryAcc s)
+
+deriving stock instance Generic (IndexPrefixAcc s)
+deriving anyclass instance Typeable s
+                        => NoThunks (IndexPrefixAcc s)
 
 deriving stock instance Generic (IndexAcc s)
 deriving anyclass instance Typeable s
