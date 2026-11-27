@@ -588,6 +588,7 @@ library core
     Database.LSMTree.Internal.Index.CompactAcc
     Database.LSMTree.Internal.Index.Ordinary
     Database.LSMTree.Internal.Index.OrdinaryAcc
+    Database.LSMTree.Internal.Index.Prefix
     Database.LSMTree.Internal.Lookup
     Database.LSMTree.Internal.Map.Range
     Database.LSMTree.Internal.Merge
