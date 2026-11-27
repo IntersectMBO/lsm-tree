@@ -712,6 +712,7 @@ test-suite lsm-tree-test
     Paths_lsm_tree
     Test.Database.LSMTree
     Test.Database.LSMTree.Class
+    Test.Database.LSMTree.Concurrency
     Test.Database.LSMTree.Generators
     Test.Database.LSMTree.Internal
     Test.Database.LSMTree.Internal.Arena

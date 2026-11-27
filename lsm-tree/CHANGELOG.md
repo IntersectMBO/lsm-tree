@@ -56,6 +56,11 @@
 
 * If a `SnapshotExportDirExistsError` is thrown, this now contains the
   destination directory, rather than the directory of the internal snapshot.
+* Fix a bug where opening a table from a snapshot would sometimes fail with a
+  `SnapshotCorruptedError` (an "Unsupported version" error for a bloom filter
+  file) while other threads are running. The bloom filter file header was read
+  into an unpinned buffer, which the garbage collector could move during the
+  read. See [PR #XXX](https://github.com/IntersectMBO/lsm-tree/pull/XXX).
 
 ## 1.1.1.0 -- 2026-07-21
 
